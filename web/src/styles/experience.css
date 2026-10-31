@@ -93,6 +93,8 @@ button:disabled { opacity: .5; }
 .welcome-tag > span { height: 5px; width: 5px; border-radius: 50%; background: var(--brand-blue); }
 .hero-copy h2 { font-size: clamp(36px, 3.3vw, 53px); letter-spacing: -2px; line-height: 1.17; font-weight: 500; color: var(--blue-ink); margin: 0 0 17px; max-width: none; }
 .hero-copy h2 em { font-family: Georgia, "Times New Roman", serif; font-weight: 400; color: var(--brand-blue); letter-spacing: -1.8px; }
+/* This heading receives route focus for screen readers; it is not a control. */
+#chat-home-title:focus { outline: none; }
 .hero-copy > p { font-size: 12px; line-height: 1.9; color: var(--blue-muted); }
 .hero-signature { display: flex; gap: 9px; align-items: center; margin-top: 21px; font-size: 9px; color: var(--brand-blue); }
 .signature-mark { display: grid; place-items: center; height: 25px; width: 25px; border: 1px solid var(--blue-tint); border-radius: 50%; background: var(--blue-soft); }
