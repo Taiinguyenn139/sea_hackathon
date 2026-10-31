@@ -89,7 +89,8 @@ không lặp lại dữ liệu bị chặn. Web chat không lưu turn bị chặ
 `client_message_id` của turn đó; handoff trả HTTP 400 nếu reason bị chặn.
 Retry của turn đã hoàn tất không gọi lại classifier; Telegram retry cùng update
 cũng không phân loại lại. Với OpenAI, một turn tư vấn được chấp nhận, không có
-memory backlog, gọi LLM bốn lần: input classifier, plan, draft và memory extraction.
+memory backlog, gọi LLM bốn lần theo thứ tự: input classifier, memory extraction,
+plan và draft. Memory của lượt hiện tại được commit trước khi soạn câu trả lời.
 Đầu vào bị luật chặn không gọi LLM; bị classifier chặn chỉ gọi classifier một lần.
 Đây là số bước logic: mỗi bước có thể gửi tối đa hai HTTP attempts khi primary
 thất bại và cần backup. Turn bình thường không backlog có tối đa tám attempts;
@@ -269,3 +270,24 @@ mâu thuẫn và chưa có xác nhận/cập nhật rõ ràng, trợ lý hỏi l
 transcript làm thông tin hiện hành. Câu giả định hoặc dự kiến không tự giải quyết
 xung đột. Những xung đột đã lưu trước bản sửa vẫn cần khách cập nhật/xác nhận lại;
 không tự thay đổi dữ liệu lịch sử khi triển khai.
+
+
+### Memory có cấu trúc từ LLM
+
+Với `LLM_BACKEND=openai`, model nhận tin nhắn hiện tại, tối đa 12 lượt gần nhất
+trong cùng phiên và các fact của đúng hồ sơ. Model trả trực tiếp
+`{facts: [{key, value, unit, operation, source_text}]}`: giá trị chuẩn hóa theo
+đồng/tháng, cùng quyết định `replace` hoặc `conflict`. Backend lưu kết quả này,
+không dùng regex để trích lại số hoặc từ khóa để quyết định cập nhật. Các câu
+“65tr”, “sáu mươi lăm triệu”, và câu ngắn “65tr đó” được diễn giải theo ngữ cảnh.
+JSON vẫn phải đúng kiểu và đơn vị để có thể lưu và gọi công cụ ngân hàng.
+
+Kết quả model được lưu cùng memory job để tra cứu/retry; trace có `memory_result`.
+Model soạn câu trả lời được nhận kết quả commit và chỉ được xác nhận cập nhật
+khi có fact đã lưu. Nếu trích xuất thất bại ở cả primary và backup, lượt trả thông
+báo gián đoạn, job giữ pending; không fallback sang rule. Preflight deployment
+không gọi model hoặc biến pending job thành dữ liệu do rule trích xuất.
+
+`harness/memory/rules.py` chỉ phục vụ `LLM_BACKEND=rules` cho test/eval offline,
+không tham gia luồng OpenAI. Không đổi schema DB; hồ sơ và facts đã có được giữ.
+Không tự tái diễn giải các lượt cũ đã xử lý: khách gửi lại thông tin cần cập nhật.

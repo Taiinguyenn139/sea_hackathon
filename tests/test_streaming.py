@@ -140,7 +140,7 @@ def test_sse_auth_guard_receipt_and_retry(tmp_path, monkeypatch, draft, blocked)
         calls.append(payload)
         if payload.get("stream"):
             return httpx.Response(200, stream=ProviderStream(draft))
-        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else ({"stage": "discover", "objection": None} if "Phân loại" in payload["messages"][0]["content"] else {"spans": []})
+        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else ({"stage": "discover", "objection": None} if "Phân loại" in payload["messages"][0]["content"] else {"facts": []})
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}}]})
 
     mock_provider(monkeypatch, handler)
@@ -210,7 +210,7 @@ def test_socket_progress_disconnect_persists_without_replay(tmp_path, monkeypatc
         if payload.get("stream"):
             drafts.append(True)
             return httpx.Response(200, stream=PausedStream("Xin chào. Tôi có thể giúp bạn."))
-        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else ({"stage": "discover"} if "Phân loại" in payload["messages"][0]["content"] else {"spans": []})
+        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else ({"stage": "discover"} if "Phân loại" in payload["messages"][0]["content"] else {"facts": []})
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}}]})
 
     mock_provider(monkeypatch, handler)

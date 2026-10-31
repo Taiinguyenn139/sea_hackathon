@@ -7,7 +7,7 @@ import time
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pydantic_core import from_json
 
 from bank_tools.service import canonical
@@ -31,12 +31,46 @@ class PlanSuggestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     stage: Literal["discover", "quote", "objection", "followup", "apply"]
     objection: Literal["rate_high", "need_spouse"] | None = None
-    intent: Literal["advice", "greeting", "loan_catalog", "product_catalog", "acknowledgement", "profile_name"] = "advice"
+    intent: Literal["advice", "greeting", "loan_catalog", "product_catalog", "acknowledgement", "profile_name", "memory_recall"] = "advice"
+    recall_keys: list[Literal["product", "amount", "income", "debt", "property_value", "term", "objection", "commitment"]] = Field(default_factory=list, max_length=8)
+
+
+class MemoryFact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    key: Literal["product", "amount", "income", "debt", "property_value", "term", "objection", "commitment"]
+    value: str = Field(min_length=1, max_length=1000)
+    unit: Literal["đồng", "tháng", ""]
+    operation: Literal["replace", "conflict"]
+    source_text: str = Field(min_length=1, max_length=4000)
+
+    @model_validator(mode="after")
+    def storage_types(self):
+        # Validate the storage contract only; the LLM owns interpretation and resolution.
+        if self.key in ("amount", "income", "debt", "property_value", "term"):
+            try:
+                number = int(self.value)
+            except ValueError:
+                raise ValueError("Numeric memory requires an integer string") from None
+            if number < 0 or str(number) != self.value:
+                raise ValueError("Numeric memory requires a canonical nonnegative integer")
+            if self.unit != ("tháng" if self.key == "term" else "đồng"):
+                raise ValueError("Invalid numeric unit")
+        elif self.unit:
+            raise ValueError("Text memory has no unit")
+        if self.key == "product" and self.value not in ("home_loan", "personal_loan", "credit_card"):
+            raise ValueError("Unsupported product")
+        return self
 
 
 class ExtractionSuggestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    spans: list[str] = Field(max_length=20)
+    facts: list[MemoryFact] = Field(max_length=8)
+
+    @model_validator(mode="after")
+    def unique_fields(self):
+        if len({fact.key for fact in self.facts}) != len(self.facts):
+            raise ValueError("Duplicate memory key")
+        return self
 
 
 class DraftSuggestion(BaseModel):

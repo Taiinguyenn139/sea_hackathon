@@ -14,7 +14,8 @@ from bank_tools.service import BankTools, canonical, ident, now
 from harness.customer_profile import can_access_memory
 from harness.input_guard import normalized
 from harness.llm import DEFAULT_REPLY, DraftSuggestion, LLMUnavailable, PlanSuggestion, json_completion
-from harness.memory.service import Memory, extract
+from harness.memory.rules import extract
+from harness.memory.service import Memory
 from harness.streaming import emit, stream_sink
 
 
@@ -39,6 +40,7 @@ class TurnState(TypedDict, total=False):
     unsuitable: bool
     completion: dict
     confirmations: list
+    memory_result: dict
     cards: list
     action_notes: list
     profile_context: dict
@@ -67,9 +69,9 @@ def asks_profile_name(text):
 
 def has_advice_request(text):
     low = normalized(text)
-    return bool(extract(text) or re.search(
+    return bool(re.search(
         r"\b(?:vay|lai suat|phi|uu dai|san pham|dich vu|chuyen vien|khieu nai|nop ho so|"
-        r"ky hop dong|goi lai|hen|lien he lai|gui tom tat|gui tong ket)\b", low,
+        r"ky hop dong|goi lai|hen|lien he lai|gui tom tat|gui tong ket|thu nhap|luong|no|gia nha)\b", low,
     ))
 
 
@@ -242,6 +244,7 @@ class Engine:
                         "profile_context": {},
                         "cards": [],
                         "confirmations": [],
+                        "memory_result": {},
                         "facts": {},
                         "known": {},
                         "plan": {},
@@ -280,10 +283,15 @@ class Engine:
                     "confirmations": [], "profile_context": profile}
         job = self.db.one("SELECT seq FROM memory_jobs WHERE turn_id=?", (s["turn_id"],))
         if self.memory_access(session):
-            self.memory.flush(customer, job["seq"] - 1 if job else None)
+            target = job["seq"] if job else None
+            if target is not None and self.settings.llm_backend != "openai":
+                target -= 1
+            self.memory.flush(customer, target)
         current = self.db.all(
             "SELECT id,text,reply FROM turns WHERE session_id=? ORDER BY created_at,id", (session["id"],)
         )
+        if self.settings.llm_backend == "openai":
+            return self.llm_context(s, current, profile, profile_facts, profile_parts)
         known = {}
         facts = dict(profile_facts)
         parts = list(profile_parts)
@@ -358,6 +366,58 @@ class Engine:
         return {"known": known, "facts": facts, "context_parts": parts,
                 "confirmations": sorted(set(confirmations)), "profile_context": profile}
 
+    def llm_context(self, s, current, profile, profile_facts, profile_parts):
+        """Read the committed model extraction; never re-parse speech with regex."""
+        session = s["session"]
+        authorized = self.memory_access(session)
+        extraction = self.memory.turn_extraction(s["turn_id"]) if authorized else None
+        saved = extraction is not None
+        if extraction is None:
+            extraction = self.memory.interpret(s["text"], session["id"], s["turn_id"])
+        facts, known, conflicts = dict(profile_facts), {}, set()
+        parts = list(profile_parts)
+        if authorized and session["mode"] == "harness":
+            for fact in self.memory.facts(session["customer_id"]):
+                if fact["source_type"] != "customer":
+                    continue
+                if fact["status"] == "conflicted":
+                    conflicts.add(fact["key"])
+                elif fact["status"] == "active":
+                    facts[fact["id"]] = fact
+                    known[fact["key"]] = fact["value"]
+            parts.append({"type": "call_brief", "fact_ids": list(facts)})
+        else:
+            history = []
+            if authorized and session["mode"] == "full_history":
+                history = self.db.all(
+                    "SELECT t.id,t.text,t.reply FROM turns t JOIN sessions s ON s.id=t.session_id "
+                    "WHERE s.customer_id=? AND s.id<>? ORDER BY t.created_at,t.id",
+                    (session["customer_id"], session["id"]),
+                )
+                parts.append({"type": "old_transcript", "turns": history})
+            for turn in [*history, *current]:
+                result = extraction if turn["id"] == s["turn_id"] else self.memory.turn_extraction(turn["id"])
+                for update in (result or {}).get("facts", []):
+                    key = update["key"]
+                    facts = {i: f for i, f in facts.items() if f["key"] != key}
+                    if update["operation"] == "conflict":
+                        conflicts.add(key)
+                        known.pop(key, None)
+                        continue
+                    conflicts.discard(key)
+                    known[key] = update["value"]
+                    fid = ident("cf_", [turn["id"], key, update["value"]])
+                    facts[fid] = {
+                        "id": fid, "key": key, "value": update["value"], "unit": update["unit"],
+                        "source_type": "customer", "source_ref": turn["id"], "status": "active", "valid_until": None,
+                    }
+        parts.append({"type": "current_session", "turns": current})
+        return {
+            "known": known, "facts": facts, "context_parts": parts,
+            "confirmations": sorted(conflicts), "profile_context": profile,
+            "memory_result": {"saved": saved, **extraction},
+        }
+
     def plan(self, s):
         emit("status", stage="planning")
         low = s["text"].lower()
@@ -369,7 +429,10 @@ class Engine:
         suggestion = None if intent == "profile_name" else json_completion(
             self.settings,
             "Phân loại hội thoại tư vấn. Trả JSON {stage:discover|quote|objection|followup|apply, "
-            "objection:rate_high|need_spouse|null, intent:advice|greeting|loan_catalog|product_catalog|acknowledgement|profile_name}. "
+            "objection:rate_high|need_spouse|null, intent:advice|greeting|loan_catalog|product_catalog|acknowledgement|profile_name|memory_recall, "
+            "recall_keys:[product|amount|income|debt|property_value|term|objection|commitment]}. "
+            "memory_recall: khách hỏi lại thông tin đã chia sẻ, ví dụ 'Bữa trước tôi nói lương bao nhiêu?' hoặc "
+            "'thu nhập và thời hạn vay mới nhất là gì?'; chọn recall_keys đúng trường được hỏi, không ép bổ sung nhu cầu vay. "
             "profile_name: chỉ hỏi tên của chính khách, không phải tên người khác hay tên sản phẩm. "
             "greeting: chào hỏi; loan_catalog: hỏi có những loại vay nào; product_catalog: hỏi các sản phẩm/dịch vụ "
             "được tư vấn; acknowledgement: cảm ơn. Không biến câu hỏi tổng quan thành yêu cầu báo giá. "
@@ -406,6 +469,7 @@ class Engine:
             "plan": {
                 "product": product,
                 "intent": intent,
+                "recall_keys": suggestion.get("recall_keys", []) if suggestion else [],
                 "asks_profile_name": wants_name,
                 "public_info": intent == "advice" and not known.get("amount")
                 and any(x in low for x in ["lãi suất", "ưu đãi", "điều kiện", "phí"]),
@@ -421,7 +485,7 @@ class Engine:
         }
 
     def select_cards(self, s):
-        if s["plan"].get("intent") == "profile_name":
+        if s["plan"].get("intent") in ("profile_name", "memory_recall"):
             return {"cards": []}
         from harness.sales import book as load_book
 
@@ -437,7 +501,7 @@ class Engine:
 
     def call_tools(self, s):
         emit("status", stage="tools")
-        if s["plan"].get("intent") == "profile_name":
+        if s["plan"].get("intent") in ("profile_name", "memory_recall"):
             return {"tool_calls": [], "disclosures": []}
         p, known, session = s["plan"], s["known"], s["session"]
         facts, calls, disclosures, notes = dict(s["facts"]), [], [], []
@@ -633,6 +697,14 @@ class Engine:
                 + labels.get(s["confirmations"][0], s["confirmations"][0])
                 + " giữa các kênh chưa thống nhất. Anh/chị vui lòng xác nhận thông tin chính xác để em cập nhật nhé?"
             )
+        if intent == "memory_recall":
+            keys = s["plan"].get("recall_keys") or list(s["known"])
+            labels = {"income": "Thu nhập", "amount": "Số tiền vay", "term": "Thời hạn vay",
+                      "debt": "Khoản trả nợ", "property_value": "Giá trị nhà", "product": "Sản phẩm",
+                      "objection": "Điều còn băn khoăn", "commitment": "Yêu cầu đã ghi nhớ"}
+            recalled = [labels[f["key"]] + ": {fact:" + f["id"] + "}." for f in s["facts"].values()
+                        if f["key"] in keys and f["key"] in labels and f["source_type"] == "customer"]
+            return " ".join(recalled) if recalled else "Em chưa có thông tin này trong hồ sơ. Anh/chị chia sẻ giúp em nhé?"
         if s["plan"]["missing"] and not s["plan"].get("public_info"):
             labels = {
                 "amount": "số tiền muốn vay",
@@ -706,9 +778,13 @@ class Engine:
             "số tiền vay hay thu nhập để xem danh sách. Chỉ báo giá khi có facts. "
             "profile_name chỉ là tên chủ phiên từ nguồn được chỉ rõ; không dùng làm tên người khác. "
             "Tên hiển thị Telegram không phải tên đã xác minh tại ngân hàng. "
-            "Mọi số phải dùng {fact:id} từ facts; không tạo fact, không đánh số danh sách. Trả JSON {draft:string}.",
+            "Mọi số phải dùng {fact:id} từ facts; không tạo fact, không đánh số danh sách. "
+            "memory_result cho biết kết quả lưu của lượt này. Chỉ nói đã ghi nhớ/cập nhật một thông tin khi "
+            "saved=true và facts trong memory_result có trường đó với operation=replace. "
+            "Nếu facts rỗng thì không hứa đã lưu; nếu operation=conflict thì yêu cầu xác nhận. Trả JSON {draft:string}.",
             {"text": s["text"], "intent": s["plan"].get("intent", "advice"), "rules_draft": draft,
-             "known": s["known"], "facts": s["facts"], "context_parts": s["context_parts"]},
+             "known": s["known"], "facts": s["facts"], "context_parts": s["context_parts"],
+             "memory_result": s.get("memory_result", {})},
             schema=DraftSuggestion,
             purpose="draft",
             on_delta=preview if stream_sink.get() else None,

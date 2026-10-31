@@ -77,8 +77,8 @@ def test_openai_draft_receives_current_message_and_conversational_intent(tmp_pat
             return result({"category": "safe"})
         if "Phân loại hội thoại" in instruction:
             return result({"stage": "discover", "objection": None, "intent": "advice"})
-        if "Trích các đoạn" in instruction:
-            return result({"spans": []})
+        if "Trích xuất memory" in instruction:
+            return result({"facts": []})
         drafts.append(payload)
         return result({"draft": payload["rules_draft"]})
 
@@ -184,7 +184,7 @@ def test_memory_network_does_not_hold_database_lock(tmp_path, monkeypatch):
         entered.set()
         while not release.is_set():
             await asyncio.sleep(0.005)
-        return result({"spans": ["Thu nhập 45 triệu", "thu nhập 999 triệu"]})
+        return result({"facts": [{"key": "income", "value": "45000000", "unit": "đồng", "operation": "replace", "source_text": "Thu nhập 45 triệu"}]})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", post)
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -223,7 +223,8 @@ def test_memory_exhaustion_keeps_job_and_cooldown(tmp_path, monkeypatch):
     assert db.one("SELECT status FROM memory_jobs")["status"] == "pending"
     assert db.one("SELECT processed_seq FROM customer_sequences")["processed_seq"] == 0
     memory.flush("hoa", allow_llm=False)
-    assert db.one("SELECT status FROM memory_jobs")["status"] == "processed"
+    assert db.one("SELECT status FROM memory_jobs")["status"] == "pending"
+    assert not db.all("SELECT * FROM facts")
 
 
 def test_memory_wait_for_active_claim_has_deadline(tmp_path):
@@ -293,6 +294,13 @@ def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
                 return result({"category": "safe"})
             if "Phân loại" in kwargs["json"]["messages"][0]["content"]:
                 return result({"stage": "quote", "objection": None})
+            if "Trích xuất memory" in kwargs["json"]["messages"][0]["content"]:
+                return result({"facts": [
+                    {"key": key, "value": value, "unit": unit, "operation": "replace", "source_text": "Vay mua nhà"}
+                    for key, value, unit in [("product", "home_loan", ""), ("amount", "2000000000", "đồng"),
+                                             ("term", "240", "tháng"), ("income", "45000000", "đồng"),
+                                             ("debt", "0", "đồng"), ("property_value", "3000000000", "đồng")]
+                ]})
             return httpx.Response(503)
 
         monkeypatch.setattr(httpx.AsyncClient, "post", post)

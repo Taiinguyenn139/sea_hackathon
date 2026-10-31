@@ -1,69 +1,11 @@
 import json
-import re
 import time
-from decimal import Decimal
 
 from bank_tools.service import canonical, ident
 from harness.customer_profile import customer_profile
 from harness.llm import ExtractionSuggestion, LLMUnavailable, json_completion
-
-
-def extract(text):
-    low = text.lower()
-    slots = {}
-    if any(x in low for x in ["mua nhà", "vay nhà", "home_loan"]):
-        slots["product"] = ("home_loan", "")
-    elif any(x in low for x in ["tiêu dùng", "personal_loan"]):
-        slots["product"] = ("personal_loan", "")
-    elif any(x in low for x in ["thẻ", "credit_card"]):
-        slots["product"] = ("credit_card", "")
-    previous_money_end = 0
-    for match in re.finditer(r"(-?\d+(?:[.,]\d+)?)\s*(tỷ|triệu|nghìn|trieu|ty)", low):
-        value = (
-            Decimal(match[1].replace(",", "."))
-            * {"tỷ": 10**9, "ty": 10**9, "triệu": 10**6, "trieu": 10**6, "nghìn": 1000}[match[2]]
-        )
-        before = low[max(previous_money_end, match.start() - 120) : match.start()]
-        previous_money_end = match.end()
-        cues = {"income": ["thu nhập", "lương"], "debt": ["nợ", "trả nợ"], "property_value": ["giá nhà", "giá trị"]}
-        nearest = [(before.rfind(cue), key) for key, words in cues.items() for cue in words if cue in before]
-        key = max(nearest)[1] if nearest else "amount"
-        slots[key] = (str(value.quantize(Decimal(1))), "đồng")
-    if re.search(r"không (?:có |còn )?nợ|(?:nợ|trả nợ)(?: hàng tháng)?\s*(?:là |: )?0(?:\s|$|[.,;])", low):
-        slots["debt"] = ("0", "đồng")
-    term = re.search(r"(?:kỳ hạn|thời hạn|trong|vay)\s*(\d+)\s*(năm|tháng)", low)
-    if not term:
-        term = re.search(r"(\d+)\s*(năm|tháng)", low)
-    if term:
-        slots["term"] = (str(int(term[1]) * (12 if term[2] == "năm" else 1)), "tháng")
-    if any(x in low for x in ["lãi cao", "lãi sau", "tăng lãi"]):
-        slots["objection"] = ("rate_high", "")
-    if any(x in low for x in ["chồng", "vợ", "gia đình"]):
-        slots["objection"] = ("need_spouse", "")
-    if any(x in low for x in ["gọi lại", "hẹn", "liên hệ lại"]):
-        slots["commitment"] = ("Khách yêu cầu liên hệ lại", "")
-    return slots
-
-
-def corrects(text, key):
-    """Recognize an explicit current-value update for this field, not another clause."""
-    clauses = re.split(r"[;\n]|\.(?!\d)|,(?!\d)|\s+(?:và|nhưng)\s+", text.lower())
-    for clause in clauses:
-        if key not in extract(clause):
-            continue
-        # A proposed or negated change must not resolve conflicting statements.
-        intent = re.sub(r"không (?:có |còn )?nợ", "", clause)
-        if "?" in clause or re.search(
-            r"\b(?:nếu|giả sử|giả định|ước gì|mong muốn|dự kiến|sẽ|chưa|không)\b", intent,
-        ):
-            continue
-        if re.search(
-            r"\b(?:xác nhận|đính chính|sửa lại|chính xác|cập nhật|"
-            r"tăng (?:lên|thành)|giảm (?:xuống|còn)|đổi (?:sang|thành)|"
-            r"hiện tại|bây giờ|hiện nay|mới là)\b", clause,
-        ):
-            return True
-    return False
+from harness.memory.prompts import EXTRACTION_INSTRUCTION
+from harness.memory.rules import corrects, extract
 
 
 class Memory:
@@ -108,7 +50,10 @@ class Memory:
                     raise RuntimeError("memory sequence gap")
                 if job["status"] == "failed":
                     raise RuntimeError("memory job failed")
-                use_llm = allow_llm and self.settings and self.settings.llm_backend == "openai"
+                use_llm = self.settings and self.settings.llm_backend == "openai"
+                if use_llm and not allow_llm:
+                    # Preflight checks ordering but leaves interpretation for the LLM worker.
+                    return
                 if not use_llm:
                     self._write(c, job["turn_id"], customer, json.loads(job["payload"]))
                     self._finish(c, job, customer)
@@ -134,13 +79,7 @@ class Memory:
                 continue
             try:
                 # Provider calls must never hold the shared SQLite transaction/lock.
-                suggestion = json_completion(
-                    self.settings,
-                    "Trích các đoạn nguyên văn chứa thông tin nhu cầu tài chính. Trả JSON {spans:[string]}. Mỗi span phải là chuỗi con nguyên văn của text. Không tự tạo giá trị.",
-                    {"text": payload["text"]},
-                    schema=ExtractionSuggestion,
-                    purpose="extract",
-                )
+                suggestion = self.interpret(payload["text"], payload["session_id"], job["turn_id"], customer)
                 with self.db.transaction() as c:
                     current = c.execute("SELECT * FROM memory_jobs WHERE turn_id=?", (job["turn_id"],)).fetchone()
                     sequence = c.execute(
@@ -165,6 +104,30 @@ class Memory:
                 )
                 raise
 
+    def interpret(self, text, session_id, turn_id, customer=None):
+        history = self.db.all(
+            "SELECT id,text,reply FROM turns WHERE session_id=? AND rowid < "
+            "(SELECT rowid FROM turns WHERE id=?) ORDER BY rowid DESC LIMIT 12", (session_id, turn_id),
+        )[::-1]
+        session = self.db.one("SELECT mode FROM sessions WHERE id=?", (session_id,))
+        remembered = self.db.all(
+            "SELECT key,value,unit,status,channel,source_ref FROM facts WHERE customer_id=? "
+            "AND source_type='customer' AND status IN ('active','conflicted') ORDER BY rowid",
+            (customer,),
+        ) if customer and (not session or session["mode"] != "no_memory") else []
+        result = json_completion(
+            self.settings, EXTRACTION_INSTRUCTION,
+            {"text": text, "recent_conversation": history, "remembered_facts": remembered},
+            schema=ExtractionSuggestion, purpose="extract",
+        )
+        if result is None:
+            raise LLMUnavailable("missing_extraction")
+        return result
+
+    def turn_extraction(self, turn_id):
+        job = self.db.one("SELECT payload FROM memory_jobs WHERE turn_id=? AND status='processed'", (turn_id,))
+        return json.loads(job["payload"]).get("extraction") if job else None
+
     @staticmethod
     def _finish(c, job, customer):
         c.execute(
@@ -173,14 +136,19 @@ class Memory:
         c.execute("UPDATE customer_sequences SET processed_seq=? WHERE customer_id=?", (job["seq"], customer))
 
     def _write(self, c, turn, customer, payload, suggestion=None):
-        extracted = extract(payload["text"])
-        if suggestion and isinstance(suggestion.get("spans"), list):
-            for span in suggestion["spans"][:20]:
-                if isinstance(span, str) and span and span in payload["text"]:
-                    for key, value in extract(span).items():
-                        extracted.setdefault(key, value)
-        for key, (value, unit) in extracted.items():
-            correction = corrects(payload["text"], key)
+        if self.settings and self.settings.llm_backend == "openai":
+            if suggestion is None:
+                raise LLMUnavailable("missing_extraction")
+            extraction = ExtractionSuggestion.model_validate(suggestion).model_dump()
+            updates = extraction["facts"]
+            # Cache exactly what the model decided, atomically with the facts and sequence.
+            payload = {**payload, "extraction": extraction}
+            c.execute("UPDATE memory_jobs SET payload=? WHERE turn_id=?", (canonical(payload), turn))
+        else:
+            updates = [{"key": key, "value": value, "unit": unit, "operation": "replace" if corrects(payload["text"], key)
+                        else "observe"} for key, (value, unit) in extract(payload["text"]).items()]
+        for update in updates:
+            key, value, unit = update["key"], update["value"], update["unit"]
             fid = ident("cf_", [turn, key, value])
             old = c.execute(
                 "SELECT * FROM facts WHERE customer_id=? AND key=? AND source_type='customer' AND status IN ('active','conflicted')",
@@ -188,7 +156,10 @@ class Memory:
             ).fetchall()
             different = [f for f in old if f["value"] != value]
             status = "active"
-            if different and not correction and any(f["channel"] != payload["channel"] for f in different):
+            if update["operation"] == "conflict" or (
+                update["operation"] == "observe" and different
+                and any(f["channel"] != payload["channel"] for f in different)
+            ):
                 status = "conflicted"
                 c.execute(
                     "UPDATE facts SET status='conflicted' WHERE customer_id=? AND key=? AND source_type='customer' AND status IN ('active','conflicted')",
