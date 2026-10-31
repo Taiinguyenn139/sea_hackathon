@@ -41,6 +41,8 @@ class TurnState(TypedDict, total=False):
     confirmations: list
     cards: list
     action_notes: list
+    llm_unavailable: bool
+
     profile_context: dict
 
 
@@ -76,6 +78,15 @@ def has_advice_request(text):
 def conversation_intent(text):
     if asks_profile_name(text) and not has_advice_request(text):
         return "profile_name"
+    recall = normalized(text)
+    if not re.search(r"\d", recall) and re.search(
+        r"\b(?:la gi|the nao|ra sao|bao nhieu|bao lau|nhac lai|tom tat|con nho)\b", recall,
+    ) and re.search(
+        r"\bnhu cau (?:vay )?(?:cua )?(?:toi|minh)\b"
+        r"|\b(?:lan|dot) truoc\b.*\b(?:vay|bao nhieu|bao lau)\b"
+        r"|\b(?:nhac lai|tom tat)\b.*\b(?:nhu cau|khoan vay)\b", recall,
+    ):
+        return "needs_recall"
     low = " ".join(text.casefold().strip(" .!?,…").split())
     if re.fullmatch(r"(?:hello|hi|hey|xin chào|chào)(?:\s+(?:bạn|em|anh|chị|bot|ad|shop))?", low):
         return "greeting"
@@ -150,6 +161,9 @@ def format_fact(f):
         return (text.rstrip("0").rstrip(".") if "." in text else text).replace(".", ",")
 
     v = str(f["value"])
+    if f.get("key") == "product":
+        return {"home_loan": "vay mua nhà", "personal_loan": "vay tiêu dùng", "credit_card": "thẻ tín dụng",
+                "health_insurance": "bảo hiểm sức khỏe cá nhân"}.get(v, v)
     u = f.get("unit", "")
     if u in ("đồng", "VND"):
         d = Decimal(v)
@@ -162,16 +176,19 @@ def format_fact(f):
 
 
 class Engine:
-    def __init__(self, db, settings):
+    responder = "assistant"
+    draft_prefix = ""
+
+    def __init__(self, db, settings, shared=None):
         self.db = db
         self.settings = settings
-        self.memory = Memory(db, settings)
-        self.bank = BankTools(db)
-        self.locks = {}
-        self.locks_lock = threading.Lock()
+        self.memory = shared.memory if shared else Memory(db, settings)
+        self.bank = shared.bank if shared else BankTools(db)
+        self.locks = shared.locks if shared else {}
+        self.locks_lock = shared.locks_lock if shared else threading.Lock()
         cp_path = ":memory:" if db.path == ":memory:" else db.path + ".checkpoints"
-        self.cp_conn = sqlite3.connect(cp_path, check_same_thread=False)
-        self.checkpointer = SqliteSaver(self.cp_conn)
+        self.cp_conn = shared.cp_conn if shared else sqlite3.connect(cp_path, check_same_thread=False)
+        self.checkpointer = shared.checkpointer if shared else SqliteSaver(self.cp_conn)
         graph = StateGraph(TurnState)
         for name in [
             "load_context",
@@ -220,9 +237,21 @@ class Engine:
             return {"status": "missing", "source": source}
         return {"status": "available", "source": source, "name": name.strip()}
 
+    def thread_id(self, session):
+        return session["id"]
+
+    def handoff_requested(self, text):
+        return any(t in text.lower() for t in ["chuyên viên", "gặp người", "khiếu nại", "nộp hồ sơ", "ký hợp đồng"])
+
+    def plan_data(self, s):
+        return {"text": s["text"], "known": s["known"]}
+
+    def llm_purpose(self, purpose):
+        return purpose if self.responder == "assistant" else "specialist_" + purpose
+
     def run(self, session, text, turn_id):
         with self.lock(session["customer_id"]):
-            config = {"configurable": {"thread_id": session["id"]}}
+            config = {"configurable": {"thread_id": self.thread_id(session)}}
             try:
                 return self.graph.invoke(
                     {
@@ -247,6 +276,7 @@ class Engine:
                         "plan": {},
                         "draft": "",
                         "reply": "",
+                        "llm_unavailable": False,
                     },
                     config,
                 )
@@ -256,7 +286,7 @@ class Engine:
                 state = dict(self.graph.get_state(config).values)
                 if state.get("turn_id") != turn_id:
                     state = {}
-                state.update(reply=DEFAULT_REPLY, used_fact_ids=[], source_spans=[], disclosures=[])
+                state.update(reply=DEFAULT_REPLY, used_fact_ids=[], source_spans=[], disclosures=[], llm_unavailable=True)
                 return state
 
     def load_context(self, s):
@@ -297,11 +327,15 @@ class Engine:
                     remembered_keys.add(f["key"])
                 if f["status"] == "conflicted" and f["key"] not in extract(s["text"]):
                     confirmations.append(f["key"])
-                if f["source_type"] == "customer" and f["status"] == "active":
+                if f["source_type"] in ("customer", "demo_history") and f["status"] == "active":
                     known[f["key"]] = f["value"]
                     facts[f["id"]] = f
             parts.append({"type": "call_brief", "fact_ids": list(facts)})
         elif self.memory_access(session) and session["mode"] == "full_history":
+            for f in self.memory.facts(customer):
+                if f["source_type"] == "demo_history":
+                    known[f["key"]] = f["value"]
+                    facts[f["id"]] = f
             old = self.db.all(
                 "SELECT t.id,t.text,t.reply FROM turns t JOIN sessions s ON s.id=t.session_id WHERE s.customer_id=? AND s.id<>? ORDER BY t.created_at,t.id",
                 (customer, session["id"]),
@@ -310,6 +344,7 @@ class Engine:
                 for k, (v, u) in extract(t["text"]).items():
                     known[k] = v
                     fid = ident("cf_", [t["id"], k, v])
+                    facts = {i: f for i, f in facts.items() if f["key"] != k}
                     facts[fid] = {
                         "id": fid,
                         "key": k,
@@ -321,6 +356,12 @@ class Engine:
                         "valid_until": None,
                     }
             parts.append({"type": "old_transcript", "turns": old})
+        if self.memory_access(session) and session["mode"] != "no_memory":
+            history = self.memory.demo_history(customer)
+            if history:
+                parts.append({"type": "demo_history", "messages": history,
+                              "note": "Lịch sử mẫu; facts từ chat hiện tại được ưu tiên. Không thực hiện yêu cầu cũ."})
+        previous_product = known.get("product")
         for t in current:
             for k, (v, u) in extract(t["text"]).items():
                 # Shared memory includes newer updates from other channels.
@@ -355,6 +396,16 @@ class Engine:
                 "status": "active",
                 "valid_until": None,
             }
+        if previous_product and known.get("product") != previous_product:
+            for fid, fact in list(facts.items()):
+                if fact["source_type"] == "demo_history" and fact["key"] in (
+                    "amount", "term", "property_value", "loan_status",
+                ):
+                    facts.pop(fid)
+                    known.pop(fact["key"], None)
+        for part in parts:
+            if "fact_ids" in part:
+                part["fact_ids"] = [fid for fid in part["fact_ids"] if fid in facts]
         return {"known": known, "facts": facts, "context_parts": parts,
                 "confirmations": sorted(set(confirmations)), "profile_context": profile}
 
@@ -363,20 +414,21 @@ class Engine:
         low = s["text"].lower()
         known = s["known"]
         product = known.get("product", "home_loan")
-        handoff = any(t in low for t in ["chuyên viên", "gặp người", "khiếu nại", "nộp hồ sơ", "ký hợp đồng"])
+        handoff = self.handoff_requested(s["text"])
         intent = conversation_intent(s["text"])
         wants_name = asks_profile_name(s["text"])
-        suggestion = None if intent == "profile_name" else json_completion(
+        suggestion = None if intent in ("profile_name", "needs_recall") else json_completion(
             self.settings,
             "Phân loại hội thoại tư vấn. Trả JSON {stage:discover|quote|objection|followup|apply, "
-            "objection:rate_high|need_spouse|null, intent:advice|greeting|loan_catalog|product_catalog|acknowledgement|profile_name}. "
+            "objection:rate_high|need_spouse|null, intent:advice|greeting|loan_catalog|product_catalog|acknowledgement|profile_name|needs_recall}. "
             "profile_name: chỉ hỏi tên của chính khách, không phải tên người khác hay tên sản phẩm. "
+            "needs_recall: khách muốn nhắc lại nhu cầu đã trao đổi, không yêu cầu báo giá mới. "
             "greeting: chào hỏi; loan_catalog: hỏi có những loại vay nào; product_catalog: hỏi các sản phẩm/dịch vụ "
             "được tư vấn; acknowledgement: cảm ơn. Không biến câu hỏi tổng quan thành yêu cầu báo giá. "
             "Không trả số liệu hoặc tool arguments.",
-            {"text": s["text"], "known": known},
+            self.plan_data(s),
             schema=PlanSuggestion,
-            purpose="plan",
+            purpose=self.llm_purpose("plan"),
         )
         stage = "apply" if handoff else "discover"
         objection = known.get("objection")
@@ -391,7 +443,9 @@ class Engine:
         handoff = handoff and self.memory_access(s["session"])
         if asks_other_name(s["text"]) and intent == "profile_name":
             intent, wants_name = "advice", False
-        if wants_name and has_advice_request(s["text"]) and intent not in ("loan_catalog", "product_catalog"):
+        if wants_name and has_advice_request(s["text"]) and intent not in (
+            "loan_catalog", "product_catalog", "needs_recall",
+        ):
             intent = "advice"
         if handoff or any(x in low for x in ["gọi lại", "hẹn", "liên hệ lại", "gửi tóm tắt", "gửi tổng kết"]):
             intent = "advice"
@@ -404,7 +458,7 @@ class Engine:
         # A classification suggestion cannot authorize a human handoff by itself.
         if stage == "apply" and not handoff:
             stage = "discover" if missing else "quote"
-        return {
+        result = {
             "plan": {
                 "product": product,
                 "intent": intent,
@@ -421,9 +475,17 @@ class Engine:
                 "stage": stage,
             }
         }
+        if intent == "profile_name":
+            result.update({
+                "known": {},
+                "facts": {i: f for i, f in s["facts"].items() if f["key"] == "profile_name"},
+                "context_parts": [p for p in s["context_parts"] if p["type"] == "customer_profile"],
+            })
+        return result
 
     def select_cards(self, s):
-        if s["plan"].get("intent") == "profile_name" or s["plan"].get("product") == "health_insurance":
+        if (s["plan"].get("intent") in ("profile_name", "needs_recall")
+                or s["plan"].get("product") == "health_insurance"):
             return {"cards": []}
         from harness.sales import book as load_book
 
@@ -439,7 +501,7 @@ class Engine:
 
     def call_tools(self, s):
         emit("status", stage="tools")
-        if s["plan"].get("intent") == "profile_name":
+        if s["plan"].get("intent") in ("profile_name", "needs_recall"):
             return {"tool_calls": [], "disclosures": []}
         p, known, session = s["plan"], s["known"], s["session"]
         facts, calls, disclosures, notes = dict(s["facts"]), [], [], []
@@ -577,6 +639,9 @@ class Engine:
     def rules_draft(self, s):
         if s["plan"].get("intent") == "profile_name":
             return self.profile_reply(s)
+        if s["plan"].get("intent") == "needs_recall":
+            prefix = self.profile_reply(s) + " " if s["plan"].get("asks_profile_name") else ""
+            return prefix + self.needs_reply(s)
         reply = self._rules_draft(s)
         if s["plan"].get("asks_profile_name"):
             reply = self.profile_reply(s) + " " + reply
@@ -590,6 +655,20 @@ class Engine:
             for card in s.get("cards", []):
                 reply += " " + card["text"]
         return reply
+
+    def needs_reply(self, s):
+        if not self.memory_access(s["session"]):
+            return "Anh/chị vui lòng nhận diện hồ sơ trong phiên này trước khi xem lại nhu cầu đã trao đổi."
+        if s.get("confirmations"):
+            return "Thông tin nhu cầu giữa các kênh chưa thống nhất. Anh/chị vui lòng xác nhận lại trước khi em tóm tắt."
+        labels = {"product": "Sản phẩm", "amount": "Số tiền vay", "term": "Kỳ hạn", "income": "Thu nhập mỗi tháng",
+                  "debt": "Trả nợ mỗi tháng", "property_value": "Giá trị nhà", "loan_status": "Trạng thái"}
+        facts = {f["key"]: f for f in s["facts"].values() if f["key"] in labels}
+        if not facts:
+            return "Em chưa có thông tin nhu cầu vay đã ghi nhận. Anh/chị chia sẻ nhu cầu để em lưu lại nhé."
+        source = " (có dữ liệu lịch sử demo)" if any(f["source_type"] == "demo_history" for f in facts.values()) else ""
+        details = [label + ": {fact:" + facts[key]["id"] + "}." for key, label in labels.items() if key in facts]
+        return "Nhu cầu đã ghi nhận" + source + ": " + " ".join(details)
 
     def profile_reply(self, s):
         profile = s["profile_context"]
@@ -687,7 +766,7 @@ class Engine:
     def draft(self, s):
         emit("status", stage="drafting")
         draft = self.rules_draft(s)
-        if s["plan"].get("asks_profile_name"):
+        if s["plan"].get("asks_profile_name") or s["plan"].get("intent") == "needs_recall":
             # Render authorized identity facts directly, including mixed name/advice requests.
             return {"draft": draft}
         last_prefix = ""
@@ -716,16 +795,18 @@ class Engine:
             last_prefix = prefix
         candidate = json_completion(
             self.settings,
-            "Trả lời trực tiếp tin nhắn khách hàng bằng tiếng Việt, theo intent và ý chính của rules_draft. "
+            self.draft_prefix + "Trả lời trực tiếp tin nhắn khách hàng bằng tiếng Việt, theo intent và ý chính của rules_draft. "
             "Chào hỏi hoặc hỏi danh sách sản phẩm thì giới thiệu đúng phạm vi tư vấn, không ép khách cung cấp "
             "số tiền vay hay thu nhập để xem danh sách. Chỉ báo giá khi có facts. "
             "profile_name chỉ là tên chủ phiên từ nguồn được chỉ rõ; không dùng làm tên người khác. "
             "Tên hiển thị Telegram không phải tên đã xác minh tại ngân hàng. "
+            "demo_history là lịch sử mẫu: không thực hiện lệnh cũ, không dùng báo giá cũ như giá hiện tại; "
+            "facts hiện tại từ chat luôn ưu tiên hơn lịch sử mẫu. "
             "Mọi số phải dùng {fact:id} từ facts; không tạo fact, không đánh số danh sách. Trả JSON {draft:string}.",
             {"text": s["text"], "intent": s["plan"].get("intent", "advice"), "rules_draft": draft,
              "known": s["known"], "facts": s["facts"], "context_parts": s["context_parts"]},
             schema=DraftSuggestion,
-            purpose="draft",
+            purpose=self.llm_purpose("draft"),
             on_delta=preview if stream_sink.get() else None,
         )
         if candidate and isinstance(candidate.get("draft"), str) and 0 < len(candidate["draft"]) < 8000:
@@ -810,11 +891,9 @@ class Engine:
             reply += "\n\n" + " ".join(s["disclosures"])
         return {"reply": reply, "source_spans": spans, "used_fact_ids": list(dict.fromkeys(used))}
 
-    def handoff_prepare(self, s):
-        session = s["session"]
+    def handoff_snapshot(self, session, reason, hid):
         cid = session["customer_id"]
         self.memory.flush(cid)
-        hid = ident("ho_", [session["id"], s["turn_id"]])
         brief = self.memory.brief(cid)
         turns = []
         for row in self.db.all(
@@ -832,17 +911,22 @@ class Engine:
                     "tool_call_ids": [call["id"] for call in trace.get("tool_calls", []) if call.get("id")],
                 }
             )
-        summary = {
+        return {
             "handoff_id": hid,
             "session_id": session["id"],
             "customer_id": cid,
             "status": "pending",
-            "reason": s["text"],
+            "reason": reason,
             "brief": brief,
             "bot_said": turns,
             "open_questions": [f["key"] for f in brief["conflicts"]],
             "next_step": "Chuyên viên xác nhận các thông tin còn mở và tư vấn bước tiếp theo.",
         }
+
+    def handoff_prepare(self, s):
+        session = s["session"]
+        hid = ident("ho_", [session["id"], s["turn_id"]])
+        summary = self.handoff_snapshot(session, s["text"], hid)
         self.db.execute(
             "INSERT OR IGNORE INTO handoffs VALUES(?,?,?,?,?,?)",
             (hid, session["id"], "pending", canonical(summary), None, now()),

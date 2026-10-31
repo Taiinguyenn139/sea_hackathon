@@ -202,3 +202,11 @@ def test_expired_insurance_quote_fails_closed(client):
     result = send(client, sid, auth, REQUESTS["health_insurance"])
     assert any(e["guard_id"] == "G2" for e in result["guard_events"])
     assert not numeric_claims(result["reply"])
+
+
+def test_insurance_needs_recall_uses_product_label(client):
+    sid, auth = start(client)
+    send(client, sid, auth, REQUESTS["health_insurance"], "insurance")
+    result = send(client, sid, auth, "Nhắc lại nhu cầu của tôi", "recall")
+    assert "bảo hiểm sức khỏe cá nhân" in result["reply"]
+    assert "health_insurance" not in result["reply"]

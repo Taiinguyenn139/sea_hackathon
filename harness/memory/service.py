@@ -24,14 +24,24 @@ def extract(text):
     elif "thẻ" in low:
         slots["product"] = ("credit_card", "")
     previous_money_end = 0
-    for match in re.finditer(r"(-?\d+(?:[.,]\d+)?)\s*(tỷ|triệu|nghìn|trieu|ty)", low):
-        value = (
-            Decimal(match[1].replace(",", "."))
-            * {"tỷ": 10**9, "ty": 10**9, "triệu": 10**6, "trieu": 10**6, "nghìn": 1000}[match[2]]
-        )
+    for match in re.finditer(
+        r"(?<![\d.,])(-?(?:\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?))\s*(tỷ|triệu|nghìn|trieu|ty|đồng|vnd)\b", low,
+    ):
+        raw, currency = match[1], match[2]
+        if currency in ("đồng", "vnd"):
+            if not re.fullmatch(r"-?(?:\d{1,3}(?:[.,]\d{3})+|\d+)", raw):
+                continue
+            value = Decimal(raw.replace(".", "").replace(",", ""))
+        else:
+            if raw.count(".") + raw.count(",") > 1:
+                raw = raw.replace(".", "").replace(",", "")
+            value = Decimal(raw.replace(",", ".")) * {
+                "tỷ": 10**9, "ty": 10**9, "triệu": 10**6, "trieu": 10**6, "nghìn": 1000,
+            }[currency]
         before = low[max(previous_money_end, match.start() - 120) : match.start()]
         previous_money_end = match.end()
-        cues = {"income": ["thu nhập", "lương"], "debt": ["nợ", "trả nợ"], "property_value": ["giá nhà", "giá trị"]}
+        cues = {"income": ["thu nhập", "lương"], "debt": ["nợ", "trả nợ"],
+                "property_value": ["giá nhà", "giá trị", "căn nhà", "và nhà"]}
         nearest = [(before.rfind(cue), key) for key, words in cues.items() for cue in words if cue in before]
         if not nearest and slots.get("product", (None,))[0] == "health_insurance":
             continue  # A premium/benefit is not a requested loan amount.
@@ -50,6 +60,8 @@ def extract(text):
         slots["objection"] = ("need_spouse", "")
     if any(x in low for x in ["gọi lại", "hẹn", "liên hệ lại"]):
         slots["commitment"] = ("Khách yêu cầu liên hệ lại", "")
+    if re.search(r"\btôi (?:sẽ |quyết định |muốn )?(?:hoãn|dừng kế hoạch|chưa vay|không vay nữa)\b", low):
+        slots["loan_status"] = ("tạm hoãn kế hoạch vay", "")
     return slots
 
 
@@ -239,7 +251,19 @@ class Memory:
             "UPDATE facts SET status=CASE WHEN source_type='bank_tool' THEN 'expired' ELSE 'stale' END WHERE customer_id=? AND valid_until IS NOT NULL AND valid_until<? AND status='active'",
             (customer, date),
         )
-        return self.db.all("SELECT * FROM facts WHERE customer_id=? ORDER BY observed_at,id", (customer,))
+        live = self.db.all("SELECT * FROM facts WHERE customer_id=? ORDER BY observed_at,id", (customer,))
+        if self.settings and self.settings.demo_phone_identity:
+            from harness.demo_history import initial_facts
+
+            return initial_facts(customer, date, live) + live
+        return live
+
+    def demo_history(self, customer):
+        if not self.settings or not self.settings.demo_phone_identity:
+            return []
+        from harness.demo_history import history
+
+        return history(customer, self.db.setting("clock"))
 
     def profile(self, customer):
         return customer_profile(self.db, customer)
@@ -265,7 +289,8 @@ class Memory:
             "cif": profile["cif"],
             "phone": phone["phone_e164"] if phone else profile.get("phone"),
             "facts": facts,
-            "needs": [f for f in facts if f["source_type"] == "customer" and f["status"] == "active"],
+            "needs": [f for f in facts if f["source_type"] in ("customer", "demo_history") and f["status"] == "active"],
+            "demo_history": self.demo_history(customer),
             "conflicts": [f for f in facts if f["status"] == "conflicted"],
             "quotes": [f for f in facts if f["source_type"] == "bank_tool"],
             "warnings": [f for f in facts if f["status"] in ("expired", "stale", "conflicted")],

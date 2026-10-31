@@ -31,7 +31,9 @@ class PlanSuggestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     stage: Literal["discover", "quote", "objection", "followup", "apply"]
     objection: Literal["rate_high", "need_spouse"] | None = None
-    intent: Literal["advice", "greeting", "loan_catalog", "product_catalog", "acknowledgement", "profile_name"] = "advice"
+    intent: Literal[
+        "advice", "greeting", "loan_catalog", "product_catalog", "acknowledgement", "profile_name", "needs_recall",
+    ] = "advice"
 
 
 class ExtractionSuggestion(BaseModel):

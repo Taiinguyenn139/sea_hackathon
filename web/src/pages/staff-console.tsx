@@ -146,7 +146,7 @@ export function StaffConsole() {
       setBusy(false);
     }
   }
-  const pending = items.filter((x) => x.status !== "completed").length;
+  const pending = items.filter((x) => x.target !== "ai_specialist" && x.status !== "completed").length;
   const openCallbacks = callbacks.filter((x) => x.status !== "completed").length;
   const filteredItems = items.filter((item) =>
     `${item.reason ?? ""} ${item.customer_id ?? ""} ${item.handoff_id}`.toLocaleLowerCase("vi").includes(query.trim().toLocaleLowerCase("vi")),
@@ -169,7 +169,7 @@ export function StaffConsole() {
       <div className="workspace-stats" aria-label="Tổng quan công việc">
         <div className="work-stat"><span className="stat-icon blue"><Inbox size={22} /></span><div><span>Chờ tiếp nhận</span><strong>{loading ? "—" : pending}</strong></div><small>Yêu cầu chuyển tiếp</small></div>
         <div className="work-stat"><span className="stat-icon amber"><Clock3 size={22} /></span><div><span>Cần gọi lại</span><strong>{loading ? "—" : openCallbacks}</strong></div><small>Cuộc hẹn đang mở</small></div>
-        <div className="work-stat"><span className="stat-icon mint"><CheckCircle2 size={22} /></span><div><span>Đã hoàn tất</span><strong>{loading ? "—" : items.length - pending}</strong></div><small>Yêu cầu đã xử lý</small></div>
+        <div className="work-stat"><span className="stat-icon mint"><CheckCircle2 size={22} /></span><div><span>Đã hoàn tất</span><strong>{loading ? "—" : items.filter((x) => x.status === "completed").length}</strong></div><small>Yêu cầu đã xử lý</small></div>
       </div>
       <div className="workspace-toolbar">
         <div className="tabs">
@@ -290,11 +290,12 @@ export function StaffConsole() {
                     >
                       {item.status === "completed"
                         ? "Đã hoàn tất"
-                        : "Chờ tiếp nhận"}
+                        : item.target === "ai_specialist" ? "Chuyên viên đang hỗ trợ" : "Chờ tiếp nhận"}
                     </span>
                     <ArrowRight size={16} />
                   </div>
                   <strong>{item.reason || "Yêu cầu hỗ trợ"}</strong>
+                  {item.target === "ai_specialist" && <span className="muted">Chuyên viên mô phỏng</span>}
                   <span className="muted">
                     {item.customer_id ?? item.handoff_id.slice(0, 14)}
                   </span>
@@ -358,13 +359,20 @@ export function StaffConsole() {
                     {turns.map((turn, i) => (
                       <div className="transcript-turn" key={i}>
                         <strong>
-                          {turn.role === "user" ? "Khách hàng" : "Trợ lý"}
+                          {turn.role === "user" ? "Khách hàng" : turn.responder === "ai_specialist" ? "Chuyên viên tư vấn" : "Trợ lý"}
                         </strong>
                         <p>{turn.text}</p>
                       </div>
                     ))}
                   </details>
-                  {active.status === "completed" ? (
+                  {active.target === "ai_specialist" ? (
+                    <div className="confirmation-box">
+                      <strong>Chuyên viên mô phỏng · {active.status === "completed" ? "Đã hoàn tất" : "Đang xử lý"}</strong>
+                      <p>{active.completion?.notes ?? "Khách đang trao đổi trong phiên chat. Yêu cầu người thật sẽ xuất hiện riêng trong hàng chờ."}</p>
+                      {active.completion?.next_step && <p>{active.completion.next_step}</p>}
+                      {!!active.completion?.open_questions?.length && <p>Còn cần xác nhận: {active.completion.open_questions.join(", ")}</p>}
+                    </div>
+                  ) : active.status === "completed" ? (
                     <p className="success-message">
                       <Check size={16} /> Yêu cầu đã được hoàn tất.
                     </p>

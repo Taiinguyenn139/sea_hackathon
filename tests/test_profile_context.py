@@ -106,6 +106,7 @@ def test_name_question_variants(client, question):
 
 def test_mixed_name_and_loan_request_answers_both(client):
     session = enter(client)
+    client.app.state.harness.settings.demo_phone_identity = False  # No seeded needs for this clarification case.
     result = send(client, session, "Tôi tên gì, và muốn vay mua nhà?")
     assert "Trần Minh An" in result["reply"] and "số tiền muốn vay" in result["reply"]
     assert trace(client, session)["plan"]["intent"] == "advice"
