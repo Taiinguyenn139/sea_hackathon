@@ -162,11 +162,12 @@ def test_memory_network_does_not_hold_database_lock(tmp_path, monkeypatch):
         try:
             other = pool.submit(db.one, "SELECT value FROM settings WHERE key='clock'")
             assert other.result(timeout=0.5)
-            with pytest.raises(LLMUnavailable):
-                memory.flush("hoa")
+            same_customer = pool.submit(memory.flush, "hoa")
+            assert not same_customer.done()
         finally:
             release.set()
         worker.result(timeout=3)
+        same_customer.result(timeout=3)
     assert db.one("SELECT processed_seq FROM customer_sequences WHERE customer_id='hoa'")["processed_seq"] == 1
     assert db.one("SELECT count(*) AS n FROM facts WHERE source_ref='turn-a'")["n"] == 1
     assert db.one("SELECT value FROM facts WHERE source_ref='turn-a'")["value"] == "45000000"
@@ -192,6 +193,20 @@ def test_memory_exhaustion_keeps_job_and_cooldown(tmp_path, monkeypatch):
     assert db.one("SELECT processed_seq FROM customer_sequences")["processed_seq"] == 0
     memory.flush("hoa", allow_llm=False)
     assert db.one("SELECT status FROM memory_jobs")["status"] == "processed"
+
+
+def test_memory_wait_for_active_claim_has_deadline(tmp_path):
+    db = Database(str(tmp_path / "busy.sqlite3"))
+    memory = Memory(db, configured(llm_call_budget_seconds=0.05))
+    with db.transaction() as conn:
+        memory.enqueue(conn, "turn", "hoa", "session", "web", "Thu nhập 45 triệu")
+        conn.execute("UPDATE memory_jobs SET status='processing',lease_until=?", (time.time() + 30,))
+    started = time.monotonic()
+    with pytest.raises(LLMUnavailable):
+        memory.flush("hoa")
+    assert time.monotonic() - started < 0.5
+    assert db.one("SELECT processed_seq FROM customer_sequences")["processed_seq"] == 0
+    assert db.one("SELECT status FROM memory_jobs")["status"] == "processing"
 
 
 def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
