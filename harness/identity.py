@@ -4,6 +4,7 @@ Only the identity input file is read here. Scenario sessions, reference answers
 and their verification flags must not grant permissions in the running app.
 """
 
+import re
 import secrets
 from pathlib import Path
 
@@ -31,7 +32,6 @@ def _load_profiles():
             "phone": identity.phone,
             "bank_customer_id": identity.bank_customer_id,
             "name": identity.full_name,
-            "dob": identity.date_of_birth.isoformat(),
             "segment": identity.segment,
             "runtime_profile": identity.runtime_profile,
         }
@@ -70,9 +70,30 @@ def resolve_identity(identifier):
     return profile["id"] if profile else None
 
 
-def verify_identity(identifier, dob):
-    """Compare only against the DOB for the server-bound demo identity."""
+def verify_identity(identifier, phone):
+    """Match a demo phone to the bound fixture; this is not a bank login."""
     profile = get_profile(identifier)
-    if not profile or not isinstance(dob, str) or not dob.isascii():
+    if not profile:
         return False
-    return secrets.compare_digest(profile["dob"], dob)
+    try:
+        submitted = normalize_phone(phone)
+    except (TypeError, ValueError):
+        return False
+    # Unlike profile selection, an alias is never accepted as phone proof.
+    return secrets.compare_digest(profile["phone"], submitted)
+
+
+_PHONE_CLAIM = re.compile(r"(?<![\w+])(?:0|\+84)(?:[ \t-]*[0-9]){9}(?!\w|[ \t-]*[0-9])")
+
+
+def extract_phone_claims(text):
+    """Find complete local/+84 phone tokens, without consuming loan amounts."""
+    phones = []
+    for match in _PHONE_CLAIM.finditer(text):
+        try:
+            phone = normalize_phone(match[0])
+        except (TypeError, ValueError):
+            continue
+        if phone not in phones:
+            phones.append(phone)
+    return phones

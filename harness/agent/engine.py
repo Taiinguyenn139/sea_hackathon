@@ -124,6 +124,19 @@ class Engine:
         with self.locks_lock:
             return self.locks.setdefault(key, threading.RLock())
 
+    def memory_access(self, session):
+        """Separate fixture recognition from channel-owned prospect history."""
+        if session.get("verified", False):
+            return True
+        customer = session["customer_id"]
+        return bool(self.db.one(
+            "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
+            (customer, session.get("channel"), session.get("external_id")),
+        ) or self.db.one(
+            "SELECT session_id FROM phone_sessions WHERE session_id=? AND customer_id=?",
+            (session.get("id"), customer),
+        ))
+
     def run(self, session, text, turn_id):
         with self.lock(session["customer_id"]):
             return self.graph.invoke(
@@ -149,7 +162,7 @@ class Engine:
         session = s["session"]
         customer = session["customer_id"]
         job = self.db.one("SELECT seq FROM memory_jobs WHERE turn_id=?", (s["turn_id"],))
-        if session.get("verified", False):
+        if self.memory_access(session):
             self.memory.flush(customer, job["seq"] - 1 if job else None)
         current = self.db.all(
             "SELECT id,text,reply FROM turns WHERE session_id=? ORDER BY created_at,id", (session["id"],)
@@ -158,7 +171,7 @@ class Engine:
         facts = {}
         parts = []
         confirmations = []
-        if session.get("verified", False) and session["mode"] == "harness":
+        if self.memory_access(session) and session["mode"] == "harness":
             for f in self.memory.facts(customer):
                 if f["status"] == "conflicted" and f["key"] not in extract(s["text"]):
                     confirmations.append(f["key"])
@@ -166,7 +179,7 @@ class Engine:
                     known[f["key"]] = f["value"]
                     facts[f["id"]] = f
             parts.append({"type": "call_brief", "fact_ids": list(facts)})
-        elif session.get("verified", False) and session["mode"] == "full_history":
+        elif self.memory_access(session) and session["mode"] == "full_history":
             old = self.db.all(
                 "SELECT t.id,t.text,t.reply FROM turns t JOIN sessions s ON s.id=t.session_id WHERE s.customer_id=? AND s.id<>? ORDER BY t.created_at,t.id",
                 (customer, session["id"]),
@@ -186,8 +199,13 @@ class Engine:
                         "valid_until": None,
                     }
             parts.append({"type": "old_transcript", "turns": old})
+        remembered_keys = set(known) if session["mode"] == "harness" else set()
         for t in current:
             for k, (v, u) in extract(t["text"]).items():
+                # Shared memory includes newer updates from other channels.
+                # An older turn in this session must not replace those values.
+                if k in remembered_keys:
+                    continue
                 known[k] = v
                 fid = ident("cf_", [t["id"], k, v])
                 facts = {i: f for i, f in facts.items() if f["key"] != k}
@@ -237,7 +255,7 @@ class Engine:
             if suggestion.get("objection") in ("rate_high", "need_spouse"):
                 objection = suggestion["objection"]
             handoff = handoff or stage == "apply"
-        handoff = handoff and bool(s["session"].get("verified", False))
+        handoff = handoff and self.memory_access(s["session"])
         slots = ["income", "debt"] if product == "credit_card" else ["amount", "term", "income", "debt"]
         if product == "home_loan":
             slots.append("property_value")
@@ -247,7 +265,7 @@ class Engine:
                 "product": product,
                 "public_info": not known.get("amount")
                 and any(x in low for x in ["lãi suất", "ưu đãi", "điều kiện", "phí"]),
-                "private_request": not s["session"].get("verified", False)
+                "private_request": not self.memory_access(s["session"])
                 and any(x in low for x in ["lần trước", "lịch sử", "hồ sơ của tôi", "gặp chuyên viên", "crm"]),
                 "handoff": handoff,
                 "missing": missing,
@@ -292,11 +310,11 @@ class Engine:
             return {
                 "facts": facts,
                 "tool_calls": [],
-                "action_notes": ["Anh/chị vui lòng xác minh để xem thông tin cá nhân hoặc gặp chuyên viên."],
+                "action_notes": ["Anh/chị vui lòng gửi số điện thoại khớp hồ sơ demo trong phiên chat để xem thông tin cá nhân hoặc gặp chuyên viên."],
             }
         if p["callback"]:
             if "schedule_callback" not in available:
-                notes.append("Anh/chị vui lòng xác minh trước khi đặt lịch gọi lại.")
+                notes.append("Anh/chị vui lòng gửi số điện thoại khớp hồ sơ demo trước khi đặt lịch gọi lại.")
             else:
                 low = s["text"].lower()
                 iso = re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})", s["text"])
@@ -377,7 +395,7 @@ class Engine:
                     call("calc_installment", args)
         if p["summary"]:
             if "send_summary" not in available:
-                notes.append("Anh/chị vui lòng xác minh trước khi gửi tóm tắt.")
+                notes.append("Anh/chị vui lòng gửi số điện thoại khớp hồ sơ demo trước khi gửi tóm tắt.")
             elif not error and not unsuitable:
                 ids = [
                     f["id"] for f in facts.values() if f["source_type"] == "bank_tool" and f.get("observed_at") == as_of

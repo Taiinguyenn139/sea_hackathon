@@ -148,7 +148,7 @@ Không dùng `demo_scenarios.yaml` để ghi đè sự thật trong hệ thống
 báo giá cũ và lời khách nói thuộc lịch sử hội thoại, còn bảng lãi/ưu đãi mới
 thuộc nguồn dữ liệu ngân hàng mà agent phải tra lại.
 
-Backend dùng `simulators/datasets/identity_v1/identities.json` làm nguồn xác minh
-ngày sinh; `bank.yaml` là fixture cũ, không còn là nguồn xác minh. Dữ liệu identity
+Backend dùng `simulators/datasets/identity_v1/identities.json` làm nguồn nhận diện
+số điện thoại trong phiên chat demo; `bank.yaml` là fixture cũ, không còn là nguồn nhận diện. Dữ liệu identity
 được nối với `customers.yaml` qua `bank_customer_id`, tách khỏi dữ liệu nghiệp vụ. Telegram có fixture promotion riêng để phục vụ adapter
 của main; xem [tích hợp ứng dụng](INTEGRATION.md#tích-hợp-sẵn-trên-main-bankwise).

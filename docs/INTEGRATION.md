@@ -375,9 +375,11 @@ Adapter lưu kết quả vào tool_calls/facts để console và benchmark truy 
 Backend truyền `as_of` từ ngày nghiệp vụ `/admin/clock` vào **mọi lần gọi**, kể cả xác minh.
 Ngày demo mặc định là 2026-10-31. Bảng giá hết hiệu lực sẽ báo lỗi để yêu cầu cập nhật dữ liệu.
 
-- `POST /sessions/{sid}/verify` dùng 10 hồ sơ trong
+- Khách gửi số điện thoại trong chat để nhận diện đúng hồ sơ demo của phiên.
+  `POST /sessions/{sid}/verify` nhận `{phone}` và đối chiếu 10 hồ sơ trong
   `simulators/datasets/identity_v1/identities.json` qua `harness/identity.py`;
-  có giới hạn thử sai, che ngày sinh trong audit log và xác minh riêng từng phiên.
+  không nhận ngày sinh, có giới hạn thử sai và che phone trong audit log.
+  Nhận diện demo không chứng minh quyền sở hữu số; CRM vẫn yêu cầu login riêng.
 - `GET /sessions/{sid}/tools` dùng Bearer session_token trả 6 hoặc 8 schema theo trạng thái xác minh.
   Không nhận cờ đăng nhập/xác minh hay customer_id từ frontend để cấp quyền tool.
 - `user_id` bên ngoài là số điện thoại dạng chuỗi; registry nối trực tiếp với

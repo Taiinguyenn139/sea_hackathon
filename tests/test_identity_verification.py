@@ -48,8 +48,8 @@ def new_session(client, identifier, channel="web"):
     return session, {"Authorization": "Bearer " + session["session_token"]}
 
 
-def verify(client, session, auth, dob):
-    return client.post(f"/sessions/{session['session_id']}/verify", headers=auth, json={"dob": dob})
+def verify(client, session, auth, phone):
+    return client.post(f"/sessions/{session['session_id']}/verify", headers=auth, json={"phone": phone})
 
 
 def tools(client, session, auth):
@@ -70,22 +70,22 @@ def test_demo_directory_exposes_ten_phone_profiles_from_identity_data(client):
         profile = by_phone[identity.phone]
         assert profile["phone"] == identity.phone
         assert profile["name"] == identity.full_name
-        assert profile["dob"] == identity.date_of_birth.isoformat()
+        assert "dob" not in profile and "date_of_birth" not in profile
         assert profile.get("runtime_profile") == identity.runtime_profile
 
 
 @pytest.mark.parametrize("identity", IDENTITIES, ids=lambda identity: identity.phone)
-def test_each_identity_verifies_only_its_own_dob(client, identity):
+def test_each_identity_verifies_only_its_own_phone(client, identity):
     session, auth = new_session(client, identity.phone)
     assert session["user_id"] == identity.phone
     assert tools(client, session, auth) == PUBLIC_TOOLS
     other = next(row for row in IDENTITIES if row.user_id != identity.user_id)
-    denied = verify(client, session, auth, other.date_of_birth.isoformat())
+    denied = verify(client, session, auth, other.phone)
     assert denied.status_code == 200, denied.text
     assert denied.json()["identity_status"] == "unverified"
     assert denied.json()["brief"]["redacted"] is True
     assert tools(client, session, auth) == PUBLIC_TOOLS
-    accepted = verify(client, session, auth, identity.date_of_birth.isoformat())
+    accepted = verify(client, session, auth, "+84" + identity.phone[1:])
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["identity_status"] == "verified"
     assert accepted.json()["brief"]["name"] == identity.full_name
@@ -109,10 +109,10 @@ def test_verification_is_specific_to_session_and_channel_and_never_customer_logi
     telegram, telegram_auth = new_session(client, "+84" + identity.phone[1:], "telegram")
     assert web["user_id"] == telegram["user_id"] == identity.phone
     assert web["session_id"] != telegram["session_id"]
-    assert verify(client, web, web_auth, identity.date_of_birth.isoformat()).json()["identity_status"] == "verified"
+    assert verify(client, web, web_auth, "+84" + identity.phone[1:]).json()["identity_status"] == "verified"
     assert tools(client, web, web_auth) == VERIFIED_TOOLS
     assert tools(client, telegram, telegram_auth) == PUBLIC_TOOLS
-    assert verify(client, telegram, telegram_auth, identity.date_of_birth.isoformat()).json()["identity_status"] == "verified"
+    assert verify(client, telegram, telegram_auth, "+84" + identity.phone[1:]).json()["identity_status"] == "verified"
     assert tools(client, telegram, telegram_auth) == VERIFIED_TOOLS
     harness = client.app.state.harness
     result = harness.engine.bank.call(
@@ -127,9 +127,9 @@ def test_another_sessions_capability_cannot_verify_or_read_tools(client):
     identity = IDENTITIES[2]
     target, _ = new_session(client, identity.phone)
     _, attacker_auth = new_session(client, IDENTITIES[3].phone)
-    assert verify(client, target, attacker_auth, identity.date_of_birth.isoformat()).status_code == 403
-    assert verify(client, target, {}, identity.date_of_birth.isoformat()).status_code == 403
-    assert verify(client, target, ADMIN, identity.date_of_birth.isoformat()).status_code == 403
+    assert verify(client, target, attacker_auth, "+84" + identity.phone[1:]).status_code == 403
+    assert verify(client, target, {}, "+84" + identity.phone[1:]).status_code == 403
+    assert verify(client, target, ADMIN, "+84" + identity.phone[1:]).status_code == 403
     assert client.get(f"/sessions/{target['session_id']}/tools", headers=attacker_auth).status_code == 403
     assert client.app.state.harness.session(target["session_id"])["verified"] == 0
 
@@ -141,7 +141,7 @@ def test_alias_phone_and_e164_share_identity_rate_limit_across_different_ips(cli
         session, auth = new_session(client, identifier)
         source = TestClient(client.app, client=(f"198.51.100.{index + 1}", 50000))
         try:
-            denied = verify(source, session, auth, "1900-01-01")
+            denied = verify(source, session, auth, IDENTITIES[1].phone)
             assert denied.status_code == 200, denied.text
             assert denied.json()["identity_status"] == "unverified"
         finally:
@@ -149,7 +149,7 @@ def test_alias_phone_and_e164_share_identity_rate_limit_across_different_ips(cli
     session, auth = new_session(client, "+84" + identity.phone[1:])
     source = TestClient(client.app, client=("198.51.100.100", 50000))
     try:
-        assert verify(source, session, auth, identity.date_of_birth.isoformat()).status_code == 429
+        assert verify(source, session, auth, "+84" + identity.phone[1:]).status_code == 429
     finally:
         source.close()
     attempts = client.app.state.harness.db.all("SELECT identity,source FROM auth_attempts")
@@ -158,19 +158,17 @@ def test_alias_phone_and_e164_share_identity_rate_limit_across_different_ips(cli
     assert len({row["source"] for row in attempts}) == 5
 
 
-def test_verification_audit_redacts_dob_from_database(client):
+def test_verification_audit_redacts_supplied_phone_arguments(client):
     identity = IDENTITIES[9]
     session, auth = new_session(client, identity.phone)
-    assert verify(client, session, auth, "1900-01-01").json()["identity_status"] == "unverified"
-    assert verify(client, session, auth, identity.date_of_birth.isoformat()).json()["identity_status"] == "verified"
+    assert verify(client, session, auth, IDENTITIES[0].phone).json()["identity_status"] == "unverified"
+    assert verify(client, session, auth, identity.phone).json()["identity_status"] == "verified"
     db = client.app.state.harness.db
     calls = db.all("SELECT args,result FROM tool_calls WHERE tool='verify_identity'")
     assert len(calls) == 2
-    assert all(json.loads(row["args"])["dob"] == "[redacted]" for row in calls)
-    with db.lock:
-        persisted = "\n".join(db.conn.iterdump())
-    assert identity.date_of_birth.isoformat() not in persisted
-    assert "1900-01-01" not in persisted
+    assert all(json.loads(row["args"])["phone"] == "[redacted]" for row in calls)
+    assert identity.phone not in json.dumps([row["args"] for row in calls])
+    assert IDENTITIES[0].phone not in json.dumps([row["args"] for row in calls])
 
 
 def test_all_phone_ids_map_to_the_expected_bank_customer(client):
@@ -186,7 +184,7 @@ def test_all_phone_ids_map_to_the_expected_bank_customer(client):
 def test_phone_and_old_alias_share_history_without_leaking_it_to_new_session(client, identity):
     old, old_auth = new_session(client, identity.runtime_profile)
     assert old["user_id"] == identity.phone
-    assert verify(client, old, old_auth, identity.date_of_birth.isoformat()).json()["identity_status"] == "verified"
+    assert verify(client, old, old_auth, "+84" + identity.phone[1:]).json()["identity_status"] == "verified"
     written = client.post(f"/sessions/{old['session_id']}/messages", headers=old_auth, json={
         "text": "Thu nhập 45 triệu mỗi tháng", "client_message_id": "legacy-income",
     })
@@ -200,7 +198,7 @@ def test_phone_and_old_alias_share_history_without_leaking_it_to_new_session(cli
     phone, phone_auth = new_session(client, identity.phone)
     assert tools(client, phone, phone_auth) == PUBLIC_TOOLS
     assert client.get(f"/customers/{identity.phone}/brief", headers=phone_auth).status_code == 401
-    accepted = verify(client, phone, phone_auth, identity.date_of_birth.isoformat())
+    accepted = verify(client, phone, phone_auth, "+84" + identity.phone[1:])
     assert accepted.status_code == 200
     assert any(fact["key"] == "income" for fact in accepted.json()["brief"]["facts"])
     assert len({row["customer_id"] for row in client.app.state.harness.db.all("SELECT * FROM sessions")}) == 1
@@ -225,3 +223,74 @@ def test_unknown_or_numeric_identity_is_not_silently_bound(client, identifier, e
     response = client.post("/sessions", json={"demo_profile": identifier})
     assert response.status_code == expected_status
     assert not client.app.state.harness.db.all("SELECT * FROM sessions")
+
+
+@pytest.mark.parametrize("include_phone", [False, True])
+def test_dob_payload_is_rejected_instead_of_falling_back_to_old_verification(client, include_phone):
+    identity = IDENTITIES[0]
+    session, auth = new_session(client, identity.phone)
+    body = {"dob": identity.date_of_birth.isoformat()}
+    if include_phone:
+        body["phone"] = identity.phone
+    response = client.post(f"/sessions/{session['session_id']}/verify", headers=auth, json=body)
+    assert response.status_code == 422
+    assert tools(client, session, auth) == PUBLIC_TOOLS
+    assert not client.app.state.harness.db.all("SELECT * FROM tool_calls WHERE tool='verify_identity'")
+
+
+def chat(client, session, auth, text, message_id):
+    response = client.post(f"/sessions/{session['session_id']}/messages", headers=auth, json={
+        "text": text, "client_message_id": message_id,
+    })
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_phone_in_chat_verifies_bound_identity_once_and_public_chat_still_works(client):
+    identity = IDENTITIES[2]
+    session, auth = new_session(client, identity.phone)
+    public = chat(client, session, auth, "Ưu đãi vay mua nhà hiện tại?", "public")
+    assert "7,1" in public["reply"]
+    assert tools(client, session, auth) == PUBLIC_TOOLS
+    text = "Số điện thoại của tôi là +84" + identity.phone[1:]
+    verified = chat(client, session, auth, text, "identify")
+    assert verified["identity_status"] == "verified"
+    assert verified["user_id"] == identity.phone
+    assert verified["brief"]["redacted"] is False
+    assert verified["brief"]["user_id"] == identity.phone
+    assert verified["brief"]["name"] == identity.full_name
+    assert tools(client, session, auth) == VERIFIED_TOOLS
+    assert chat(client, session, auth, text, "identify") == verified
+    calls = client.app.state.harness.db.all(
+        "SELECT args FROM tool_calls WHERE tool='verify_identity' AND session_id=?", (session["session_id"],),
+    )
+    assert len(calls) == 1
+    assert json.loads(calls[0]["args"])["phone"] == "[redacted]"
+
+
+def test_wrong_chat_phone_cannot_switch_identity_or_read_another_customers_memory(client):
+    own, other = IDENTITIES[2:4]
+    other_session, other_auth = new_session(client, other.phone)
+    assert verify(client, other_session, other_auth, other.phone).json()["identity_status"] == "verified"
+    chat(client, other_session, other_auth, "Thu nhập 99 triệu mỗi tháng", "other-income")
+    session, auth = new_session(client, own.phone)
+    denied = chat(client, session, auth, "Số điện thoại của tôi là " + other.phone, "wrong-phone")
+    assert denied["identity_status"] == "unverified"
+    assert "99" not in denied["reply"] and other.full_name not in denied["reply"]
+    row = client.app.state.harness.session(session["session_id"])
+    assert row["customer_id"] == own.phone and row["verified"] == 0
+    assert tools(client, session, auth) == PUBLIC_TOOLS
+    assert not client.app.state.harness.db.all(
+        "SELECT * FROM memory_jobs WHERE customer_id=?", (own.phone,),
+    )
+
+
+def test_multiple_phone_numbers_in_one_message_require_clarification(client):
+    own, other = IDENTITIES[2:4]
+    session, auth = new_session(client, own.phone)
+    chat(client, session, auth, f"Số của tôi là {own.phone} hoặc {other.phone}", "ambiguous")
+    assert tools(client, session, auth) == PUBLIC_TOOLS
+    assert client.app.state.harness.session(session["session_id"])["verified"] == 0
+    assert not client.app.state.harness.db.all(
+        "SELECT * FROM tool_calls WHERE tool='verify_identity' AND session_id=?", (session["session_id"],),
+    )

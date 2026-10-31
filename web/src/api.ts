@@ -81,7 +81,6 @@ export type Profile = {
   demo_profile?: string;
   name?: string;
   full_name?: string;
-  dob: string;
   label?: string;
 };
 export type ChatSession = {
@@ -103,6 +102,9 @@ export type Turn = {
 };
 export type Reply = {
   reply: string;
+  identity_status?: string;
+  user_id?: string;
+  brief?: Record<string, unknown>;
   used_fact_ids: string[];
   guard_events: unknown[];
   session_id: string;

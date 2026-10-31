@@ -25,7 +25,16 @@ class MessageInput(Input):
 
 
 class VerifyInput(Input):
-    dob: str = Field(max_length=10)
+    phone: str = Field(min_length=1, max_length=64)
+
+
+class PhoneLoginInput(Input):
+    phone: str = Field(min_length=5, max_length=64)
+
+
+class PhoneConfirmInput(Input):
+    challenge_id: str = Field(min_length=20, max_length=100)
+    code: str = Field(pattern=r"^\d{6}$")
 
 
 class HandoffInput(Input):

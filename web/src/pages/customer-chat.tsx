@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   ArrowUp,
@@ -28,6 +28,9 @@ import {
   type Turn,
 } from "../api";
 import { BrandMark, ErrorBanner, Spinner } from "../ui";
+import { BankingScene, ServiceArt } from "../banking-art";
+import { PhoneLogin } from "../phone-login";
+import { BriefView } from "../brief-view";
 const STORAGE = "bankwise-chat-session";
 const LEGACY_STORAGE = "mach-chat-session";
 function savedSession(): ChatSession | null {
@@ -65,7 +68,7 @@ export function CustomerChat() {
   const [session, setSession] = useState<ChatSession | null>(savedSession);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profile, setProfile] = useState(savedSession()?.demo_profile ?? "hoa");
-  const [dob, setDob] = useState("");
+  const [phoneLogin, setPhoneLogin] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
@@ -76,11 +79,13 @@ export function CustomerChat() {
     id: string;
   } | null>(null);
   const [hint, setHint] = useState("");
-  const [railOpen, setRailOpen] = useState(() => window.matchMedia("(min-width: 1100px)").matches);
+  const [railOpen, setRailOpen] = useState(false);
   const [promptNotice, setPromptNotice] = useState("");
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-  const verified = session?.identity_status === "verified";
+  const verified = ["verified", "identified"].includes(
+    session?.identity_status ?? "",
+  );
   const waiting =
     Boolean(session?.handoff_id) && session?.status !== "completed";
   useEffect(() => {
@@ -100,10 +105,13 @@ export function CustomerChat() {
     request<{ profiles: Profile[] }>("/demo/profiles")
       .then((data) => {
         setProfiles(data.profiles);
-        setProfile((current) =>
-          data.profiles.find(
-            (item) => item.id === current || item.runtime_profile === current,
-          )?.id ?? data.profiles[0]?.id ?? current,
+        setProfile(
+          (current) =>
+            data.profiles.find(
+              (item) => item.id === current || item.runtime_profile === current,
+            )?.id ??
+            data.profiles[0]?.id ??
+            current,
         );
       })
       .catch((e) => setError(errorMessage(e)));
@@ -174,26 +182,6 @@ export function CustomerChat() {
       setPending(false);
     }
   }
-  async function verify(e: FormEvent) {
-    e.preventDefault();
-    if (!session) return;
-    setPending(true);
-    setError("");
-    try {
-      const result = await request<{ identity_status: string }>(
-        `/sessions/${session.session_id}/verify`,
-        { method: "POST", body: { dob }, token: session.session_token },
-      );
-      save({ ...session, identity_status: result.identity_status });
-      if (result.identity_status !== "verified")
-        setError("Ngày sinh chưa khớp. Vui lòng kiểm tra lại.");
-      else input.current?.focus();
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setPending(false);
-    }
-  }
   async function send(text = draft, id: string = crypto.randomUUID()) {
     if (!session || !text.trim() || pending || waiting) return;
     setPending(true);
@@ -215,11 +203,14 @@ export function CustomerChat() {
       ]);
       setDraft("");
       setPromptNotice("");
-      if (data.handoff_id)
+      if (data.identity_status || data.user_id || data.handoff_id || data.brief)
         save({
           ...session,
-          handoff_id: data.handoff_id,
-          status: "waiting_human",
+          identity_status: data.identity_status ?? session.identity_status,
+          user_id: data.user_id ?? session.user_id,
+          brief: data.brief ?? session.brief,
+          handoff_id: data.handoff_id ?? session.handoff_id,
+          status: data.handoff_id ? "waiting_human" : session.status,
         });
     } catch (e) {
       setError(errorMessage(e));
@@ -276,33 +267,51 @@ export function CustomerChat() {
     setPromptNotice("");
     setError("");
     setHint("");
-    setDob("");
     setPending(false);
   }
   function selectPrompt(message: string) {
     setDraft(message);
-    setPromptNotice(verified ? "Gợi ý đã sẵn sàng. Bạn có thể chỉnh lại trước khi gửi." : "Đã chọn nội dung tư vấn. Hoàn tất bước bên dưới để gửi câu hỏi.");
-    if (verified) input.current?.focus();
-    else document.getElementById(session ? "dob" : "demo-profile")?.focus();
+    setPromptNotice(
+      session
+        ? "Gợi ý đã sẵn sàng. Bạn có thể chỉnh lại trước khi gửi."
+        : "Đã chọn nội dung tư vấn. Bắt đầu phiên hỗ trợ để gửi câu hỏi.",
+    );
+    if (session) input.current?.focus();
+    else document.getElementById("demo-profile")?.focus();
   }
   const chosenProfile = profiles.find((p) => p.id === profile);
   return (
     <div className={`chat-layout ${railOpen ? "rail-open" : ""}`}>
-      <section className={`chat-main ${!turns.length ? "is-welcome" : ""}`} aria-label="Hỗ trợ khách hàng ngân hàng">
+      <section
+        className={`chat-main ${!turns.length ? "is-welcome" : ""}`}
+        aria-label="Hỗ trợ khách hàng ngân hàng"
+      >
         <header className="chat-heading">
           <div className="assistant-identity">
             <BrandMark small />
             <div>
-              <h1>Trợ lý ngân hàng</h1>
+              <h1>Trợ lý Bankwise</h1>
               <p>
-                <span className="status-dot" /> {waiting ? "Đang chờ chuyên viên" : verified ? "Sẵn sàng tiếp nối cùng bạn" : "Cùng bạn trong từng quyết định"}
+                <span className="status-dot" />{" "}
+                {waiting
+                  ? "Đang chờ chuyên viên"
+                  : verified
+                    ? "Sẵn sàng tiếp nối cùng bạn"
+                    : "Cùng bạn trong từng quyết định"}
               </p>
             </div>
           </div>
           <div className="chat-header-actions">
-            <button className="icon-button context-toggle" onClick={() => setRailOpen(!railOpen)}
-              aria-label={railOpen ? "Ẩn thông tin hỗ trợ" : "Hiện thông tin hỗ trợ"}
-              aria-expanded={railOpen} aria-controls="support-context" title="Thông tin hỗ trợ">
+            <button
+              className="icon-button context-toggle"
+              onClick={() => setRailOpen(!railOpen)}
+              aria-label={
+                railOpen ? "Ẩn thông tin hỗ trợ" : "Hiện thông tin hỗ trợ"
+              }
+              aria-expanded={railOpen}
+              aria-controls="support-context"
+              title="Thông tin hỗ trợ"
+            >
               <PanelRight size={20} />
             </button>
             <button
@@ -328,37 +337,65 @@ export function CustomerChat() {
         <div className="conversation-scroll">
           {!turns.length && (
             <section className="welcome">
-              <div className="welcome-visual" aria-hidden="true">
-                <div className="visual-orbit orbit-one" /><div className="visual-orbit orbit-two" />
-                <div className="visual-tile tile-home"><Home size={24} /></div>
-                <div className="welcome-symbol"><Sparkles size={32} /></div>
-                <div className="visual-tile tile-card"><CreditCard size={24} /></div>
-                <span className="visual-spark spark-one" /><span className="visual-spark spark-two" />
+              <div className="welcome-hero">
+                <div className="hero-copy">
+                  <div className="eyebrow welcome-tag">
+                    <span /> TÀI CHÍNH CÁ NHÂN, THẬT GẦN GŨI
+                  </div>
+                  <h2>
+                    Mỗi dự định.
+                    <br />
+                    <em>Một khởi đầu mới.</em>
+                  </h2>
+                  <p>
+                    Từ ngôi nhà đầu tiên đến những kế hoạch tiếp theo.
+                    <br className="desktop-break" /> Cùng trò chuyện để tìm
+                    hướng đi phù hợp với bạn.
+                  </p>
+                  <div className="hero-signature">
+                    <span className="signature-mark">
+                      <Sparkles size={15} />
+                    </span>{" "}
+                    Lắng nghe hôm nay. Tiếp nối ngày mai.
+                  </div>
+                </div>
+                <BankingScene />
               </div>
-              <div className="eyebrow">NGÂN HÀNG BANKWISE</div>
-              <h2>Chúng tôi có thể hỗ trợ gì cho bạn?</h2>
-              <p>Từ một dự định nhỏ đến một cột mốc lớn.<br />Bắt đầu câu chuyện tài chính của bạn tại đây.</p>
-              <div className="suggestions">
-                {suggestions.map(({ icon: Icon, title, subtitle, message }, index) => (
-                  <button
-                    key={title}
-                    className={`suggestion suggestion-${index} ${draft === message ? "is-selected" : ""}`}
-                    onClick={() => selectPrompt(message)}
-                    aria-pressed={draft === message}
-                    disabled={pending || waiting}
-                  >
-                    <span className="suggestion-icon"><Icon size={23} /></span>
-                    <strong>{title}</strong>
-                    <span>{subtitle}</span>
-                    <ArrowRight size={17} className="suggestion-arrow" />
-                  </button>
-                ))}
-              </div>
-              <div className="privacy-note">
-                <ShieldCheck size={16} />
-                <span>
-                  Không cung cấp mật khẩu, mã PIN hoặc OTP trong hội thoại.
+              <div className="services-heading">
+                <div>
+                  <span className="section-index">01 / KHÁM PHÁ</span>
+                  <h3>Chúng tôi có thể hỗ trợ gì cho bạn?</h3>
+                </div>
+                <span className="services-hint">
+                  Chọn điều bạn quan tâm <ArrowRight size={15} />
                 </span>
+              </div>
+              <div className="suggestions">
+                {suggestions.map(
+                  ({ icon: Icon, title, subtitle, message }, index) => (
+                    <button
+                      key={title}
+                      className={`suggestion suggestion-${index} ${draft === message ? "is-selected" : ""}`}
+                      onClick={() => selectPrompt(message)}
+                      aria-pressed={draft === message}
+                      disabled={pending || waiting}
+                    >
+                      <span className="service-category">
+                        <Icon size={15} />
+                        <span>0{index + 1}</span>
+                      </span>
+                      <ServiceArt kind={index} />
+                      <span className="service-copy">
+                        <strong>{title}</strong>
+                        <span>{subtitle}</span>
+                      </span>
+                      <span className="service-cta">
+                        {draft === message ? "Đã chọn" : "Khám phá"}
+                        <ArrowRight size={17} />
+                      </span>
+                    </button>
+                  ),
+                )}
               </div>
             </section>
           )}
@@ -373,7 +410,7 @@ export function CustomerChat() {
                   {turn.role !== "user" && <BrandMark small />}
                   <div>
                     <div className="message-label">
-                      {turn.role === "user" ? "Bạn" : "Trợ lý ngân hàng"}
+                      {turn.role === "user" ? "Bạn" : "Trợ lý Bankwise"}
                     </div>
                     <div className="message-bubble">{turn.text}</div>
                     {turn.role === "user" && (
@@ -389,8 +426,12 @@ export function CustomerChat() {
           {pending && session && (
             <div className="typing" role="status">
               <BrandMark small />
-              <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
-              <span>{!verified ? "Đang xử lý xác minh…" : "Trợ lý đang xử lý yêu cầu…"}</span>
+              <span className="typing-dots" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+              <span>Trợ lý đang xử lý yêu cầu…</span>
             </div>
           )}
           {waiting && (
@@ -413,13 +454,42 @@ export function CustomerChat() {
           <div ref={end} />
         </div>
         <div className="composer-area">
-          {verified && !waiting && !pending && turns.length > 0 && (
-            <div className="quick-prompts" aria-label="Gợi ý tiếp tục hội thoại">
-              <button onClick={() => selectPrompt("Tôi muốn hỏi thêm về lãi suất sau ưu đãi.")}>Lãi sau ưu đãi <ArrowRight size={13} /></button>
-              <button onClick={() => selectPrompt("Tôi cần chuẩn bị những giấy tờ nào?")}>Hồ sơ cần chuẩn bị <ArrowRight size={13} /></button>
+          {!turns.length && (
+            <div className="conversation-intro">
+              <span className="section-index">02 / KẾT NỐI</span>
+              <strong>Câu chuyện của bạn bắt đầu tại đây.</strong>
+              <span>
+                <ShieldCheck size={14} /> Có thể hỏi thông tin công khai
+              </span>
             </div>
           )}
-          {promptNotice && <p className="prompt-notice" role="status"><Check size={14} />{promptNotice}</p>}
+          {verified && !waiting && !pending && turns.length > 0 && (
+            <div
+              className="quick-prompts"
+              aria-label="Gợi ý tiếp tục hội thoại"
+            >
+              <button
+                onClick={() =>
+                  selectPrompt("Tôi muốn hỏi thêm về lãi suất sau ưu đãi.")
+                }
+              >
+                Lãi sau ưu đãi <ArrowRight size={13} />
+              </button>
+              <button
+                onClick={() =>
+                  selectPrompt("Tôi cần chuẩn bị những giấy tờ nào?")
+                }
+              >
+                Hồ sơ cần chuẩn bị <ArrowRight size={13} />
+              </button>
+            </div>
+          )}
+          {promptNotice && (
+            <p className="prompt-notice" role="status">
+              <Check size={14} />
+              {promptNotice}
+            </p>
+          )}
           {error && (
             <ErrorBanner
               message={error}
@@ -432,7 +502,32 @@ export function CustomerChat() {
               }
             />
           )}
-          {!session && (
+          {!session && phoneLogin && (
+            <PhoneLogin
+              onCancel={() => setPhoneLogin(false)}
+              onSuccess={(next) => {
+                save(next);
+                setTurns([]);
+                setPhoneLogin(false);
+                setHint(
+                  "Đã kết nối hồ sơ từ Telegram. Bạn có thể tiếp tục nhu cầu đã trao đổi.",
+                );
+                setError("");
+              }}
+            />
+          )}
+          {!session && !phoneLogin && (
+            <div className="phone-continuation">
+              <button
+                className="button secondary"
+                onClick={() => setPhoneLogin(true)}
+                disabled={pending}
+              >
+                Tiếp tục bằng số điện thoại <ArrowRight size={16} />
+              </button>
+            </div>
+          )}
+          {!session && !phoneLogin && (
             <div className="onboarding-bar">
               <div>
                 <span className="mini-label">THÔNG TIN KHÁCH HÀNG</span>
@@ -448,7 +543,8 @@ export function CustomerChat() {
               >
                 {profiles.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name ?? p.full_name ?? p.id}{p.phone ? ` · ${p.phone}` : ""}
+                    {p.name ?? p.full_name ?? p.id}
+                    {p.phone ? ` · ${p.phone}` : ""}
                   </option>
                 ))}
               </select>
@@ -468,26 +564,22 @@ export function CustomerChat() {
             </div>
           )}
           {session && !verified && (
-            <form className="verify-bar" onSubmit={verify}>
+            <div className="verify-bar" role="note">
               <LockKeyhole size={21} />
               <div>
-                <strong>Xác minh để xem lịch sử và đặt lịch</strong>
-                <label htmlFor="dob">
-                  Ngày sinh của khách hàng
-                  {chosenProfile?.dob ? ` · ${chosenProfile.dob}` : ""}
-                </label>
+                <strong>Xác minh hồ sơ demo bằng số điện thoại</strong>
+                <p>
+                  Gửi số điện thoại trong khung chat bên dưới để xem lịch sử và
+                  đặt lịch. Bạn vẫn có thể hỏi thông tin công khai trước xác
+                  minh.
+                </p>
+                {chosenProfile?.phone && (
+                  <small>
+                    Số điện thoại demo đã chọn: {chosenProfile.phone}
+                  </small>
+                )}
               </div>
-              <input
-                id="dob"
-                type="date"
-                value={dob}
-                onChange={(e) => setDob(e.target.value)}
-                required
-              />
-              <button className="button primary" disabled={pending || !dob}>
-                Xác minh
-              </button>
-            </form>
+            </div>
           )}
           <form
             className="composer"
@@ -518,7 +610,7 @@ export function CustomerChat() {
                 !session
                   ? "Bắt đầu phiên hỗ trợ để gửi tin nhắn…"
                   : !verified
-                    ? "Hỏi thông tin công khai; xác minh để dùng dịch vụ cá nhân…"
+                    ? "Gửi số điện thoại demo hoặc hỏi thông tin công khai…"
                     : waiting
                       ? "Chuyên viên sẽ tiếp nhận yêu cầu của bạn…"
                       : "Nhập câu hỏi cần hỗ trợ…"
@@ -526,7 +618,10 @@ export function CustomerChat() {
             />
             <div className="composer-footer">
               <span>
-                <Sparkles size={14} /> {verified ? "Enter để gửi · Shift + Enter để xuống dòng" : "Câu chuyện của bạn bắt đầu từ đây"}
+                <Sparkles size={14} />{" "}
+                {verified
+                  ? "Enter để gửi · Shift + Enter để xuống dòng"
+                  : "Câu chuyện của bạn bắt đầu từ đây"}
               </span>
               <button
                 className="send-button"
@@ -538,30 +633,76 @@ export function CustomerChat() {
             </div>
           </form>
           <p className="composer-disclaimer">
-            Thông tin mang tính minh họa. Mọi khách hàng, sản phẩm và số liệu
-            đều hư cấu.
+            Không chia sẻ mật khẩu, PIN hoặc OTP. Đây là ngân hàng giả định; mọi
+            hồ sơ và sản phẩm đều hư cấu.
           </p>
         </div>
       </section>
-      <aside className="context-rail" id="support-context" hidden={!railOpen} aria-label="Thông tin hỗ trợ">
+      <aside
+        className="context-rail"
+        id="support-context"
+        hidden={!railOpen}
+        aria-label="Thông tin hỗ trợ"
+      >
         <div className="rail-feature">
-          <span className="rail-feature-icon"><MessageCircle size={23} /></span>
+          <span className="rail-feature-icon">
+            <MessageCircle size={23} />
+          </span>
           <span className="mini-label">MỘT CUỘC TRÒ CHUYỆN LIỀN MẠCH</span>
-          <h2>Thêm thấu hiểu.<br />Bớt những lần hỏi lại.</h2>
-          <p>Tiếp tục điều bạn quan tâm, với thông tin được kết nối qua từng cuộc trò chuyện.</p>
-          <div className="rail-feature-art" aria-hidden="true"><span /><span /><span /></div>
+          <h2>
+            Thêm thấu hiểu.
+            <br />
+            Bớt những lần hỏi lại.
+          </h2>
+          <p>
+            Tiếp tục điều bạn quan tâm, với thông tin được kết nối qua từng cuộc
+            trò chuyện.
+          </p>
+          <div className="rail-feature-art" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
         </div>
         <div className="journey-progress">
           <div className="mini-label">HÀNH TRÌNH CỦA BẠN</div>
           <ol>
             {[
-              { label: "Chọn hồ sơ", detail: "Bắt đầu một phiên hỗ trợ", done: Boolean(session), current: !session },
-              { label: "Xác minh thông tin", detail: "Kết nối đúng hồ sơ của bạn", done: verified, current: Boolean(session) && !verified },
-              { label: "Trao đổi cùng trợ lý", detail: waiting ? "Chuyên viên sẽ tiếp nối" : "Tư vấn theo nhu cầu của bạn", done: false, current: verified },
+              {
+                label: "Chọn hồ sơ",
+                detail: "Bắt đầu một phiên hỗ trợ",
+                done: Boolean(session),
+                current: !session,
+              },
+              {
+                label: "Xác minh thông tin",
+                detail: "Kết nối đúng hồ sơ của bạn",
+                done: verified,
+                current: Boolean(session) && !verified,
+              },
+              {
+                label: "Trao đổi cùng trợ lý",
+                detail: waiting
+                  ? "Chuyên viên sẽ tiếp nối"
+                  : "Tư vấn theo nhu cầu của bạn",
+                done: false,
+                current: verified,
+              },
             ].map((step, index) => (
-              <li key={step.label} className={step.done ? "is-done" : step.current ? "is-current" : ""} aria-current={step.current ? "step" : undefined}>
-                <span className="step-number">{step.done ? <Check size={14} /> : index + 1}</span>
-                <div><strong>{step.label}</strong><small>{step.detail}</small></div>
+              <li
+                key={step.label}
+                className={
+                  step.done ? "is-done" : step.current ? "is-current" : ""
+                }
+                aria-current={step.current ? "step" : undefined}
+              >
+                <span className="step-number">
+                  {step.done ? <Check size={14} /> : index + 1}
+                </span>
+                <div>
+                  <strong>{step.label}</strong>
+                  <small>{step.detail}</small>
+                </div>
               </li>
             ))}
           </ol>
@@ -588,7 +729,11 @@ export function CustomerChat() {
               message: "Tôi muốn được tư vấn về các sản phẩm vay.",
             },
           ].map(({ icon: Icon, title, message }) => (
-            <button key={title} onClick={() => selectPrompt(message)} disabled={pending || waiting}>
+            <button
+              key={title}
+              onClick={() => selectPrompt(message)}
+              disabled={pending || waiting}
+            >
               <Icon size={19} />
               <span>{title}</span>
               <ArrowRight size={15} />
@@ -601,15 +746,21 @@ export function CustomerChat() {
             <div>
               <dt>Khách hàng</dt>
               <dd>
-                {chosenProfile?.name ??
-                  chosenProfile?.full_name ??
-                  "Chưa chọn hồ sơ"}
+                {session?.identity_status === "identified"
+                  ? String(session.brief?.name ?? "Khách hàng")
+                  : (chosenProfile?.name ??
+                    chosenProfile?.full_name ??
+                    "Chưa chọn hồ sơ")}
               </dd>
             </div>
             <div>
               <dt>Xác minh</dt>
               <dd className={verified ? "session-verified" : ""}>
-                {verified ? "Đã xác minh" : "Chưa xác minh"}
+                {session?.identity_status === "identified"
+                  ? "Đã xác nhận SĐT"
+                  : verified
+                    ? "Đã xác minh"
+                    : "Chưa xác minh"}
               </dd>
             </div>
             <div>
@@ -624,6 +775,12 @@ export function CustomerChat() {
             </div>
           </dl>
         </div>
+        {session?.identity_status === "identified" && session.brief && (
+          <details className="phone-context">
+            <summary>Thông tin đã ghi nhận từ Telegram</summary>
+            <BriefView brief={session.brief} />
+          </details>
+        )}
         <button
           className="human-help"
           onClick={handoff}

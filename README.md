@@ -25,6 +25,11 @@ uv run uvicorn harness.api:app --host 127.0.0.1 --port 8000
 Backend `rules` chạy không cần API key. Telegram và backend LLM cần credential thật
 qua kho secret, không đưa giá trị vào Git hoặc chat.
 
+[Cấu hình Telegram](docs/telegram.md): tạo bot, nạp credential và đăng ký webhook.
+Khách mới có hồ sơ riêng và chat ngay; chia sẻ số điện thoại để tiếp tục cùng
+ngữ cảnh trên web. Liên kết hồ sơ demo là tùy chọn. Script kiểm tra kết
+nối và đăng ký webhook mà không in credential.
+
 ## Kiểm tra và build
 
 ```sh
@@ -50,7 +55,8 @@ hiện có; expected memory chỉ dành cho evaluator.
 [Bộ identity đa phiên](docs/IDENTITY_DATASET.md) cung cấp 10 người dùng theo số
 điện thoại, 40 phiên trên 4 kênh, lời khách và đáp án riêng cho các tình huống
 hỏi người nhà, so ngân hàng và tiếp tục hội thoại sau khi đổi kênh. Backend dùng
-cùng nguồn identity để xác minh từng phiên demo; CRM vẫn cần đăng nhập riêng.
+cùng nguồn identity để nhận diện số điện thoại gửi trong từng phiên chat demo;
+không yêu cầu ngày sinh và CRM vẫn cần đăng nhập riêng.
 
 ## Deploy
 
@@ -64,6 +70,6 @@ kiểm tra health và revision theo hướng dẫn vận hành để xác nhận
 
 [Hướng dẫn tích hợp](docs/INTEGRATION.md) mô tả 9 tool từ nhánh tuannv, quyền truy cập,
 ngày gọi bắt buộc và adapter agent trên main. [Dữ liệu giả lập](docs/DATA.md) giải thích
-fixtures nghiệp vụ. Backend xác minh demo dùng
+fixtures nghiệp vụ. Backend nhận diện phone demo dùng
 `simulators/datasets/identity_v1/identities.json` qua registry `harness/identity.py`;
 alias `hoa`/`minh` được giữ để dùng tiếp memory cũ.

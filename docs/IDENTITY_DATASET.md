@@ -41,8 +41,8 @@ của số đó.
 `identity_status` và `verified_at` thuộc **từng phiên**. Một phiên đã xác minh
 không làm phiên ở kênh khác tự được xác minh. Các trường này trong JSON chỉ mô
 tả bối cảnh giả lập, không phải bằng chứng đăng nhập hoặc kết quả gọi dịch vụ
-xác thực thật. `date_of_birth` phục vụ fixture identity; không chép ngày sinh
-vào prompt, memory hay lịch sử tool.
+xác thực thật. `date_of_birth` chỉ còn là metadata hư cấu, không dùng để nhận diện; không chép
+ngày sinh vào prompt, memory hay lịch sử tool.
 
 Tất cả phiên trong bộ này có `logged_in: false`. Vì vậy:
 
@@ -160,16 +160,27 @@ Hai alias `hoa`/`minh` vẫn được chấp nhận để dữ liệu memory cũ
 của cả 10 người luôn là phone. Trường `runtime_profile` chỉ phục vụ tương thích
 dữ liệu, không cấp quyền và không cần đổi hay migrate memory cũ.
 
-Tạo phiên chưa mở quyền memory riêng. Khi gọi
-`POST /sessions/{session_id}/verify`, backend so ngày sinh với hồ sơ đã gắn
-vào phiên do server tạo; không cho yêu cầu xác minh tự đổi sang một khách khác.
-Kết quả chỉ xác minh phiên đó. Một phiên mới, kể cả cùng người hoặc cùng kênh,
-phải qua bước này lại trước khi dùng lịch sử riêng hoặc hai tool sau xác minh.
+Tạo phiên demo chưa mở quyền memory riêng. Khách gửi số điện thoại ngay trong
+khung chat, ví dụ `Số điện thoại của tôi là 0900000001` hoặc `+84900000001`.
+Backend chuẩn hóa số và đối chiếu với hồ sơ đã gắn vào phiên. Chỉ số khớp mới
+mở trạng thái nhận diện demo của phiên đó; gửi số khác không đổi khách hàng,
+không gộp lịch sử và không đọc hồ sơ của số vừa gửi. Một tin có nhiều số sẽ được
+yêu cầu gửi lại một số rõ ràng. Ngày sinh không còn được yêu cầu, so sánh hoặc
+trả trong API danh sách hồ sơ. Trường ngày sinh trong JSON cũ chỉ là metadata
+hư cấu để giữ tương thích dataset, không tham gia nhận diện.
 
-Luồng demo giới hạn 5 lần thử trong 15 phút theo khách hàng và nguồn gọi; ngày
-sinh được che khỏi audit tool, không ghi vào prompt hoặc memory. Đây là so
-khớp fixture ngày sinh cho demo, chưa có OTP/SMS thật hay kiểm chứng quyền sở
-hữu số điện thoại. `logged_in` vẫn tách riêng, nên CRM tiếp tục khóa.
+`POST /sessions/{session_id}/verify` nhận `{"phone": "0900000001"}` cho client
+cần gọi trực tiếp. Payload ngày sinh cũ bị từ chối. Các lần thử sai vẫn giới hạn
+5 lần trong 15 phút theo khách hàng và nguồn gọi; đối số phone trong audit tool
+được che. Gửi lại cùng `client_message_id` trả kết quả đã lưu, không nhận diện
+hay tạo hành động thêm lần nữa. Phiên mới vẫn bắt đầu chưa nhận diện.
+
+Đây là **nhận diện hồ sơ demo bằng số đã khai**, không kiểm chứng quyền sở hữu
+số và không phải đăng nhập khách hàng. Vì vậy CRM vẫn khóa. Luồng nhập mã gửi
+qua Telegram trên `/auth/phone/start` và `/auth/phone/confirm` của ứng dụng được
+giữ riêng để tiếp tục hồ sơ Telegram do người dùng sở hữu; claim số trong chat
+không thay thế mã xác nhận, chia sẻ contact đúng chủ hoặc quyền admin của các
+luồng đó.
 
 Các đường đọc Brief theo khách hàng và tạo liên kết kênh của admin cũng chuẩn
 hóa phone sang khóa runtime; chúng vẫn yêu cầu quyền admin hiện có. Liên kết
@@ -188,13 +199,13 @@ with httpx.Client(base_url="http://127.0.0.1:8000") as client:
     verified = client.post(
         f"/sessions/{session['session_id']}/verify",
         headers=headers,
-        json={"dob": "1988-05-12"},  # Ngày sinh giả của identity Hoa trong dataset.
+        json={"phone": "0900000001"},  # Khớp số đã gắn với phiên Hoa.
     )
     verified.raise_for_status()
     print(verified.json()["identity_status"])
 ```
 
-Token chỉ dùng cho phiên vừa tạo; không ghi token hoặc ngày sinh vào prompt/log.
+Token chỉ dùng cho phiên vừa tạo; không ghi token hoặc đối số nhận diện thô vào log.
 Khi sửa `identities.json`, kiểm tra dataset rồi khởi động lại backend để registry
 nạp dữ liệu mới. Hai bộ kiểm tra liên quan chạy bằng:
 

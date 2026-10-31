@@ -162,20 +162,34 @@ class Memory:
         )
         return self.db.all("SELECT * FROM facts WHERE customer_id=? ORDER BY observed_at,id", (customer,))
 
-    def brief(self, customer):
+    def profile(self, customer):
         from bank_tools.service import FIXTURES
         from harness.identity import resolve_identity
 
         customer = resolve_identity(customer) or customer
+        return next((x for x in FIXTURES["customers"] if x["id"] == customer), None) or self.db.one(
+            "SELECT id,name,NULL AS cif FROM customer_profiles WHERE id=?", (customer,)
+        ) or self.db.one(
+            "SELECT id,name,NULL AS cif FROM guest_customers WHERE id=?", (customer,)
+        )
+
+    def brief(self, customer):
+        from harness.identity import resolve_identity
+
+        customer = resolve_identity(customer) or customer
         self.flush(customer)
-        profile = next(x for x in FIXTURES["customers"] if x["id"] == customer)
+        profile = self.profile(customer)
+        if not profile:
+            raise ValueError("Unknown customer")
         facts = self.facts(customer)
+        phone = self.db.one("SELECT phone_e164 FROM customer_profiles WHERE id=?", (customer,))
         return {
             "redacted": False,
             "customer_id": customer,
-            "user_id": profile["user_id"],
+            "user_id": profile.get("user_id", phone["phone_e164"] if phone else customer),
             "name": profile["name"],
             "cif": profile["cif"],
+            "phone": phone["phone_e164"] if phone else profile.get("phone"),
             "facts": facts,
             "needs": [f for f in facts if f["source_type"] == "customer" and f["status"] == "active"],
             "conflicts": [f for f in facts if f["status"] == "conflicted"],

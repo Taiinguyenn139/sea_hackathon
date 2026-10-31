@@ -36,8 +36,8 @@ def _customer_profiles():
     return joined
 
 
-# Preserve the adapter export used by the engine and staff brief. DOB and
-# customer mapping now have one source: the validated ten-identity registry.
+# Preserve the adapter export used by the engine and staff brief. Phone and
+# customer mapping have one source: the validated ten-identity registry.
 FIXTURES = {"schema_version": 2, "customers": _customer_profiles()}
 
 
@@ -82,19 +82,31 @@ class BankTools:
     def definitions(self, customer_id, session_id):
         return get_tool_definitions(context=self.auth_context(customer_id, session_id))
 
+    def _owns_memory(self, customer_id, session_id):
+        # Channel/OTP ownership permits storing public advisory facts under a
+        # prospect's own key. It grants no canonical private tool permission.
+        return self.db.one(
+            "SELECT s.id FROM sessions s LEFT JOIN guest_customers g ON g.id=s.customer_id "
+            "AND g.channel=s.channel AND g.external_id=s.external_id "
+            "LEFT JOIN phone_sessions p ON p.session_id=s.id AND p.customer_id=s.customer_id "
+            "WHERE s.id=? AND s.customer_id=? AND s.status!='ended' "
+            "AND (s.verified=1 OR g.id IS NOT NULL OR p.session_id IS NOT NULL)",
+            (session_id, customer_id),
+        ) is not None
+
     def call(self, tool, args, customer_id, session_id, *, context=None, idempotency_key=None):
         with self.lock:
             tc = ident("tc_", [session_id, tool, args, now()])
             result = {"tool_call_id": tc, "tool": tool, "as_of": None, "data": {}, "facts": [], "error": None}
             try:
                 if tool == "verify_identity":
-                    # The server-bound session selects the registry identity. The
-                    # caller supplies a DOB, never the identity being verified.
+                    # Only the server-bound fixture can be identified by a demo
+                    # phone claim. This does not create a customer login.
                     session = self.db.one("SELECT * FROM sessions WHERE id=?", (session_id,))
                     if not session or session["customer_id"] != customer_id or session["status"] == "ended":
                         raise AccessDenied("forbidden: invalid verification session")
                     result["as_of"] = date.fromisoformat(args["as_of"]).isoformat()
-                    result["data"] = {"verified": verify_identity(customer_id, args["dob"])}
+                    result["data"] = {"verified": verify_identity(customer_id, args["phone"])}
                     self._save_call(session_id, tool, args, result, customer_id)
                     return result
                 if tool not in TOOL_NAMES:
@@ -146,7 +158,8 @@ class BankTools:
                 result.update(data={}, facts=[], error=str(exc))
             except (ValueError, TypeError, KeyError) as exc:
                 result.update(data={}, facts=[], error="invalid: " + str(exc))
-            storage_customer = customer_id if isinstance(context, AuthContext) and (context.logged_in or context.identity_verified) else "guest:" + session_id
+            has_identity = isinstance(context, AuthContext) and (context.logged_in or context.identity_verified)
+            storage_customer = customer_id if has_identity or self._owns_memory(customer_id, session_id) else "guest:" + session_id
             self._save_call(session_id, tool, args, result, storage_customer)
             return result
 
@@ -189,7 +202,7 @@ class BankTools:
                     result["tool_call_id"],
                     session,
                     tool,
-                    canonical({k: "[redacted]" if k == "dob" else v for k, v in args.items()}),
+                    canonical({k: "[redacted]" if k in ("phone", "dob") else v for k, v in args.items()}),
                     canonical(result),
                     now(),
                 ),

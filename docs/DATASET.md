@@ -9,7 +9,7 @@ runner. Không cần thêm dependency hoặc một dịch vụ mock riêng.
 | Thành phần | File | Vai trò |
 | --- | --- | --- |
 | Ngân hàng giả lập | `bank_tools/fixtures/*.yaml` | Nguồn chính sách và giá cho tools |
-| Identity demo | `simulators/datasets/identity_v1/identities.json` | Nguồn hồ sơ/ngày sinh cho verify_identity; alias hoa vẫn dùng được |
+| Identity demo | `simulators/datasets/identity_v1/identities.json` | Nguồn hồ sơ/số điện thoại cho verify_identity; alias hoa vẫn dùng được |
 | Oracle giá | `eval/oracle_fixtures/bank.json` | Đáp án độc lập, không đọc kết quả tool làm đáp án |
 | Journey ba phiên | `simulators/scenarios/dev/mortgage-memory-journey.json` | Lời khách và chỉ dẫn simulator/evaluator; agent tự trả lời |
 | Schema scenario | `simulators/schemas.py` | Pydantic contract kiểm tra khi runner nạp scenario |
@@ -29,8 +29,9 @@ cần commit ở đó. Không đưa oracle vào DB, prompt, Call Brief đầu v�
 | 2 | telegram · 28/09/2026 | Khách nói thu nhập 40 triệu và chưa xác nhận khác biệt. Hai fact 45/40 triệu phải conflicted; giữ amount và term; không có income active. |
 | 3 | web · 31/10/2026 | Khách xác nhận thu nhập 40 triệu. Hai bản thu nhập trước superseded; bản xác nhận active. Quote Q3 expired nhưng còn trong lịch sử, Q4 trên web 7,1% trong 6 tháng active. Khách yêu cầu chuyên viên giải thích lãi sau ưu đãi và giấy tờ. |
 
-Mỗi phiên được runner tạo bằng `/admin/sessions`, sau đó `/verify` dùng ngày
-sinh giả của hồ sơ `hoa`: `1988-05-12`. Quyền truy cập trước xác minh vẫn được
+Mỗi phiên được runner tạo bằng `/admin/sessions`, sau đó `/verify` dùng số
+điện thoại đã gắn với phiên trong `session.user_id`, ví dụ `0900000001` cho Hoa.
+Trường `dob` cũ trong scenario chỉ giữ metadata tương thích, không dùng xác minh. Quyền truy cập trước xác minh vẫn được
 kiểm tra bởi scenario `unverified-identity` đã có trên main.
 
 Ngày đầu đổi từ 27/10 trong bản thiết kế cũ thành 27/09: promo Q3 trong fixture

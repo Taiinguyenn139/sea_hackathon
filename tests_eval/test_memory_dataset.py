@@ -153,7 +153,7 @@ def test_runner_reads_checkpoint_after_session_end_and_surfaces_failure():
         def call(self, path, data=None, token=None):
             self.paths.append(path)
             if path == "/admin/sessions":
-                return {"session_id": "session", "session_token": "test-session"}
+                return {"session_id": "session", "session_token": "test-session", "user_id": "0900000001"}
             if path.endswith("/messages"):
                 return {"reply": "Đã ghi nhận thông tin."}
             if path.startswith("/traces/"):

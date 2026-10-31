@@ -60,12 +60,13 @@ function App() {
           </nav>
           <div className="sidebar-note">
             <div className="sidebar-note-icon"><Landmark size={22} /></div>
-            <span className="sidebar-kicker">LUÔN TIẾP NỐI</span>
+            <span className="sidebar-kicker">CHUYỆN CỦA BẠN</span>
             <p>
-              Cuộc trò chuyện mới.
+              Mỗi bước nhỏ.
               <br />
-              Sự thấu hiểu tiếp nối.
+              Một tương lai lớn.
             </p>
+            <div className="sidebar-sculpture" aria-hidden="true"><i /><i /><i /></div>
             <div className="continuity-dots" aria-hidden="true"><i /><i /><i /><span /></div>
           </div>
           {page !== "chat" && (

@@ -149,7 +149,18 @@ def run_case(
             )
             sid, token = session["session_id"], session["session_token"]
             if call.get("verify", True):
-                api.call(f"/sessions/{sid}/verify", {"dob": scenario.get("dob", "1988-05-12")}, token)
+                phone = session.get("user_id")
+                if not phone:
+                    profile = scenario.get("profile", "hoa")
+                    directory = api.call("/demo/profiles").get("profiles", [])
+                    phone = next(
+                        (row.get("phone", row["id"]) for row in directory
+                         if row["id"] == profile or row.get("runtime_profile") == profile),
+                        None,
+                    )
+                if not phone:
+                    raise ValueError("Verified scenario has no phone identity in the public demo directory")
+                api.call(f"/sessions/{sid}/verify", {"phone": phone}, token)
             for index, step in enumerate(call["steps"]):
                 if step.get("fault"):
                     api.call("/admin/faults", step["fault"])
