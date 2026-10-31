@@ -109,6 +109,17 @@ class Harness:
             raise HTTPException(404, "Session not found")
         return session
 
+    def new_conversation(self, previous):
+        """Start a separate transcript without ending a conversation or handoff."""
+        authenticated = bool(self.can_chat(previous))
+        result = self._create_session(
+            previous["customer_id"], previous["mode"], phone_authenticated=authenticated
+        )
+        if previous["verified"]:
+            self.db.execute("UPDATE sessions SET verified=1 WHERE id=?", (result["session_id"],))
+            result["identity_status"] = "verified"
+        return result
+
     def verify(self, session, phone, source):
         # Refresh server state: a claim can never select or replace the bound
         # customer, nor reopen an ended session.

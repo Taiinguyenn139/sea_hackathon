@@ -251,6 +251,11 @@ def create_app(settings=None):
             "handoff_id": h["id"] if h else None,
         }
 
+    @app.post("/sessions/{sid}/new")
+    def new_conversation(sid: str, request: Request):
+        # A session capability can create a sibling for the same identity only.
+        return harness.new_conversation(owner(sid, request))
+
     @app.post("/auth/phone/start")
     def phone_start(body: PhoneLoginInput, request: Request, tasks: BackgroundTasks):
         result = harness.phone_identity.begin(body.phone, request.client.host if request.client else "unknown")

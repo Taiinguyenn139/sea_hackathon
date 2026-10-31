@@ -94,7 +94,7 @@ test("chat shows partial text while the streamed reply is still in progress", as
   await expect(
     page.getByText("Đoạn đầu đã kiểm tra. Đoạn tiếp theo.", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("Tư vấn giúp tôi", { exact: true })).toHaveCount(
+  await expect(page.getByRole("log").getByText("Tư vấn giúp tôi", { exact: true })).toHaveCount(
     1,
   );
   await expect(composer).toBeEnabled();
