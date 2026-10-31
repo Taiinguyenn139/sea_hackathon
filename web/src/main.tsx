@@ -20,6 +20,7 @@ import { StaffBoundary } from "./staff-auth";
 import { BrandMark } from "./ui";
 import "./styles/tokens.css";
 import "./styles/experience.css";
+import "./styles/chat-history.css";
 const pathname = window.location.pathname;
 const page = pathname.startsWith("/staff")
   ? "staff"
@@ -58,7 +59,7 @@ function App() {
               {page === "chat" && <span className="nav-current" />}
             </a>
           </nav>
-          <div className="sidebar-note">
+          {page === "chat" ? <div id="customer-history" /> : <div className="sidebar-note">
             <div className="sidebar-note-icon"><Landmark size={22} /></div>
             <span className="sidebar-kicker">CHUYỆN CỦA BẠN</span>
             <p>
@@ -68,7 +69,7 @@ function App() {
             </p>
             <div className="sidebar-sculpture" aria-hidden="true"><i /><i /><i /></div>
             <div className="continuity-dots" aria-hidden="true"><i /><i /><i /><span /></div>
-          </div>
+          </div>}
           {page !== "chat" && (
             <>
               <div className="nav-label team-label">DÀNH CHO ĐỘI NGŨ</div>
