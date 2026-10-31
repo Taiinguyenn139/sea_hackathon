@@ -245,7 +245,7 @@ def test_allowed_turn_has_four_llm_calls_and_duplicate_has_none(client, monkeypa
         elif "Phân loại" in instruction:
             result = {"stage": "discover", "objection": None}
         elif "Trích" in instruction:
-            result = {"spans": ["Thu nhập 45 triệu"]}
+            result = {"facts": [{"key": "income", "value": "45000000", "unit": "đồng", "operation": "replace", "source_text": "Thu nhập 45 triệu"}]}
         else:
             result = {"draft": "Anh/chị muốn vay bao nhiêu tiền?"}
         return httpx.Response(
@@ -342,7 +342,7 @@ def test_telegram_approved_message_runs_classifier_once(client, monkeypatch):
         elif "Phân loại" in instruction:
             result = {"stage": "discover", "objection": None}
         elif "Trích" in instruction:
-            result = {"spans": []}
+            result = {"facts": []}
         else:
             result = {"draft": "Anh/chị muốn vay bao nhiêu tiền?"}
         return httpx.Response(

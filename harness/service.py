@@ -432,6 +432,7 @@ class Harness:
             "business_as_of": self.db.setting("clock"),
             "backend": self.settings.llm_backend,
             "revision": self.settings.revision,
+            "memory_result": state.get("memory_result", {}),
             "profile_context": {k: v for k, v in state.get("profile_context", {}).items() if k != "name"},
         }
         logger.info("profile_context %s", canonical({

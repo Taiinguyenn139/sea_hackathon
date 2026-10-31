@@ -23,8 +23,16 @@ def setup(tmp_path, monkeypatch):
         calls.append((instruction, data, body["model"]))
         if "INPUT_SECURITY_CLASSIFIER" in instruction:
             value = {"category": "safe"}
-        elif "Trích các đoạn" in instruction:
-            value = {"spans": []}
+        elif "Trích xuất memory" in instruction:
+            value = {"facts": []}
+            if NEED in data["text"]:
+                value = {"facts": [{"key": key, "value": item, "unit": unit, "operation": "replace", "source_text": NEED}
+                                   for key, item, unit in [("product", "home_loan", ""), ("amount", "2000000000", "đồng"),
+                                                           ("term", "240", "tháng"), ("income", "45000000", "đồng"),
+                                                           ("debt", "0", "đồng"), ("property_value", "3000000000", "đồng")]]}
+            elif data["text"] in ("Thu nhập 30 triệu", "Xác nhận thu nhập chính xác 30 triệu"):
+                value = {"facts": [{"key": "income", "value": "30000000", "unit": "đồng", "source_text": data["text"],
+                                    "operation": "conflict" if data["text"] == "Thu nhập 30 triệu" else "replace"}]}
         elif control["fail"]:
             return httpx.Response(503)
         elif "Phân loại hội thoại" in instruction:
