@@ -60,6 +60,28 @@ nguồn tên, intent và việc có fact tên; không ghi tên hay số điện 
 được bảo vệ bằng quyền hiện hữu vẫn lưu nguồn fact để kiểm chứng câu trả lời.
 Kiểm thử hồi quy: `uv run pytest -q tests/test_profile_context.py`.
 
+## Lịch sử ban đầu cho demo
+
+Khi `DEMO_PHONE_IDENTITY=true`, các hồ sơ trong `identity_v1` có lịch sử ban đầu
+từ lời khách trong `journeys/*.json`. Backend đọc input đã kiểm tra schema,
+không đọc đáp án evaluator, không ghi các fact mẫu vào database và không tạo
+callback/handoff từ những yêu cầu cũ. Chỉ dùng các lời nói sau bước xác minh của
+phiên mẫu, không vượt ngày nghiệp vụ hiện tại. Quyền của phiên đang chạy vẫn
+được kiểm tra riêng trước khi đưa lịch sử vào context.
+
+Fact lịch sử mang `source_type=demo_history` và nguồn file/message. Các giá trị
+chat mới thay thế từng trường tương ứng; một trường đang xung đột không được
+quay về giá trị mẫu. Đổi sản phẩm không mang theo số tiền/kỳ hạn của khoản vay
+mẫu trước đó. Tắt chế độ demo hoặc dùng `no_memory` thì agent không đọc lịch sử
+này. Brief có thêm `demo_history` và các nhu cầu mẫu được đánh dấu nguồn.
+
+Câu “Nhu cầu vay của tôi là gì?” dùng intent `needs_recall`, trả fact đã ghi
+nhận và ghi rõ dữ liệu demo, không tự gọi tool báo giá hay tạo hành động.
+Input guard vẫn chạy. Tiền VND có phân cách hàng nghìn được đọc đúng; câu hỏi,
+thời gian ưu đãi và giá trị bị phủ định trong journey không thay thế nhu cầu.
+Các trường hợp diễn đạt ngoài luật vẫn cần kiểm chứng; lịch sử mẫu là dữ liệu
+demo, không phải hồ sơ tín dụng thật. Kiểm thử: `uv run pytest -q tests/test_demo_history.py`.
+
 ## Kiểm tra an toàn đầu vào
 
 Web chat, nội dung yêu cầu handoff và Telegram đều được kiểm tra trước khi ghi

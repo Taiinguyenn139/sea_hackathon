@@ -240,9 +240,20 @@ minh của người khác.
 ## Giới hạn tích hợp hiện tại
 
 Đây là schema dataset riêng. CLI không seed database đang chạy, không tự tạo
-40 phiên, không nạp sẵn lịch sử giả vào memory và không tự chuyển thành
-`Scenario` cho `eval.runner`. Backend đã có thể chọn và xác minh cả 10 hồ sơ;
-loader kiểm tra dữ liệu không có nghĩa là agent đã vượt qua 40 phiên kiểm thử.
+40 phiên và không tự chuyển thành `Scenario` cho `eval.runner`. Backend đã có
+thể chọn và xác minh cả 10 hồ sơ; loader kiểm tra dữ liệu không có nghĩa là
+agent đã vượt qua 40 phiên kiểm thử.
+
+Khi bật `DEMO_PHONE_IDENTITY`, `harness/demo_history.py` dùng lời khách trong
+journey làm lịch sử ban đầu chỉ đọc cho `harness` và `full_history`. Quyền đọc
+của phiên hiện tại vẫn phải qua kiểm tra backend; cờ xác minh trong file chỉ
+lọc những lời mẫu hợp lệ, không cấp quyền cho phiên đang chạy. Lịch sử không
+đọc tương lai theo ngày nghiệp vụ, không nhập đáp án oracle và không thực hiện
+các yêu cầu gọi lại/bàn giao trong quá khứ. Các fact `demo_history` được hợp
+nhất khi đọc, không ghi vào bảng `facts`; giá trị runtime luôn sở hữu trường
+đã cập nhật, kể cả khi xung đột. Vì vậy không cần migration hoặc reset dữ liệu.
+`no_memory` không đọc lịch sử mẫu. Câu nhắc lại nhu cầu trả số liệu có nguồn,
+không tự báo giá; lãi suất/ưu đãi hiện hành vẫn phải lấy qua bank tools.
 
 Web và Telegram có adapter ứng dụng; Zalo và hotline trong bộ này chỉ là mô
 phỏng. Bộ này chưa triển khai thêm hai adapter đó, không gửi OTP/SMS, tóm tắt
