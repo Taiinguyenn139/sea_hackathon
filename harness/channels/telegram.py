@@ -150,7 +150,17 @@ class Dispatcher:
                             session["id"], text, row["id"], "telegram:" + target,
                             input_checked=payload.get("input_guard_version") == VERSION,
                         )["reply"]
-                    if self.harness.can_chat(session) and session["status"] == "active" and not contact and not late and (
+                        session = self.harness.session(session["id"])
+                        customer = session["customer_id"]
+                    if self.settings.demo_phone_identity and not late and session["status"] == "active" and (
+                        start or command == "/phone" or new_session
+                    ):
+                        reply += (
+                            "\n\nBản demo: nhập số điện thoại ngay trong chat. Dùng cùng số trên web và Telegram "
+                            "để tiếp tục cùng hồ sơ và thông tin đã ghi nhớ, không cần mã xác nhận."
+                        )
+                        markup = {"remove_keyboard": True}
+                    elif self.harness.can_chat(session) and session["status"] == "active" and not contact and not late and (
                         start or command == "/phone" or new_session
                     ) and not self.db.one(
                         "SELECT id FROM customer_profiles WHERE id=?", (customer,)
