@@ -2,7 +2,7 @@
 
 Quy ước làm việc của team: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Memory Harness là chatbot fintech dùng dữ liệu ngân hàng hư cấu, gồm web chat,
+Bankwise là chatbot fintech dùng dữ liệu ngân hàng hư cấu, gồm web chat,
 console chuyên viên, benchmark và adapter Telegram. Backend FastAPI/SQLite;
 frontend React/Vite. Chạy một backend process để giữ hợp đồng SQLite/checkpoint.
 
@@ -54,3 +54,9 @@ kích hoạt workflow, xem log, kiểm tra URL và rollback. [Workflow](.github/
 kiểm tra PR; sau merge vào `main`, chỉ deploy khi `GCP_DEPLOY_ENABLED=true` và môi trường
 `demo` đã được cấu hình. URL demo nằm trong biến `APP_URL` của environment này;
 kiểm tra health và revision theo hướng dẫn vận hành để xác nhận phiên bản đang chạy.
+
+## Tools ngân hàng
+
+[Hướng dẫn tích hợp](docs/INTEGRATION.md) mô tả 9 tool từ nhánh tuannv, quyền truy cập,
+ngày gọi bắt buộc và adapter agent trên main. [Dữ liệu giả lập](docs/DATA.md) giải thích
+fixtures nghiệp vụ; dữ liệu xác minh ngày sinh của main nằm riêng trong `bank_tools/fixtures/bank.yaml`.

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("customer verifies before chat; retry reuses message id and displays real reply", async ({
+test("public chat enabled before verification; retry reuses message id and displays real reply", async ({
   page,
 }) => {
   let verified = false;
@@ -57,7 +57,12 @@ test("customer verifies before chat; retry reuses message id and displays real r
     page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" }),
   ).toBeDisabled();
   await page.getByRole("button", { name: "Bắt đầu", exact: true }).click();
-  await expect(page.getByText("Xác minh trước khi tiếp tục")).toBeVisible();
+  await expect(
+    page.getByText("Xác minh để xem lịch sử và đặt lịch"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" }),
+  ).toBeEnabled();
   await page.locator("#dob").fill("1988-05-12");
   await page.getByRole("button", { name: "Xác minh", exact: true }).click();
   await page

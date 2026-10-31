@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 const root = resolve(import.meta.dirname, "../..");
-const temp = await mkdtemp(join(tmpdir(), "mach-ui-integration-"));
+const temp = await mkdtemp(join(tmpdir(), "bankwise-ui-integration-"));
 const password = randomBytes(24).toString("hex");
 const port = process.env.LIVE_TEST_PORT ?? "8007";
 const base = `http://127.0.0.1:${port}`;
@@ -77,7 +77,7 @@ try {
   await page.locator(".from-assistant").first().waitFor();
   await page
     .getByRole("textbox", { name: "Tin nhắn cho trợ lý" })
-    .fill("Hẹn gọi lại cho tôi vào ngày mai.");
+    .fill("Hẹn gọi lại cho tôi vào ngày mai lúc 09:00.");
   await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
   await page.waitForFunction(
     () => document.querySelectorAll(".from-assistant").length === 2,

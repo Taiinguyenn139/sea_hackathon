@@ -90,7 +90,7 @@ class Dispatcher:
                                     else "Chưa thể xác minh. Anh/chị vui lòng kiểm tra lại thông tin."
                                 )
                             else:
-                                reply = "Để tiếp tục demo, vui lòng xác minh ngày sinh theo định dạng năm-tháng-ngày."
+                                reply = self.harness.message(session["id"], text, row["id"])["reply"]
                         elif session["status"] == "waiting_human":
                             reply = "Chuyên viên đang tiếp nhận yêu cầu. Em sẽ tiếp tục khi chuyên viên hoàn tất."
                         else:

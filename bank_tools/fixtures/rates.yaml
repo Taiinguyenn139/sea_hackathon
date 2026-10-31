@@ -1,0 +1,6 @@
+# Số liệu minh họa do đội dự án tự đặt; không phải báo giá ngân hàng thật.
+rates:
+  - {rate_id: HL-MASS-2026, product: home_loan, segment: mass, amount_min: 100000000, amount_max: 10000000000, term_min: 12, term_max: 360, standard_rate: 10.5, floating_margin: 3.5, valid_from: '2026-01-01', valid_until: '2026-12-31'}
+  - {rate_id: HL-PRIORITY-2026, product: home_loan, segment: priority, amount_min: 100000000, amount_max: 20000000000, term_min: 12, term_max: 360, standard_rate: 10.0, floating_margin: 3.0, valid_from: '2026-01-01', valid_until: '2026-12-31'}
+  - {rate_id: PL-MASS-2026, product: personal_loan, segment: mass, amount_min: 10000000, amount_max: 500000000, term_min: 6, term_max: 60, standard_rate: 18.0, floating_margin: 0.0, valid_from: '2026-01-01', valid_until: '2026-12-31'}
+  - {rate_id: PL-PRIORITY-2026, product: personal_loan, segment: priority, amount_min: 10000000, amount_max: 1000000000, term_min: 6, term_max: 60, standard_rate: 15.0, floating_margin: 0.0, valid_from: '2026-01-01', valid_until: '2026-12-31'}

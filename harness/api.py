@@ -225,6 +225,11 @@ def create_app(settings=None):
         )
         return {"items": rows}
 
+    @app.get("/sessions/{sid}/tools")
+    def tool_definitions(sid: str, request: Request):
+        session = owner(sid, request)
+        return {"tools": harness.engine.bank.definitions(session["customer_id"], sid)}
+
     @app.post("/sessions/{sid}/verify")
     def verify(sid: str, body: VerifyInput, request: Request):
         return harness.verify(owner(sid, request), body.dob, request.client.host if request.client else "unknown")
@@ -423,16 +428,14 @@ def create_app(settings=None):
 
     @app.get("/admin/state", dependencies=[Depends(admin)])
     def state():
-        import hashlib
-
-        from bank_tools.service import FIXTURE_PATH
+        from bank_tools.service import fixture_hash
 
         return {
             "backend": settings.llm_backend,
             "model": settings.openai_model if settings.llm_backend != "rules" else None,
             "clock": db.setting("clock"),
             "playbook": db.setting("playbook"),
-            "fixture_hash": hashlib.sha256(FIXTURE_PATH.read_bytes()).hexdigest(),
+            "fixture_hash": fixture_hash(),
             "effective_config": {
                 "backend": settings.llm_backend,
                 "model": settings.openai_model,

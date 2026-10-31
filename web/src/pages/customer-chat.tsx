@@ -25,10 +25,15 @@ import {
   type Turn,
 } from "../api";
 import { BrandMark, ErrorBanner, Spinner } from "../ui";
-const STORAGE = "mach-chat-session";
+const STORAGE = "bankwise-chat-session";
+const LEGACY_STORAGE = "mach-chat-session";
 function savedSession(): ChatSession | null {
   try {
-    return JSON.parse(sessionStorage.getItem(STORAGE) ?? "null");
+    return JSON.parse(
+      sessionStorage.getItem(STORAGE) ??
+        sessionStorage.getItem(LEGACY_STORAGE) ??
+        "null",
+    );
   } catch {
     return null;
   }
@@ -76,7 +81,10 @@ export function CustomerChat() {
   function save(next: ChatSession | null) {
     setSession(next);
     if (next) sessionStorage.setItem(STORAGE, JSON.stringify(next));
-    else sessionStorage.removeItem(STORAGE);
+    else {
+      sessionStorage.removeItem(STORAGE);
+      sessionStorage.removeItem(LEGACY_STORAGE);
+    }
   }
   const loadProfiles = () =>
     request<{ profiles: Profile[] }>("/demo/profiles")
@@ -297,7 +305,7 @@ export function CustomerChat() {
               <div className="welcome-symbol">
                 <BrandMark />
               </div>
-              <div className="eyebrow">NGÂN HÀNG TÀI KHOA TUẤN</div>
+              <div className="eyebrow">NGÂN HÀNG BANKWISE</div>
               <h2>Chúng tôi có thể hỗ trợ gì cho bạn?</h2>
               <p>Vui lòng chọn dịch vụ hoặc nhập câu hỏi để được hỗ trợ.</p>
               <div className="suggestions">
@@ -423,7 +431,7 @@ export function CustomerChat() {
             <form className="verify-bar" onSubmit={verify}>
               <LockKeyhole size={21} />
               <div>
-                <strong>Xác minh trước khi tiếp tục</strong>
+                <strong>Xác minh để xem lịch sử và đặt lịch</strong>
                 <label htmlFor="dob">
                   Ngày sinh của khách hàng
                   {chosenProfile?.dob ? ` · ${chosenProfile.dob}` : ""}
@@ -464,13 +472,13 @@ export function CustomerChat() {
               }}
               rows={2}
               maxLength={4000}
-              disabled={!verified || waiting || pending}
+              disabled={!session || waiting || pending}
               aria-label="Tin nhắn cho trợ lý"
               placeholder={
                 !session
                   ? "Bắt đầu phiên hỗ trợ để gửi tin nhắn…"
                   : !verified
-                    ? "Xác minh hồ sơ để tiếp tục…"
+                    ? "Hỏi thông tin công khai; xác minh để dùng dịch vụ cá nhân…"
                     : waiting
                       ? "Chuyên viên sẽ tiếp nhận yêu cầu của bạn…"
                       : "Nhập câu hỏi cần hỗ trợ…"
@@ -478,11 +486,11 @@ export function CustomerChat() {
             />
             <div className="composer-footer">
               <span>
-                <LockKeyhole size={13} /> Ngân hàng Tài Khoa Tuấn
+                <LockKeyhole size={13} /> Ngân hàng Bankwise
               </span>
               <button
                 className="send-button"
-                disabled={!verified || !draft.trim() || pending || waiting}
+                disabled={!session || !draft.trim() || pending || waiting}
                 aria-label="Gửi tin nhắn"
               >
                 <ArrowUp size={21} />

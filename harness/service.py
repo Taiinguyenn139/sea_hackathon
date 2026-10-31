@@ -8,7 +8,7 @@ import time
 from fastapi import HTTPException
 
 from bank_tools.service import FIXTURES, canonical, ident, now
-from harness.agent.engine import Engine, event
+from harness.agent.engine import Engine
 
 
 def token_hash(value):
@@ -53,7 +53,9 @@ class Harness:
             if n >= 5:
                 raise HTTPException(429, "Vui lòng thử xác minh lại sau ít phút.")
             c.execute("INSERT INTO auth_attempts VALUES(?,?,?)", (identity, source, current))
-        result = self.engine.bank.call("verify_identity", {"dob": dob}, identity, session["id"])
+        result = self.engine.bank.call(
+            "verify_identity", {"dob": dob, "as_of": self.db.setting("clock")}, identity, session["id"]
+        )
         if not result["data"].get("verified"):
             return {
                 "identity_status": "unverified",
@@ -76,21 +78,14 @@ class Harness:
                 return json.loads(existing["result"])
             if session["status"] != "active":
                 raise HTTPException(409, "Session is waiting for staff or ended")
-            if not session["verified"]:
-                return {
-                    "session_id": sid,
-                    "reply": "Để tiếp tục, anh/chị vui lòng xác minh ngày sinh trong bước xác minh.",
-                    "used_fact_ids": [],
-                    "guard_events": [event("G7", "identity_unverified", "verify")],
-                    "handoff_id": None,
-                }
             turn = existing["id"] if existing else ident("t_", [sid, client_id])
             if not existing:
                 with self.db.transaction() as c:
                     c.execute(
                         "INSERT INTO turns VALUES(?,?,?,?,?,?,?)", (turn, sid, client_id, text, None, None, now())
                     )
-                    self.engine.memory.enqueue(c, turn, session["customer_id"], sid, session["channel"], text)
+                    if session["verified"]:
+                        self.engine.memory.enqueue(c, turn, session["customer_id"], sid, session["channel"], text)
             state = self.engine.run(session, text, turn)
             response = {
                 "session_id": sid,

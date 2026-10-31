@@ -26,7 +26,7 @@ cần commit ở đó. Không đưa oracle vào DB, prompt, Call Brief đầu v�
 | --- | --- | --- |
 | 1 | web · 27/09/2026 | Vay mua nhà 2 tỷ, 240 tháng, thu nhập 45 triệu, nhà 3 tỷ, trả nợ hiện hữu 0. Nêu mối lo lãi sau ưu đãi rồi cần bàn với chồng. Lưu nguồn từng fact và quote 6,5% từ HL-Q3-2026. |
 | 2 | telegram · 28/09/2026 | Khách nói thu nhập 40 triệu và chưa xác nhận khác biệt. Hai fact 45/40 triệu phải conflicted; giữ amount và term; không có income active. |
-| 3 | web · 31/10/2026 | Khách xác nhận thu nhập 40 triệu. Hai bản thu nhập trước superseded; bản xác nhận active. Quote Q3 expired nhưng còn trong lịch sử, Q4 6,9% active. Khách yêu cầu chuyên viên giải thích lãi sau ưu đãi và giấy tờ. |
+| 3 | web · 31/10/2026 | Khách xác nhận thu nhập 40 triệu. Hai bản thu nhập trước superseded; bản xác nhận active. Quote Q3 expired nhưng còn trong lịch sử, Q4 trên web 7,1% trong 6 tháng active. Khách yêu cầu chuyên viên giải thích lãi sau ưu đãi và giấy tờ. |
 
 Mỗi phiên được runner tạo bằng `/admin/sessions`, sau đó `/verify` dùng ngày
 sinh giả của hồ sơ `hoa`: `1988-05-12`. Quyền truy cập trước xác minh vẫn được

@@ -58,11 +58,11 @@ def test_memory_contract_matches_scenario_and_current_bank():
             if fact.key != "promo_rate":
                 continue
             # Validate the curated oracle against policy files, never SUT responses.
-            matches = [p for p in bank["promotions"] if p["product"] == scenario["product"]
+            matches = [p for p in yaml.safe_load((ROOT / "bank_tools/fixtures/promotions.yaml").read_text())["promotions"] if p["product"] == scenario["product"]
                        and p["valid_from"] <= fact.observed_at.isoformat() <= p["valid_until"]
                        and fact.channel in p["channels"]]
             assert len(matches) == 1
-            assert matches[0]["rate"] == fact.value
+            assert str(matches[0]["rate"]) == fact.value
             assert matches[0]["valid_until"] == fact.valid_until.isoformat()
             values = oracle.expected_values(scenario["product"], fact.observed_at.isoformat(), fact.channel)
             assert str(values["promo_rate"]) == fact.value
@@ -181,3 +181,17 @@ def test_runner_reads_checkpoint_after_session_end_and_surfaces_failure():
                       memory_contract=contract)
     assert "/customers/hoa/brief" not in baseline.paths
     assert result["memory_checks"] == []
+
+
+def test_numeric_tool_receipt_matches_sqlite_value_without_weakening_provenance():
+    checkpoint = Checkpoint.model_validate({
+        "session_number": 1, "as_of": "2026-10-31", "conflict_keys": [], "unique_active_keys": [],
+        "facts": [{"key": "promo_rate", "value": "7.1", "unit": "%/năm", "source_type": "bank_tool", "status": "active", "channel": "web", "observed_at": "2026-10-31", "valid_until": "2026-12-31"}],
+    })
+    fact = {**checkpoint.facts[0].model_dump(mode="json", exclude={"source_step"}), "id": "f", "customer_id": "hoa", "source_ref": "tc"}
+    emitted = {**fact, "fact_id": "f", "value": 7.1}
+    brief = {"redacted": False, "customer_id": "hoa", "facts": [fact], "conflicts": [], "warnings": []}
+    receipts = {"tc": {"result": {"facts": [emitted]}}}
+    assert score_memory(brief, checkpoint, "hoa", {}, receipts) == []
+    emitted["value"] = 6.9
+    assert any("bank_provenance" in issue for issue in score_memory(brief, checkpoint, "hoa", {}, receipts))

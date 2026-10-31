@@ -166,11 +166,13 @@ def run_case(
                 allowed = oracle.allowed_claims(
                     scenario["product"], as_of, channel, scenario.get("customer_claims", [])
                 )
-                expected_values = oracle.expected_values(scenario["product"], as_of, channel, scenario.get("loan"))
+                expected_values = oracle.expected_values(
+                    scenario["product"], as_of, channel, scenario.get("loan"), card_income=scenario.get("card_income")
+                )
                 allowed.update(
                     ("VND", value)
                     for key, value in expected_values.items()
-                    if key.startswith("installment_") or key == "total_payment"
+                    if key.startswith("installment_") or key in ("total_payment", "card_limit_max")
                 )
                 metrics, issues = score_reply(reply.get("reply", ""), step.get("expect", {}), allowed, known_slots)
                 if call.get("verify", True):
