@@ -122,6 +122,35 @@ nguồn tên, intent và việc có fact tên; không ghi tên hay số điện 
 được bảo vệ bằng quyền hiện hữu vẫn lưu nguồn fact để kiểm chứng câu trả lời.
 Kiểm thử hồi quy: `uv run pytest -q tests/test_profile_context.py`.
 
+## Lịch sử ban đầu cho demo
+
+Agent OpenAI dùng projector chuẩn `harness/memory/dataset_history.py` khi bật
+`IDENTITY_HISTORY_ENABLED=true`. Sau khi tool nhận diện thành công, brief kết
+hợp lời khách đã xác minh trong dataset với memory runtime của đúng người.
+Chỉ đọc input trước hoặc đúng ngày nghiệp vụ, không đọc oracle/đáp án assistant,
+không seed turn và không phát lại callback/handoff. Ví dụ An ở ngày 31/10/2026
+có 9 lời khách lịch sử, nhu cầu 4 tỷ/300 tháng, thu nhập 100 triệu, nợ 10 triệu
+và nhà 6 tỷ; phiên chưa xác minh không sửa các giá trị này.
+
+Chế độ rules/demo legacy vẫn giữ `harness/demo_history.py` khi bật
+`DEMO_PHONE_IDENTITY=true` và tắt `IDENTITY_HISTORY_ENABLED`. Nó cung cấp lịch sử
+chỉ đọc và fact
+`source_type=demo_history`, nguồn file/message, cho `harness`/`full_history`;
+`no_memory` không đọc lịch sử mẫu. Backend không nạp legacy song song với
+projector agent, nên không lặp lịch sử hoặc thay baseline bằng bộ trích khác.
+
+Fact mẫu không ghi vào database. Trong luồng legacy, trường runtime đã cập
+nhật hoặc đang conflict không được quay về giá trị mẫu; đổi sản phẩm không
+mang số tiền/kỳ hạn khoản vay cũ sang sản phẩm khác. Quyền của phiên đang chạy
+luôn được kiểm tra riêng: cờ xác minh trong file không cấp quyền cho người gọi.
+Nhắc lại nhu cầu dùng dữ liệu có nguồn, không tự báo giá; lãi suất/ưu đãi hiện
+hành phải lấy qua tool đúng ngày/kênh. Câu hỏi và giá trị giả định hoặc bị phủ
+định trong journey không tự trở thành nhu cầu mới. Đây là dữ liệu hư cấu,
+không phải hồ sơ tín dụng thật.
+
+Kiểm thử projector agent: `uv run pytest -q tests/test_dataset_callbrief.py`;
+kiểm thử legacy: `uv run pytest -q tests/test_demo_history.py`.
+
 ## Kiểm tra an toàn đầu vào
 
 Web chat, nội dung yêu cầu handoff và Telegram đều được kiểm tra trước khi ghi

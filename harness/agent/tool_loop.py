@@ -317,7 +317,9 @@ class AgentLoop:
         try:
             context = self._context(state, run)
             if not run["messages"]:
-                rows = self.engine.context_turns(state["session"])
+                # Specialist context already carries its bounded history. Do
+                # not append a second, unbounded copy as chat messages.
+                rows = [] if self.engine.responder == "ai_specialist" else self.engine.context_turns(state["session"])
                 for row in [row for row in rows if row["id"] != turn_id][-15:]:
                     run["messages"].append({"role": "user", "content": row["text"]})
                     if row["reply"]:

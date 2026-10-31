@@ -531,7 +531,7 @@ class Harness:
                     c.execute(
                         "INSERT INTO turns VALUES(?,?,?,?,?,?,?)", (turn, sid, client_id, text, None, None, now())
                     )
-                    if self.can_chat(session) and conversation_intent(text) != "profile_name" and not (
+                    if self.can_chat(session) and conversation_intent(text) not in ("profile_name", "needs_recall") and not (
                         self.settings.llm_backend == "openai" and self.unbound_telegram_guest(session)
                     ):
                         self.engine.memory.enqueue(c, turn, session["customer_id"], sid, session["channel"], text)
@@ -557,7 +557,7 @@ class Harness:
             engine_text = ("Gặp người thật: " + text) if human and self.settings.llm_backend != "openai" else text
             state = engine.run(session, engine_text, turn, source=source)
             session = self.session(sid)
-            if self.can_chat(session) and conversation_intent(text) != "profile_name":
+            if self.can_chat(session) and conversation_intent(text) not in ("profile_name", "needs_recall"):
                 with self.engine.lock(session["customer_id"]), self.db.transaction() as c:
                     self.engine.memory.enqueue(c, turn, session["customer_id"], sid, session["channel"], text)
             if current and state.get("handoff_id"):

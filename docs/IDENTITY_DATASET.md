@@ -276,6 +276,23 @@ thể project lời khách lịch sử vào call brief khi bật flag, không nh
 thành turn/action trong DB. Backend nhận diện đủ 10 hồ sơ qua tool; loader kiểm
 tra dữ liệu không có nghĩa agent đã vượt qua 40 phiên kiểm thử.
 
+Luồng agent OpenAI dùng projector chuẩn `harness/memory/dataset_history.py`
+khi `IDENTITY_HISTORY_ENABLED=true`, theo quy tắc đầu vào, quyền phiên và mốc
+ngày ở phần trên. Bản tóm tắt An vẫn dựa trên 9 lời khách đã xác minh: 4 tỷ,
+300 tháng, thu nhập 100 triệu, nợ 10 triệu và nhà 6 tỷ ở ngày 31/10/2026.
+Không lấy yêu cầu 99 triệu từ phiên chưa xác minh hay dữ liệu tương lai.
+
+`harness/demo_history.py` được giữ cho chế độ rules/demo legacy khi bật
+`DEMO_PHONE_IDENTITY` và tắt `IDENTITY_HISTORY_ENABLED`, với lịch sử chỉ đọc
+và fact `source_type=demo_history`.
+Backend không nạp song song lịch sử legacy với projector agent để tránh lặp
+nguồn hoặc ghi đè baseline. Legacy cũng chỉ lấy lời khách từ phiên fixture đã
+xác minh, không vượt ngày nghiệp vụ, không đọc oracle và không thực hiện yêu
+cầu callback/handoff cũ. Fact mẫu được hợp nhất khi đọc, không ghi vào bảng
+`facts`; trường runtime đã cập nhật hoặc đang conflict không quay về giá trị
+mẫu. `no_memory` không đọc lịch sử mẫu; lãi suất và ưu đãi mới vẫn phải tra tool.
+Không cần reset DB hay nhập lại 40 phiên để dùng cơ chế đọc này.
+
 Web và Telegram có adapter ứng dụng; Zalo và hotline trong bộ này chỉ là mô
 phỏng. Bộ này chưa triển khai thêm hai adapter đó, không gửi OTP/SMS, tóm tắt
 thật hoặc gọi điện thật. Các offers đối thủ vẫn cần nguồn context/tra cứu riêng

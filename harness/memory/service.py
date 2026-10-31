@@ -21,6 +21,8 @@ def _money_slots(text):
         for match in _MONEY.finditer(clause):
             token = re.fullmatch(r"(-?[\d.,]+)\s*(tỷ|triệu|nghìn|trieu|ty|đồng|vnd)", match[0])
             number, unit = token.groups()
+            if unit in ("đồng", "vnd") and not re.fullmatch(r"-?(?:\d{1,3}(?:[.,]\d{3})+|\d+)", number):
+                continue
             number = re.sub(r"[.,]", "", number) if re.fullmatch(r"-?\d{1,3}(?:[.,]\d{3})+", number) else number.replace(",", ".")
             value = Decimal(number) * {
                 "tỷ": 10**9, "ty": 10**9, "triệu": 10**6, "trieu": 10**6,
@@ -79,6 +81,8 @@ def extract(text):
             r"(?:đừng|không|chưa)\b.*(?:hẹn|gọi|liên hệ)|(?:tự|sẽ)\s*(?:chủ động\s*)?liên hệ", clause,
         ):
             slots["commitment"] = ("Khách yêu cầu liên hệ lại", "")
+    if re.search(r"\btôi (?:sẽ |quyết định |muốn )?(?:hoãn|dừng kế hoạch|chưa vay|không vay nữa)\b", low):
+        slots["loan_status"] = ("tạm hoãn kế hoạch vay", "")
     return slots
 
 
@@ -125,6 +129,11 @@ class Memory:
         return project_history(
             customer, as_of or self.db.setting("clock"), extract, directory=self.history_directory,
         )
+
+    def _legacy_demo_history_enabled(self):
+        # OpenAI's explicit opt-out must not be reversed by the older demo flag.
+        return bool(self.settings and self.settings.demo_phone_identity
+                    and self.settings.llm_backend == "rules" and not self.settings.identity_history_enabled)
 
     def enqueue(self, conn, turn_id, customer, session, channel, text):
         if conn.execute("SELECT turn_id FROM memory_jobs WHERE turn_id=?", (turn_id,)).fetchone():
@@ -301,7 +310,24 @@ class Memory:
         runtime = self.db.all("SELECT * FROM facts WHERE customer_id=? ORDER BY observed_at,id", (customer,))
         for fact in runtime:
             fact["source_origin"] = "runtime"
-        return combine_facts(self._historical(customer)["facts"], runtime)
+        if self._legacy_demo_history_enabled():
+            from harness.demo_history import initial_facts
+
+            return initial_facts(customer, date, runtime) + runtime
+        historical = self._historical(customer)["facts"]
+        product = next((fact["value"] for fact in historical if fact["key"] == "product" and fact["status"] == "active"), None)
+        if product and any(fact["key"] == "product" and fact["source_type"] == "customer"
+                           and fact["status"] in ("active", "conflicted")
+                           and (fact["status"] == "conflicted" or fact["value"] != product) for fact in runtime):
+            historical = [fact for fact in historical if fact["key"] not in ("amount", "term", "property_value", "loan_status")]
+        return combine_facts(historical, runtime)
+
+    def demo_history(self, customer):
+        if not self._legacy_demo_history_enabled():
+            return []
+        from harness.demo_history import history
+
+        return history(self._customer(customer), self.db.setting("clock"))
 
     def history(self, customer):
         """Authorized caller's source history; no LLM, replay, or queue mutation."""
@@ -351,7 +377,8 @@ class Memory:
             "facts": facts,
             "history": self.history(customer),
             "pending_topics": self._historical(customer)["pending_topics"],
-            "needs": [f for f in facts if f["source_type"] == "customer" and f["status"] == "active"],
+            "needs": [f for f in facts if f["source_type"] in ("customer", "demo_history") and f["status"] == "active"],
+            "demo_history": self.demo_history(customer),
             "conflicts": [f for f in facts if f["status"] == "conflicted"],
             "quotes": [f for f in facts if f["source_type"] == "bank_tool"],
             "warnings": [f for f in facts if f["status"] in ("expired", "stale", "conflicted")],

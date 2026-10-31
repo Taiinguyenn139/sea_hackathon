@@ -16,7 +16,7 @@ NEED = "Tôi vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, không c�
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
-    calls, control = [], {"fail": False, "unsafe": False}
+    calls, control = [], {"fail": False, "unsafe": False, "agent_messages": []}
 
     def provider(request):
         body = json.loads(request.content)
@@ -24,6 +24,8 @@ def setup(tmp_path, monkeypatch):
         agent = "BACKEND_CONTEXT_JSON:\n" in instruction
         data = json.loads(instruction.split("BACKEND_CONTEXT_JSON:\n", 1)[1]) if agent else json.loads(body["messages"][1]["content"])
         calls.append((instruction, data, body["model"]))
+        if agent:
+            control["agent_messages"].append(body["messages"])
         if "INPUT_SECURITY_CLASSIFIER" in instruction:
             choice = answer()
             choice["message"]["content"] = json.dumps({"category": "safe"})
@@ -297,7 +299,7 @@ def test_conflicting_memory_requires_confirmation_and_keeps_customer_sources(set
 
 
 def test_bounded_context_and_tool_actions_are_not_repeated_on_complete(setup):
-    client, sid, auth, _, calls, _ = setup
+    client, sid, auth, _, calls, control = setup
     from bank_tools.service import now
     from harness.agent.specialist import HISTORY_BUDGET
     h = client.app.state.harness
@@ -310,6 +312,14 @@ def test_bounded_context_and_tool_actions_are_not_repeated_on_complete(setup):
     history = next(p for p in data["context_parts"] if p["type"] == "current_session")
     assert history["omitted_turns"] > 0
     assert sum(len(json.dumps(t, ensure_ascii=False)) for t in history["turns"]) <= HISTORY_BUDGET
+    # Inspect the actual provider envelope, beyond the bounded copy in context_parts.
+    # Before the fix, AgentLoop appended these large old messages a second time.
+    envelope = control["agent_messages"][-1]
+    old_contents = {"Trao đổi trước. " * 100, "Đã ghi nhận. " * 100}
+    assert not any(m.get("content") in old_contents for m in envelope[1:])
+    retained_ids = {turn["id"] for turn in history["turns"]}
+    assert "history-11" in retained_ids and "history-0" not in retained_ids
+    assert sum(len(json.dumps(m, ensure_ascii=False)) for m in envelope[1:-1]) == 0
     first = message(client, sid, auth, "Gọi lại ngày mai 10 giờ", "callback").json()
     assert first == message(client, sid, auth, "Gọi lại ngày mai 10 giờ", "callback").json()
     assert len(h.db.all("SELECT * FROM callbacks")) == 1
