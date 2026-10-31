@@ -56,10 +56,14 @@ test("customer verifies before chat; retry reuses message id and displays real r
   await expect(
     page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" }),
   ).toBeDisabled();
+  await page.getByRole("button", { name: /Vay mua nhà/ }).click();
+  await expect(page.getByRole("button", { name: /Vay mua nhà/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" })).toHaveValue("Tôi muốn tìm hiểu vay mua nhà.");
   await page.getByRole("button", { name: "Bắt đầu", exact: true }).click();
   await expect(page.getByText("Xác minh trước khi tiếp tục")).toBeVisible();
   await page.locator("#dob").fill("1988-05-12");
   await page.getByRole("button", { name: "Xác minh", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" })).toHaveValue("Tôi muốn tìm hiểu vay mua nhà.");
   await page
     .getByRole("textbox", { name: "Tin nhắn cho trợ lý" })
     .fill("Tôi muốn vay mua nhà");
@@ -145,6 +149,9 @@ for (const [width, height] of [
       }),
     ).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
+    expect(await page.locator(".conversation-scroll").evaluate(
+      (element) => element.scrollHeight <= element.clientHeight,
+    )).toBe(true);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -154,4 +161,49 @@ for (const [width, height] of [
       path: testInfo.outputPath(`chat-${width}.png`),
       fullPage: true,
     });
+    const toggle = page.getByRole("button", { name: /thông tin hỗ trợ/ });
+    const wasExpanded = await toggle.getAttribute("aria-expanded") === "true";
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", String(!wasExpanded));
+    if (wasExpanded) await expect(page.getByRole("complementary", { name: "Thông tin hỗ trợ" })).toBeHidden();
+    else await expect(page.getByRole("complementary", { name: "Thông tin hỗ trợ" })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
+
+test("staff queue uses real counts and supports search with reset", async ({ page }, testInfo) => {
+  const handoffs = [
+    { handoff_id: "h1", customer_id: "hoa", reason: "Tư vấn hồ sơ vay mua nhà", status: "pending" },
+    { handoff_id: "h2", customer_id: "minh", reason: "Hướng dẫn mở thẻ tín dụng", status: "completed" },
+  ];
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname.replace("/api", "");
+    if (path === "/staff/me") return route.fulfill({ json: { csrf_token: "test-csrf" } });
+    if (path === "/handoffs") return route.fulfill({ json: { items: handoffs } });
+    if (path === "/callbacks") return route.fulfill({ json: { items: [] } });
+    return route.fulfill({ status: 404, json: { detail: "Not found" } });
+  });
+  await page.goto("/staff");
+  await expect(page.getByRole("button", { name: /Tư vấn hồ sơ vay mua nhà/ })).toBeVisible();
+  await expect(page.getByLabel("Tổng quan công việc")).toContainText("1");
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({ path: testInfo.outputPath("staff-desktop.png"), fullPage: true });
+  await page.getByRole("searchbox", { name: "Tìm yêu cầu hỗ trợ" }).fill("hoa");
+  await expect(page.getByRole("button", { name: /Tư vấn hồ sơ vay mua nhà/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Hướng dẫn mở thẻ/ })).toHaveCount(0);
+  await page.getByRole("searchbox", { name: "Tìm yêu cầu hỗ trợ" }).fill("không tồn tại");
+  await expect(page.getByRole("heading", { name: "Chưa tìm thấy yêu cầu" })).toBeVisible();
+  await page.getByRole("button", { name: "Xóa bộ lọc" }).click();
+  await expect(page.getByRole("button", { name: /Hướng dẫn mở thẻ/ })).toBeVisible();
+});
+
+test("staff login preview and reduced motion preference", async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.route("**/api/staff/me", (route) => route.fulfill({ status: 401, json: { detail: "Unauthorized" } }));
+  await page.goto("/staff");
+  await expect(page.getByRole("heading", { name: "Chào mừng trở lại" })).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({ path: testInfo.outputPath("staff-login.png"), fullPage: true });
+  await page.route("**/api/demo/profiles", (route) => route.fulfill({ json: { profiles: [] } }));
+  await page.goto("/chat");
+  await expect(page.locator(".visual-tile").first()).toHaveCSS("animation-name", "none");
+});
