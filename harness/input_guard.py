@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict
 
 from harness.llm import LLMUnavailable, json_completion
 
-VERSION = 1
+VERSION = 2
 
 # The demo's chat identity flow accepts these phone tokens. The classifier
 # needs the surrounding intent, not the identifier's digits.
@@ -57,6 +57,14 @@ INJECTION_PATTERNS = (
     r"\[\s*inst\s*\]|<\|(?:im_start|start_header_id)\|>\s*(?:system|developer)|</?\s*(?:system|developer)\s*>",
 )
 
+# Exempt only a complete refusal of a security change, never a whole message
+# merely containing a negation. Other clauses still undergo injection checks;
+# sensitive-value checks and the semantic classifier always see the full input.
+NEGATED_SECURITY_STATEMENT = re.compile(
+    r"(?:^|(?<=[.!?;]))\s*(?:toi|minh|em|anh|chi) khong muon "
+    r"(?:tat|vo hieu hoa) (?:kiem soat )?(?:bao mat|xac minh|guardrails?)\s*(?=[.!?;]|$)"
+)
+
 
 def rejection(category: str) -> dict:
     if category == "sensitive_information":
@@ -95,7 +103,8 @@ def inspect_input(text: str, settings=None, *, semantic: bool = True) -> dict | 
         doubled = [d * 2 if i % 2 else d for i, d in enumerate(reversed(digits))]
         if sum(d - 9 if d > 9 else d for d in doubled) % 10 == 0:
             return rejection("sensitive_information")
-    if any(re.search(pattern, value) for pattern in INJECTION_PATTERNS):
+    injection_text = NEGATED_SECURITY_STATEMENT.sub(" ", value)
+    if any(re.search(pattern, injection_text) for pattern in INJECTION_PATTERNS):
         return rejection("prompt_injection")
     if semantic and settings and settings.llm_backend == "openai":
         try:

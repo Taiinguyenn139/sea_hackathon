@@ -51,7 +51,9 @@ guard và placeholder, không lưu nguyên văn hoặc các trường dư của 
   đọc nhãn và kiểm tra checksum số thẻ. Câu hỏi về OTP/mật khẩu không chứa bí mật,
   thu nhập, khoản vay, kỳ hạn và nhận diện bằng số điện thoại demo vẫn được xử lý.
 - `G9`: chặn các mẫu prompt injection trực tiếp như ghi đè chỉ dẫn, giả vai system,
-  yêu cầu lộ prompt nội bộ hoặc tắt kiểm soát. Khi `LLM_BACKEND=openai`, mỗi đầu
+  yêu cầu lộ prompt nội bộ hoặc tắt kiểm soát. Câu phủ định độc lập như
+  “Tôi không muốn tắt bảo mật” không bị chặn bởi luật này; các lệnh khác trong
+  cùng tin nhắn vẫn được kiểm tra. Khi `LLM_BACKEND=openai`, mỗi đầu
   vào vượt qua luật còn được phân loại ngữ nghĩa bằng một lần gọi LLM, chỉ nhận
   text hiện tại, không nhận lịch sử hoặc tools. Classifier dùng primary/backup
   và ngân sách thời gian như các bước LLM khác, ghi log `purpose=input_guard`.
@@ -81,6 +83,18 @@ loại PII. Nội dung vượt qua luật được gửi tới classifier khi b�
 chưa bao phủ mọi cách che giấu/mã hóa bí mật. Không tự làm sạch lịch sử đã lưu.
 Quyền truy cập, xác minh danh tính, kiểm tra tool và guard đầu ra vẫn cần được giữ.
 Hướng dẫn tham khảo: [OWASP Prompt Injection Prevention](https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html).
+
+## Kiểm tra câu trả lời
+
+Ở mode `harness`, G1 kiểm tra số liệu không có `{fact:id}`, fact không hợp lệ
+và mẫu cam kết chắc chắn duyệt vay hoặc giải ngân. Các số tài chính viết bằng
+chữ tiếng Anh như `six percent`, `six point nine percent`, `twenty-one months`
+được kiểm tra bên cạnh các mẫu tiếng Việt. Cam kết bị chặn ghi reason
+`unsupported_approval_guarantee`; câu phủ định như “Em không thể cam kết phê
+duyệt khoản vay” vẫn hợp lệ. Nếu bản thay thế cũng không đạt, trả câu an toàn.
+Streaming dùng cùng phép kiểm tra trước khi phát từng đoạn hoàn chỉnh, nên các
+mẫu không đạt không được đưa ra bản xem trước. Các luật này chỉ bao phủ những
+mẫu đã nhận diện, không thay thế đánh giá ngữ nghĩa cho mọi cách diễn đạt.
 
 ## Kiểm tra và build
 
