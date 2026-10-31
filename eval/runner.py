@@ -17,9 +17,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from eval.kpis import Counters, handoff_score, score_reply
+from eval.memory_contract import MemoryContract, score_memory
 from eval.oracle import Oracle, content_hash, read_document
 from eval.provenance import audit
 from simulators.customer import Customer
+from simulators.schemas import Scenario
 
 MODES = ("no_memory", "full_history", "harness")
 ROOT = Path(__file__).resolve().parent.parent
@@ -68,9 +70,26 @@ def load_scenarios(directory: Path) -> list[dict]:
     if not scenarios or len({s["scenario_id"] for s in scenarios}) != len(scenarios):
         raise ValueError("Scenarios must be nonempty with unique scenario_id")
     for scenario in scenarios:
-        if not scenario.get("sessions") or not scenario.get("product"):
-            raise ValueError("Scenario requires product and sessions")
+        Scenario.model_validate(scenario)
     return scenarios
+
+
+def load_memory_contracts(directory: Path, scenarios: list[dict]) -> dict[str, MemoryContract]:
+    contracts = {}
+    if not directory.is_dir():
+        raise ValueError("Memory oracle directory does not exist")
+    by_id = {scenario["scenario_id"]: scenario for scenario in scenarios}
+    for path in sorted(directory.glob("*.json")):
+        contract = MemoryContract.model_validate(read_document(path))
+        if contract.scenario_id not in by_id:
+            raise ValueError(f"Memory oracle has no selected scenario: {contract.scenario_id}")
+        if contract.scenario_id in contracts:
+            raise ValueError("Duplicate memory oracle scenario")
+        contract.validate_scenario(by_id[contract.scenario_id])
+        contracts[contract.scenario_id] = contract
+    if not contracts:
+        raise ValueError("Memory oracle directory contains no contracts")
+    return contracts
 
 
 def validate_holdout(directory: Path, manifest_path: Path, oracle_hash: str) -> dict:
@@ -104,12 +123,18 @@ def validate_holdout(directory: Path, manifest_path: Path, oracle_hash: str) -> 
 
 
 def run_case(
-    api: Api, scenario: dict, mode: str, repetition: int, seed: int, oracle: Oracle, playbook: str | None = None
+    api: Api, scenario: dict, mode: str, repetition: int, seed: int, oracle: Oracle, playbook: str | None = None,
+    memory_contract: MemoryContract | None = None,
 ) -> dict:
     customer = Customer(scenario, seed)
     counts = Counters(scenarios=1)
     records: list[dict] = []
     known_slots: set[str] = set()
+    memory_checks: list[dict] = []
+    turn_ids: dict[tuple[int, int], str] = {}
+    tool_receipts: dict[str, dict] = {}
+    if memory_contract:
+        memory_contract.validate_scenario(scenario)
     status = "completed"
     try:
         api.call("/admin/reset", {})
@@ -153,6 +178,11 @@ def run_case(
                     if isinstance(traces, dict):
                         traces = traces.get("items", traces.get("traces", []))
                     trace = traces[-1] if traces else {}
+                    if trace.get("turn_id"):
+                        turn_ids[(customer.calls, index)] = trace["turn_id"]
+                    for receipt in trace.get("tool_calls", []):
+                        if receipt.get("id"):
+                            tool_receipts[receipt["id"]] = receipt
                     source_issues = audit(
                         reply.get("reply", ""),
                         trace,
@@ -193,6 +223,18 @@ def run_case(
                     if receipt != retry_receipt:
                         raise AssertionError("Duplicate handoff completion changed result")
             api.call(f"/sessions/{sid}/end", {}, token)
+            if memory_contract and mode in memory_contract.modes:
+                checkpoint = next(
+                    (cp for cp in memory_contract.checkpoints if cp.session_number == customer.calls), None
+                )
+                if checkpoint:
+                    brief = api.call(f"/customers/{memory_contract.customer_id}/brief", token=api.admin_token)
+                    issues = score_memory(brief, checkpoint, memory_contract.customer_id, turn_ids, tool_receipts)
+                    memory_checks.append({
+                        "session_number": customer.calls, "as_of": as_of,
+                        "status": "failed" if issues else "passed", "issues": issues,
+                    })
+                    counts.failures += int(bool(issues))
         counts.calls = customer.calls
         counts.converted = int(customer.converted)
     except (RuntimeError, KeyError, ValueError, AssertionError, urllib.error.URLError) as error:
@@ -210,6 +252,7 @@ def run_case(
         "counters": asdict(counts),
         "kpis": counts.values(),
         "turns": records,
+        "memory_checks": memory_checks,
     }
 
 
@@ -247,6 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scenario-dir", "--heldout-path", type=Path)
     parser.add_argument("--frozen-manifest", type=Path)
     parser.add_argument("--oracle", type=Path, default=ROOT / "eval/oracle_fixtures/bank.json")
+    parser.add_argument("--memory-oracles", type=Path, help="Optional directory of evaluator-only memory contracts")
     parser.add_argument("--output", type=Path, default=ROOT / "eval/results")
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)
@@ -269,6 +313,10 @@ def main(argv: list[str] | None = None) -> int:
         frozen = validate_holdout(directory, args.frozen_manifest, oracle.hash)
         args.split = "heldout"
     scenarios = load_scenarios(directory)
+    memory_contracts = load_memory_contracts(args.memory_oracles, scenarios) if args.memory_oracles else {}
+    memory_hash = content_hash(args.memory_oracles) if args.memory_oracles else None
+    if frozen and memory_contracts and frozen.get("memory_oracle_hash") != memory_hash:
+        parser.error("Held-out memory checks require a matching memory_oracle_hash in the frozen manifest")
     api = Api(args.base_url, token)
     state = api.call("/admin/state")
     if frozen:
@@ -279,7 +327,10 @@ def main(argv: list[str] | None = None) -> int:
     if ("llm" if actual_backend == "openai" else actual_backend) != args.backend:
         parser.error(f"Backend metadata mismatch: requested {args.backend}, server reports {actual_backend}")
     results = [
-        run_case(api, scenario, mode, repetition, args.seed + repetition, oracle, state.get("playbook"))
+        run_case(
+            api, scenario, mode, repetition, args.seed + repetition, oracle, state.get("playbook"),
+            memory_contracts.get(scenario["scenario_id"]),
+        )
         for scenario in scenarios
         for repetition in range(args.repetitions)
         for mode in MODES
@@ -313,6 +364,8 @@ def main(argv: list[str] | None = None) -> int:
         "metadata": {
             "oracle_hash": oracle.hash,
             "scenario_hash": content_hash(directory),
+            "memory_oracle_hash": memory_hash,
+            "memory_oracle_scenarios": sorted(memory_contracts),
             "frozen_manifest": frozen,
             "server": {
                 key: state.get(key) for key in ("backend", "model", "playbook", "fixture_hash", "effective_config")

@@ -1,0 +1,52 @@
+{
+  "scenario_id": "mortgage-memory-journey",
+  "profile": "hoa",
+  "dob": "1988-05-12",
+  "product": "home_loan",
+  "customer_claims": [["VND", 2000000000], ["months", 240], ["VND", 45000000], ["VND", 40000000], ["VND", 3000000000], ["VND", 0]],
+  "loan": {"amount": "2000000000", "term": 240},
+  "concerns": ["post_promo_rate"],
+  "sessions": [
+    {
+      "channel": "web", "as_of": "2026-09-27", "verify": true,
+      "steps": [
+        {
+          "text": "Chị muốn vay mua nhà 2 tỷ đồng trong 20 năm. Thu nhập riêng của chị là 45 triệu đồng mỗi tháng. Giá trị nhà là 3 tỷ đồng. Tiền trả nợ hiện tại là 0 triệu đồng mỗi tháng.",
+          "reveals": ["amount", "term", "income", "property_value", "debt"],
+          "expect": {"offer": true}
+        },
+        {"text": "Chị lo lãi sau ưu đãi tăng mạnh.", "stage": "objection"},
+        {"text": "Chị cần trao đổi thêm với chồng.", "stage": "objection"}
+      ]
+    },
+    {
+      "channel": "telegram", "as_of": "2026-09-28", "verify": true,
+      "steps": [
+        {
+          "text": "Thu nhập riêng của chị là 40 triệu đồng mỗi tháng.",
+          "reveals": ["income"],
+          "expect": {"confirmation_slots": ["income"]}
+        },
+        {
+          "text": "Chị đang bận, lần sau chị sẽ làm rõ thông tin này.",
+          "expect": {"confirmation_slots": ["income"]}
+        }
+      ]
+    },
+    {
+      "channel": "web", "as_of": "2026-10-31", "verify": true,
+      "steps": [
+        {
+          "text": "Chị xác nhận thu nhập riêng hiện tại chính xác là 40 triệu đồng mỗi tháng.",
+          "reveals": ["income"],
+          "expect": {"offer": true, "confirmation_slots": ["income"]}
+        },
+        {
+          "text": "Chị muốn gặp chuyên viên để hỏi cách tính lãi sau ưu đãi và giấy tờ cần chuẩn bị.",
+          "handoff": true,
+          "handoff_required": ["reason", "next_step", "brief.customer_id", "brief.needs", "brief.quotes", "brief.warnings", "bot_said"]
+        }
+      ]
+    }
+  ]
+}
