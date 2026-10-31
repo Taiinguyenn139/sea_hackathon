@@ -39,6 +39,27 @@ nhập cùng số để dùng chung ngữ cảnh, không cần OTP hay liên k�
 Có thể bắt đầu từ kênh nào cũng được; đây là cơ chế truy cập đơn giản dành cho demo. Script kiểm tra kết
 nối và đăng ký webhook mà không in credential.
 
+## Trả lời tên khách hàng
+
+Chat lấy tên từ cùng nguồn hồ sơ với brief, sau khi kiểm tra quyền của phiên.
+Tên hồ sơ demo được ghi rõ là dữ liệu demo; tên hiển thị Telegram không được
+coi là tên đã xác minh tại ngân hàng. Chọn hồ sơ chưa nhận diện không cấp quyền
+đọc tên. Tin nhắn tự giới thiệu hoặc yêu cầu đổi cách xưng hô không ghi đè tên
+hồ sơ. Hồ sơ chưa có tên và lỗi tra cứu tạm thời có thông báo khác nhau.
+
+Các câu hỏi tên trực tiếp như “Tôi tên gì?”, “Tên tôi là gì?” hoặc “Tôi là ai?”
+được trả từ fact `profile_name`, không gọi planner/draft/extract hoặc chờ memory.
+Input guard vẫn chạy, kể cả classifier khi bật OpenAI. Câu diễn đạt khác có thể
+được planner phân loại thành `profile_name`; câu vừa hỏi tên vừa yêu cầu vay tiếp
+tục luồng tư vấn và có thêm tên từ hồ sơ. JSON và SSE dùng cùng receipt, retry
+cùng message ID giữ nguyên kết quả. Lượt hỏi tên trực tiếp không cập nhật brief
+tài chính trong response; client giữ brief đã có.
+
+Log `profile_context` chỉ ghi revision, turn ID, trạng thái nhận diện/tra cứu,
+nguồn tên, intent và việc có fact tên; không ghi tên hay số điện thoại. Trace
+được bảo vệ bằng quyền hiện hữu vẫn lưu nguồn fact để kiểm chứng câu trả lời.
+Kiểm thử hồi quy: `uv run pytest -q tests/test_profile_context.py`.
+
 ## Kiểm tra an toàn đầu vào
 
 Web chat, nội dung yêu cầu handoff và Telegram đều được kiểm tra trước khi ghi

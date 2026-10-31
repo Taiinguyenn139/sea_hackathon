@@ -11,6 +11,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
 from bank_tools.service import BankTools, canonical, ident, now
+from harness.customer_profile import can_access_memory
 from harness.input_guard import normalized
 from harness.llm import DEFAULT_REPLY, DraftSuggestion, LLMUnavailable, PlanSuggestion, json_completion
 from harness.memory.service import Memory, extract
@@ -40,13 +41,41 @@ class TurnState(TypedDict, total=False):
     confirmations: list
     cards: list
     action_notes: list
+    profile_context: dict
 
 
 def event(guard, reason, action="fallback", attempt=0):
     return {"guard_id": guard, "reason": reason, "action": action, "stage": "guard", "attempt": attempt, "fact_ids": []}
 
 
+def asks_other_name(text):
+    low = normalized(text)
+    return bool(re.search(r"\b(?:vo|chong|me|bo|cha|con|anh|chi|em|ban) (?:cua )?(?:toi|minh|to)\b", low)
+                and re.search(r"\b(?:ten|la ai)\b", low))
+
+
+def asks_profile_name(text):
+    low = normalized(text)
+    if asks_other_name(text):
+        return False
+    return bool(re.search(
+        r"\b(?:toi|minh|em|anh|chi|to) (?:ten (?:la )?gi|la ai)\b"
+        r"|\bten (?:toi|minh|em|anh|chi|to) (?:la )?gi\b"
+        r"|\b(?:biet|nho) (?:ten (?:toi|minh|em|anh|chi|to)|(?:toi|minh) ten)\b", low,
+    ))
+
+
+def has_advice_request(text):
+    low = normalized(text)
+    return bool(extract(text) or re.search(
+        r"\b(?:vay|lai suat|phi|uu dai|san pham|dich vu|chuyen vien|khieu nai|nop ho so|"
+        r"ky hop dong|goi lai|hen|lien he lai|gui tom tat|gui tong ket)\b", low,
+    ))
+
+
 def conversation_intent(text):
+    if asks_profile_name(text) and not has_advice_request(text):
+        return "profile_name"
     low = " ".join(text.casefold().strip(" .!?,…").split())
     if re.fullmatch(r"(?:hello|hi|hey|xin chào|chào)(?:\s+(?:bạn|em|anh|chị|bot|ad|shop))?", low):
         return "greeting"
@@ -174,19 +203,22 @@ class Engine:
 
     def memory_access(self, session):
         """Separate fixture recognition from channel-owned prospect history."""
-        if session.get("verified", False):
-            return True
-        customer = session["customer_id"]
-        return bool(
-            self.db.one(
-                "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
-                (customer, session.get("channel"), session.get("external_id")),
-            )
-            or self.db.one(
-                "SELECT session_id FROM phone_sessions WHERE session_id=? AND customer_id=?",
-                (session.get("id"), customer),
-            )
-        )
+        return can_access_memory(self.db, session)
+
+    def profile_context(self, session):
+        if not self.memory_access(session):
+            return {"status": "unverified"}
+        try:
+            profile = self.memory.profile(session["customer_id"])
+        except sqlite3.Error:
+            return {"status": "unavailable"}
+        if not profile:
+            return {"status": "missing"}
+        name = profile.get("name", "")
+        source = profile["name_source"]
+        if not isinstance(name, str) or not name.strip() or source == "demo_guest" or name == "Khách Telegram":
+            return {"status": "missing", "source": source}
+        return {"status": "available", "source": source, "name": name.strip()}
 
     def run(self, session, text, turn_id):
         with self.lock(session["customer_id"]):
@@ -207,6 +239,7 @@ class Engine:
                         "used_fact_ids": [],
                         "disclosures": [],
                         "action_notes": [],
+                        "profile_context": {},
                         "cards": [],
                         "confirmations": [],
                         "facts": {},
@@ -230,6 +263,21 @@ class Engine:
         emit("status", stage="preparing")
         session = s["session"]
         customer = session["customer_id"]
+        profile = self.profile_context(session)
+        profile_facts = {}
+        profile_parts = []
+        if profile["status"] == "available":
+            fid = ident("pf_", [customer, "name", profile["name"], profile["source"]])
+            profile_facts[fid] = {
+                "id": fid, "key": "profile_name", "value": profile["name"], "unit": "",
+                "source_type": "profile", "source_ref": profile["source"] + ":" + customer,
+                "status": "active", "valid_until": None,
+            }
+            profile_parts.append({"type": "customer_profile", "name_source": profile["source"], "fact_ids": [fid]})
+        # A name is profile data, independent of advisory memory and its provider backlog.
+        if conversation_intent(s["text"]) == "profile_name":
+            return {"known": {}, "facts": profile_facts, "context_parts": profile_parts,
+                    "confirmations": [], "profile_context": profile}
         job = self.db.one("SELECT seq FROM memory_jobs WHERE turn_id=?", (s["turn_id"],))
         if self.memory_access(session):
             self.memory.flush(customer, job["seq"] - 1 if job else None)
@@ -237,8 +285,8 @@ class Engine:
             "SELECT id,text,reply FROM turns WHERE session_id=? ORDER BY created_at,id", (session["id"],)
         )
         known = {}
-        facts = {}
-        parts = []
+        facts = dict(profile_facts)
+        parts = list(profile_parts)
         confirmations = []
         remembered_keys = set()
         if self.memory_access(session) and session["mode"] == "harness":
@@ -307,7 +355,8 @@ class Engine:
                 "status": "active",
                 "valid_until": None,
             }
-        return {"known": known, "facts": facts, "context_parts": parts, "confirmations": sorted(set(confirmations))}
+        return {"known": known, "facts": facts, "context_parts": parts,
+                "confirmations": sorted(set(confirmations)), "profile_context": profile}
 
     def plan(self, s):
         emit("status", stage="planning")
@@ -316,10 +365,12 @@ class Engine:
         product = known.get("product", "home_loan")
         handoff = any(t in low for t in ["chuyên viên", "gặp người", "khiếu nại", "nộp hồ sơ", "ký hợp đồng"])
         intent = conversation_intent(s["text"])
-        suggestion = json_completion(
+        wants_name = asks_profile_name(s["text"])
+        suggestion = None if intent == "profile_name" else json_completion(
             self.settings,
             "Phân loại hội thoại tư vấn. Trả JSON {stage:discover|quote|objection|followup|apply, "
-            "objection:rate_high|need_spouse|null, intent:advice|greeting|loan_catalog|product_catalog|acknowledgement}. "
+            "objection:rate_high|need_spouse|null, intent:advice|greeting|loan_catalog|product_catalog|acknowledgement|profile_name}. "
+            "profile_name: chỉ hỏi tên của chính khách, không phải tên người khác hay tên sản phẩm. "
             "greeting: chào hỏi; loan_catalog: hỏi có những loại vay nào; product_catalog: hỏi các sản phẩm/dịch vụ "
             "được tư vấn; acknowledgement: cảm ơn. Không biến câu hỏi tổng quan thành yêu cầu báo giá. "
             "Không trả số liệu hoặc tool arguments.",
@@ -332,11 +383,16 @@ class Engine:
         if suggestion:
             if intent == "advice":
                 intent = suggestion.get("intent", "advice")
+                wants_name = wants_name or intent == "profile_name"
             if suggestion.get("stage") in ("discover", "quote", "objection", "followup", "apply"):
                 stage = suggestion["stage"]
             if suggestion.get("objection") in ("rate_high", "need_spouse"):
                 objection = suggestion["objection"]
         handoff = handoff and self.memory_access(s["session"])
+        if asks_other_name(s["text"]) and intent == "profile_name":
+            intent, wants_name = "advice", False
+        if wants_name and has_advice_request(s["text"]) and intent not in ("loan_catalog", "product_catalog"):
+            intent = "advice"
         if handoff or any(x in low for x in ["gọi lại", "hẹn", "liên hệ lại", "gửi tóm tắt", "gửi tổng kết"]):
             intent = "advice"
         slots = ["income", "debt"] if product == "credit_card" else ["amount", "term", "income", "debt"]
@@ -350,6 +406,7 @@ class Engine:
             "plan": {
                 "product": product,
                 "intent": intent,
+                "asks_profile_name": wants_name,
                 "public_info": intent == "advice" and not known.get("amount")
                 and any(x in low for x in ["lãi suất", "ưu đãi", "điều kiện", "phí"]),
                 "private_request": not self.memory_access(s["session"])
@@ -364,6 +421,8 @@ class Engine:
         }
 
     def select_cards(self, s):
+        if s["plan"].get("intent") == "profile_name":
+            return {"cards": []}
         from harness.sales import book as load_book
 
         pinned = self.db.one("SELECT version FROM session_playbooks WHERE session_id=?", (s["session"]["id"],))
@@ -378,6 +437,8 @@ class Engine:
 
     def call_tools(self, s):
         emit("status", stage="tools")
+        if s["plan"].get("intent") == "profile_name":
+            return {"tool_calls": [], "disclosures": []}
         p, known, session = s["plan"], s["known"], s["session"]
         facts, calls, disclosures, notes = dict(s["facts"]), [], [], []
         error, unsuitable = False, False
@@ -507,7 +568,11 @@ class Engine:
         }
 
     def rules_draft(self, s):
+        if s["plan"].get("intent") == "profile_name":
+            return self.profile_reply(s)
         reply = self._rules_draft(s)
+        if s["plan"].get("asks_profile_name"):
+            reply = self.profile_reply(s) + " " + reply
         if (
             s["session"].get("verified")
             and not s["tool_error"]
@@ -518,6 +583,18 @@ class Engine:
             for card in s.get("cards", []):
                 reply += " " + card["text"]
         return reply
+
+    def profile_reply(self, s):
+        profile = s["profile_context"]
+        if profile["status"] == "unverified":
+            return "Anh/chị vui lòng nhận diện hồ sơ trong phiên này để em xác nhận tên nhé."
+        if profile["status"] == "unavailable":
+            return "Em tạm thời không tra cứu được tên trong hồ sơ. Anh/chị vui lòng thử lại sau."
+        if profile["status"] == "missing":
+            return "Hồ sơ hiện chưa có tên của anh/chị. Anh/chị muốn em xưng hô thế nào?"
+        name = next(f for f in s["facts"].values() if f["key"] == "profile_name")
+        label = "Theo hồ sơ demo, anh/chị là " if profile["source"] == "demo_profile" else "Tên hiển thị Telegram của anh/chị là "
+        return label + "{fact:" + name["id"] + "}."
 
     def _rules_draft(self, s):
         if s["tool_error"]:
@@ -595,6 +672,9 @@ class Engine:
     def draft(self, s):
         emit("status", stage="drafting")
         draft = self.rules_draft(s)
+        if s["plan"].get("asks_profile_name"):
+            # Render authorized identity facts directly, including mixed name/advice requests.
+            return {"draft": draft}
         last_prefix = ""
 
         def preview(text):
@@ -624,6 +704,8 @@ class Engine:
             "Trả lời trực tiếp tin nhắn khách hàng bằng tiếng Việt, theo intent và ý chính của rules_draft. "
             "Chào hỏi hoặc hỏi danh sách sản phẩm thì giới thiệu đúng phạm vi tư vấn, không ép khách cung cấp "
             "số tiền vay hay thu nhập để xem danh sách. Chỉ báo giá khi có facts. "
+            "profile_name chỉ là tên chủ phiên từ nguồn được chỉ rõ; không dùng làm tên người khác. "
+            "Tên hiển thị Telegram không phải tên đã xác minh tại ngân hàng. "
             "Mọi số phải dùng {fact:id} từ facts; không tạo fact, không đánh số danh sách. Trả JSON {draft:string}.",
             {"text": s["text"], "intent": s["plan"].get("intent", "advice"), "rules_draft": draft,
              "known": s["known"], "facts": s["facts"], "context_parts": s["context_parts"]},

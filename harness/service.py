@@ -2,16 +2,23 @@
 
 import hashlib
 import json
+import logging
 import secrets
 import time
 
 from fastapi import HTTPException
 
 from bank_tools.service import canonical, ident, now
-from harness.agent.engine import Engine, event
+from harness.agent.engine import Engine, conversation_intent, event
+from harness.customer_profile import can_access_memory
 from harness.identity import extract_phone_claims, get_profile
 from harness.input_guard import inspect_input
 from harness.phone_identity import PhoneIdentity, normalize_phone
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    logger.addHandler(logging.StreamHandler())
 
 
 def token_hash(value):
@@ -46,13 +53,7 @@ class Harness:
     def can_chat(self, session):
         # A channel-owned prospect can discuss their own needs without claiming
         # a bank identity. Existing bank profiles still require verification.
-        return bool(session["verified"]) or self.db.one(
-            "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
-            (session["customer_id"], session["channel"], session["external_id"]),
-        ) is not None or self.db.one(
-            "SELECT session_id FROM phone_sessions WHERE session_id=? AND customer_id=?",
-            (session["id"], session["customer_id"]),
-        ) is not None
+        return can_access_memory(self.db, session)
 
     def identity_status(self, session):
         if session["verified"]:
@@ -363,7 +364,7 @@ class Harness:
                     c.execute(
                         "INSERT INTO turns VALUES(?,?,?,?,?,?,?)", (turn, sid, client_id, text, None, None, now())
                     )
-                    if self.can_chat(session):
+                    if self.can_chat(session) and conversation_intent(text) != "profile_name":
                         self.engine.memory.enqueue(c, turn, session["customer_id"], sid, session["channel"], text)
             state = self.engine.run(session, text, turn)
             response = {
@@ -392,7 +393,16 @@ class Harness:
                 "plan": state.get("plan", {}),
                 "business_as_of": self.db.setting("clock"),
                 "backend": self.settings.llm_backend,
+                "revision": self.settings.revision,
+                "profile_context": {k: v for k, v in state.get("profile_context", {}).items() if k != "name"},
             }
+            logger.info("profile_context %s", canonical({
+                "turn_id": turn, "revision": self.settings.revision,
+                "identity_status": response["identity_status"], "intent": trace["plan"].get("intent"),
+                "profile_status": trace["profile_context"].get("status"),
+                "name_source": trace["profile_context"].get("source"),
+                "has_name_fact": any(f["key"] == "profile_name" for f in trace["facts"]),
+            }))
             with self.db.transaction() as c:
                 c.execute(
                     "UPDATE turns SET reply=?,result=? WHERE id=?", (response["reply"], canonical(response), turn)
