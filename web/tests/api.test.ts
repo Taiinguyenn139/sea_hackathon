@@ -68,11 +68,22 @@ describe("API boundary", () => {
       {
         id: "turn1-assistant",
         role: "assistant",
+        responder: "assistant",
         text: "Mình có thể giúp bạn.",
         created_at: undefined,
       },
     ]);
   });
+});
+
+it("restores specialist-only events without fabricating customer messages", () => {
+  const turns = normalizeTurns({ items: [
+    { id: "welcome", text: "", reply: "Đã tiếp nhận hồ sơ.", responder: "ai_specialist" },
+    { id: "next", text: "Cảm ơn", reply: "Em tiếp tục hỗ trợ.", responder: "assistant" },
+  ] });
+  expect(turns.map((t) => [t.role, t.responder])).toEqual([
+    ["assistant", "ai_specialist"], ["user", undefined], ["assistant", "assistant"],
+  ]);
 });
 
 describe("streaming replies", () => {

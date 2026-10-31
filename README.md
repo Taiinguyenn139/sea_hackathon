@@ -38,6 +38,62 @@ Khách mới có hồ sơ riêng và chat ngay; chia sẻ số điện thoại �
 ngữ cảnh trên web. Liên kết hồ sơ demo là tùy chọn. Script kiểm tra kết
 nối và đăng ký webhook mà không in credential.
 
+## Chuyên viên tư vấn trong demo
+
+Đặt `AI_SPECIALIST_ENABLED=true` cùng `LLM_BACKEND=openai` và cấu hình primary/backup
+hiện có để bật tư vấn chuyên sâu. Mặc định tính năng tắt; backend `rules` không
+được dùng để bật chuyên viên. Không cần model, dependency hoặc dịch vụ mới.
+
+Sau khi kết nối danh tính, chọn **Gặp chuyên viên** hoặc nhắn yêu cầu gặp chuyên
+viên. Vai trò **Chuyên viên tư vấn** tiếp nhận nhu cầu đã ghi nhớ và trả lời nhiều
+lượt trong cùng phiên; ô nhập vẫn mở. Trong demo, vai trò này được mô phỏng bằng
+LLM. Từng phản hồi giữ nhãn vai trò khi tải lại lịch sử.
+
+- **Quay lại trợ lý** lưu kết quả và trả quyền tư vấn về trợ lý. Thao tác này
+  không cần LLM, kể cả khi bước tiếp nhận hoặc provider đang lỗi.
+- **Yêu cầu nhân viên thật**, yêu cầu rõ ràng gặp người thật, khiếu nại, nộp hồ sơ
+  hoặc ký hợp đồng đi vào hàng chờ hiện có. Phiên lúc này mới chờ nhân viên.
+- Tạo cuộc trò chuyện mới bắt đầu với trợ lý và memory được phép đọc; không
+  nhận hoặc kết thúc handoff của phiên nguồn.
+- Khi tiếp nhận lỗi, gửi tin nhắn để thử tiếp nhận lại hoặc quay lại trợ lý.
+  Tắt cờ chỉ chặn khởi tạo mới; phiên chuyên viên đang mở vẫn có thể tiếp tục
+  khi backend LLM còn khả dụng, hoặc kết thúc/chuyển người thật.
+
+Chuyên viên dùng chung input guard, quyền tool, kiểm tra nguồn số liệu và lưu ý
+bắt buộc. Lịch sử đưa vào planner/draft có ngân sách 16.000 ký tự JSON, ưu tiên
+các lượt gần nhất; tin hiện tại và facts được truyền riêng. Lãi suất phải tra
+tools hiện tại, không lấy số cũ trong transcript làm báo giá mới.
+
+Kết quả kết thúc là bản ghi trích xuất từ các phản hồi đã lưu, gồm mã lượt/fact,
+facts khách đang active, điểm mâu thuẫn và receipts hành động. Không gọi thêm
+LLM để viết kết luận, không tạo callback từ lời cam kết tự sinh và không đưa
+nội dung do AI viết vào facts nguồn khách. Nếu còn memory job chưa xử lý,
+receipt ghi `memory_pending=true`; job tiếp tục xử lý theo cơ chế memory hiện có.
+Console phân biệt yêu cầu mô phỏng và hàng chờ người thật; chỉ người sở hữu phiên
+kết thúc specialist qua API dành cho khách.
+
+API mới cần capability của phiên:
+
+- `POST /sessions/{sid}/specialist/start`: `reason`, `idempotency_key`.
+- `POST /sessions/{sid}/specialist/complete`: `handoff_id`, `idempotency_key`;
+  chính `handoff_id` là phạm vi idempotency để retry không đóng yêu cầu mới.
+- Tin nhắn tiếp theo dùng API messages/stream cũ. Session/reply bổ sung
+  `responder`, `specialist_id`, `specialist_status`, `specialist_available`.
+  SSE có thêm `metadata` trước nội dung; API turns có `responder` từng lượt.
+
+SQLite tự tạo `specialist_sessions` và `specialist_handoffs`; không sửa schema
+positional của bảng cũ. Dữ liệu cũ mặc định là trợ lý/handoff người thật.
+Checkpoint chuyên viên dùng thread riêng theo session và handoff. Preflight
+không gọi provider; yêu cầu đang tiếp nhận được thử lại ở request tiếp theo.
+Logs LLM phân biệt `specialist_plan`/`specialist_draft`; traces ghi phiên bản prompt.
+
+Các benchmark/playbook hiện có vẫn đánh giá luồng handoff người thật; sandbox
+playbook và `scripts/verify-dev.py` tắt specialist để giữ điều kiện so sánh.
+Kiểm chứng riêng tính năng: `uv run pytest -q tests/test_specialist.py` và
+`PLAYWRIGHT_PORT=5297 npm --prefix web run test:e2e -- specialist.spec.ts`.
+Browser test chạy FastAPI/SQLite cách ly và chỉ stub provider LLM, không dùng
+credential thật hoặc database tư vấn.
+
 ## Kiểm tra an toàn đầu vào
 
 Web chat, nội dung yêu cầu handoff và Telegram đều được kiểm tra trước khi ghi

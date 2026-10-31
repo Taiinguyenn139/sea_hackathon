@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS specialist_sessions(session_id TEXT PRIMARY KEY,handoff_id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS specialist_handoffs(handoff_id TEXT PRIMARY KEY,session_id TEXT NOT NULL,start_key TEXT NOT NULL,reason TEXT NOT NULL,prompt_version TEXT NOT NULL,welcome_turn_id TEXT NOT NULL,start_result TEXT,next_handoff_id TEXT,UNIQUE(session_id,start_key));
 CREATE TABLE IF NOT EXISTS sales_objects(kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(kind,id));
 CREATE TABLE IF NOT EXISTS session_playbooks(session_id TEXT PRIMARY KEY,version TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);

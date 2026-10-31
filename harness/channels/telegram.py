@@ -116,6 +116,9 @@ class Dispatcher:
                     late = bool(stamp and stamp < previous)
                     if start and not late and session and session["status"] == "active":
                         self.harness.engine.memory.flush(customer)
+                        specialist = self.harness.specialist.current(session["id"])
+                        if specialist:
+                            self.harness.specialist.complete(session["id"], specialist["handoff_id"])
                         self.db.execute("UPDATE sessions SET status='ended' WHERE id=?", (session["id"],))
                         session = None
                     new_session = not session
@@ -140,16 +143,38 @@ class Dispatcher:
                         markup = {"remove_keyboard": True}
                     elif session["status"] == "waiting_human":
                         reply = "Chuyên viên đang tiếp nhận yêu cầu. Em sẽ tiếp tục khi chuyên viên hoàn tất."
+                    elif command == "/specialist":
+                        result = self.harness.specialist.start(
+                            session["id"], "Khách yêu cầu tư vấn chuyên sâu", row["id"]
+                        )
+                        reply = "Chuyên viên tư vấn\n" + result["reply"]
+                    elif command == "/assistant":
+                        # Resolve the target once so a replay cannot close a later handoff.
+                        receipt_key = "telegram_specialist_complete:" + row["id"]
+                        target_handoff = self.db.setting(receipt_key)
+                        if target_handoff is None:
+                            specialist = self.harness.specialist.current(session["id"])
+                            target_handoff = specialist["handoff_id"] if specialist else ""
+                            self.db.set(receipt_key, target_handoff)
+                        if target_handoff:
+                            self.harness.specialist.complete(session["id"], target_handoff)
+                        reply = "Đã quay lại trợ lý. Nội dung tư vấn đã được lưu."
+                    elif command == "/human":
+                        self.harness.handoff(session["id"], "Khách Telegram yêu cầu nhân viên thật")
+                        reply = "Đã chuyển hồ sơ cho nhân viên tiếp nhận. Vui lòng chờ phản hồi."
                     elif start or command == "/phone":
                         reply = (
                             "Chào anh/chị! Em có thể tư vấn vay mua nhà, vay tiêu dùng và thẻ tín dụng. "
                             "Anh/chị muốn tìm hiểu sản phẩm nào?"
                         )
                     else:
-                        reply = self.harness.message(
+                        result = self.harness.message(
                             session["id"], text, row["id"], "telegram:" + target,
                             input_checked=payload.get("input_guard_version") == VERSION,
-                        )["reply"]
+                        )
+                        reply = result["reply"]
+                        if result.get("responder") == "ai_specialist":
+                            reply = "Chuyên viên tư vấn\n" + reply
                     if self.harness.can_chat(session) and session["status"] == "active" and not contact and not late and (
                         start or command == "/phone" or new_session
                     ) and not self.db.one(

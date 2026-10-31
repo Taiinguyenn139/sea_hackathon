@@ -24,6 +24,7 @@ def main() -> int:
             STAFF_PASSWORD=secrets.token_urlsafe(32),
             HARNESS_DB=str(Path(folder) / "harness.sqlite3"),
             LLM_BACKEND="rules",
+            AI_SPECIALIST_ENABLED="false",
         )
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))

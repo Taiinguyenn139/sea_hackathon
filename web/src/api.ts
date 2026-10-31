@@ -83,7 +83,14 @@ export type Profile = {
   full_name?: string;
   label?: string;
 };
-export type ChatSession = {
+export type Responder = "assistant" | "ai_specialist";
+export type SpecialistSession = {
+  responder?: Responder;
+  specialist_id?: string | null;
+  specialist_status?: "initializing" | "in_progress" | null;
+  specialist_available?: boolean;
+};
+export type ChatSession = SpecialistSession & {
   session_id: string;
   user_id?: string;
   session_token: string;
@@ -94,13 +101,15 @@ export type ChatSession = {
   demo_profile?: string;
 };
 export type Turn = {
+  responder?: Responder;
   turn_id?: string;
   id?: string;
   role: string;
   text: string;
   created_at?: string;
 };
-export type Reply = {
+export type Reply = SpecialistSession & {
+  status?: string;
   reply: string;
   identity_status?: string;
   user_id?: string;
@@ -111,7 +120,7 @@ export type Reply = {
   handoff_id?: string;
 };
 export type ReplyStreamEvent =
-  { type: "text"; text: string } | { type: "status"; stage: string };
+  { type: "text"; text: string } | { type: "status"; stage: string } | { type: "metadata"; responder: Responder };
 
 export async function streamReply(
   session: ChatSession,
@@ -186,6 +195,8 @@ export async function streamReply(
             { detail: data.message },
             typeof data.status === "number" ? data.status : 500,
           );
+        if (kind === "metadata" && (data.responder === "assistant" || data.responder === "ai_specialist"))
+          onEvent({ type: "metadata", responder: data.responder });
         if (kind === "text" && typeof data.text === "string")
           onEvent({ type: "text", text: data.text });
         if (kind === "status" && typeof data.stage === "string")
@@ -209,6 +220,8 @@ export async function streamReply(
   }
 }
 export type Handoff = {
+  target?: "human" | "ai_specialist";
+  completion?: { notes?: string; next_step?: string; open_questions?: string[]; discussed?: { turn_id: string; reply: string }[] };
   handoff_id: string;
   from_session?: string;
   session_id?: string;
@@ -248,6 +261,7 @@ export function asItems<T>(
 }
 
 export type TurnPair = {
+  responder?: Responder;
   id?: string;
   text: string;
   reply?: string;
@@ -260,18 +274,19 @@ export function normalizeTurns(
 ): Turn[] {
   return asItems(value).flatMap((item): Turn[] => {
     if ("role" in item) return [item];
-    const messages: Turn[] = [
+    const messages: Turn[] = item.text ? [
       {
         id: `${item.id ?? ""}-user`,
         role: "user",
         text: item.text,
         created_at: item.created_at,
       },
-    ];
+    ] : [];
     if (item.reply)
       messages.push({
         id: `${item.id ?? ""}-assistant`,
         role: "assistant",
+        responder: item.responder ?? "assistant",
         text: item.reply,
         created_at: item.created_at,
       });

@@ -6,6 +6,7 @@ from pathlib import Path
 
 @dataclass
 class Settings:
+    ai_specialist_enabled: bool = field(default_factory=lambda: os.getenv("AI_SPECIALIST_ENABLED", "false").lower() == "true")
     sales_sandbox: bool = False
     db_path: str = os.getenv("HARNESS_DB", "data/harness.sqlite3")
     admin_token: str = os.getenv("ADMIN_TOKEN", "")
@@ -29,6 +30,8 @@ class Settings:
         return not self.release_gate or Path(self.release_gate).is_file()
 
     def __post_init__(self):
+        if self.ai_specialist_enabled and self.llm_backend != "openai":
+            raise ValueError("AI_SPECIALIST_ENABLED requires LLM_BACKEND=openai")
         if self.environment == "production":
             if len(self.admin_token) < 24 or len(self.staff_password) < 16:
                 raise ValueError("Production ADMIN_TOKEN and STAFF_PASSWORD must be configured with strong values")

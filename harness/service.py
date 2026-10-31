@@ -9,9 +9,12 @@ from fastapi import HTTPException
 
 from bank_tools.service import canonical, ident, now
 from harness.agent.engine import Engine, event
+from harness.agent.specialist import PROMPT_VERSION
 from harness.identity import extract_phone_claims, get_profile
 from harness.input_guard import inspect_input
 from harness.phone_identity import PhoneIdentity
+from harness.specialist import Specialist, requests_human
+from harness.streaming import emit
 
 
 def token_hash(value):
@@ -24,6 +27,7 @@ class Harness:
         self.settings = settings
         self.engine = Engine(db, settings)
         self.phone_identity = PhoneIdentity(db)
+        self.specialist = Specialist(self)
 
     def telegram_customer(self, target, name):
         """Resolve an explicit bank link or create a private prospect identity."""
@@ -98,6 +102,8 @@ class Harness:
                 c.execute("INSERT INTO phone_sessions VALUES(?,?)", (sid, profile))
         return {
             "session_id": sid,
+            "status": "active",
+            **self.specialist.metadata(sid),
             "session_token": token,
             "user_id": self.user_id(profile) if phone_authenticated or get_profile(profile) else None,
             "identity_status": self.identity_status(self.session(sid)),
@@ -252,6 +258,8 @@ class Harness:
                     **blocked,
                     "used_fact_ids": [],
                     "handoff_id": None,
+                    **self.specialist.metadata(sid),
+                    "status": session["status"],
                 }
             phones = extract_phone_claims(text)
             if phones:
@@ -264,59 +272,91 @@ class Harness:
                     )
                     if self.can_chat(session):
                         self.engine.memory.enqueue(c, turn, session["customer_id"], sid, session["channel"], text)
-            state = self.engine.run(session, text, turn)
-            response = {
-                "session_id": sid,
-                "identity_status": self.identity_status(session),
-                "user_id": self.user_id(session["customer_id"]) if self.can_chat(session) else None,
-                "reply": state.get("reply", "Em đã tiếp nhận yêu cầu."),
-                "used_fact_ids": state.get("used_fact_ids", []),
-                "guard_events": state.get("guard_events", []),
-                "handoff_id": state.get("handoff_id"),
-            }
-            trace = {
-                "turn_id": turn,
-                "context_parts": state.get("context_parts", []),
-                "facts": [
-                    {
-                        **f,
-                        "customer_id": session["customer_id"],
-                        "observed_at": f.get("observed_at", self.db.setting("clock")),
-                    }
-                    for f in state.get("facts", {}).values()
-                ],
-                "source_spans": state.get("source_spans", []),
-                "guard_events": response["guard_events"],
-                "tool_calls": state.get("tool_calls", []),
-                "plan": state.get("plan", {}),
-                "business_as_of": self.db.setting("clock"),
-                "backend": self.settings.llm_backend,
-            }
+            current = self.specialist.current(sid)
+            human = requests_human(text)
+            if not human and current and current["status"] == "initializing":
+                welcome = self.specialist.start(sid, current["reason"], current["start_key"], input_checked=True)
+                if current["welcome_turn_id"] == turn:
+                    return welcome
+            if (not current and not human and self.settings.ai_specialist_enabled
+                    and self.can_chat(session) and self.engine.handoff_requested(text)):
+                return self.specialist.start(sid, text[:1000], "message:" + turn,
+                                             input_checked=True, welcome_turn=turn)
+            current = self.specialist.current(sid)
+            engine = self.engine
+            if current and not human:
+                if self.settings.llm_backend != "openai":
+                    from harness.llm import LLMUnavailable
+                    raise LLMUnavailable("specialist_provider_unavailable")
+                session["specialist_id"] = current["handoff_id"]
+                engine = self.specialist.engine
+            emit("metadata", responder=engine.responder)
+            state = engine.run(session, ("Gặp người thật: " + text) if human else text, turn)
+            if current and state.get("handoff_id"):
+                self.specialist.complete(sid, current["handoff_id"], next_handoff_id=state["handoff_id"])
+            response = self.turn_response(self.session(sid), state, engine.responder)
             with self.db.transaction() as c:
-                c.execute(
-                    "UPDATE turns SET reply=?,result=? WHERE id=?", (response["reply"], canonical(response), turn)
-                )
-                c.execute("INSERT OR REPLACE INTO traces VALUES(?,?,?)", (turn, sid, canonical(trace)))
+                self.save_turn(c, session, turn, state, response)
             return response
 
+    def turn_response(self, session, state, responder):
+        return {
+            "session_id": session["id"],
+            "identity_status": self.identity_status(session),
+            "user_id": self.user_id(session["customer_id"]) if self.can_chat(session) else None,
+            "reply": state.get("reply", "Em đã tiếp nhận yêu cầu."),
+            "used_fact_ids": state.get("used_fact_ids", []),
+            "guard_events": state.get("guard_events", []),
+            "handoff_id": state.get("handoff_id"),
+            **self.specialist.metadata(session["id"]),
+            "responder": responder,
+            "status": session["status"],
+        }
+
+    def save_turn(self, conn, session, turn, state, response):
+        trace = {
+            "turn_id": turn,
+            "responder": response["responder"],
+            "specialist_id": response.get("specialist_id"),
+            "specialist_prompt_version": PROMPT_VERSION if response["responder"] == "ai_specialist" else None,
+            "context_parts": state.get("context_parts", []),
+            "facts": [{**f, "customer_id": session["customer_id"],
+                       "observed_at": f.get("observed_at", self.db.setting("clock"))}
+                      for f in state.get("facts", {}).values()],
+            "source_spans": state.get("source_spans", []),
+            "guard_events": response["guard_events"],
+            "tool_calls": state.get("tool_calls", []),
+            "plan": state.get("plan", {}),
+            "business_as_of": self.db.setting("clock"),
+            "backend": self.settings.llm_backend,
+        }
+        conn.execute("UPDATE turns SET reply=?,result=? WHERE id=?", (response["reply"], canonical(response), turn))
+        conn.execute("INSERT OR REPLACE INTO traces VALUES(?,?,?)", (turn, session["id"], canonical(trace)))
+
     def handoff(self, sid, reason):
+        with self.engine.lock(self.session(sid)["customer_id"]):
+            return self._handoff(sid, reason)
+
+    def _handoff(self, sid, reason):
         session = self.session(sid)
         if not self.can_chat(session):
             raise HTTPException(403, "Verify identity first")
         previous = self.db.one(
-            "SELECT * FROM handoffs WHERE session_id=? AND status!='completed' ORDER BY created_at DESC LIMIT 1", (sid,)
+            "SELECT * FROM handoffs WHERE session_id=? AND status IN ('pending','completing') ORDER BY created_at DESC LIMIT 1", (sid,)
         )
         if previous:
             return self.handoff_detail(previous)
         response = self.message(
             sid,
-            "Yêu cầu chuyên viên: " + reason,
+            "Yêu cầu gặp người thật: " + reason,
             "handoff-request:" + str(self.db.one("SELECT count(*) AS n FROM handoffs WHERE session_id=?", (sid,))["n"]),
         )
         if any(e.get("stage") == "input" and e["action"] == "block" for e in response["guard_events"]):
             raise HTTPException(400, response["reply"])
+        if not response.get("handoff_id"):
+            raise HTTPException(503, response["reply"])
         return self.handoff_detail(
-            self.db.one("SELECT * FROM handoffs WHERE session_id=? ORDER BY created_at DESC LIMIT 1", (sid,))
+            self.db.one("SELECT * FROM handoffs WHERE id=?", (response["handoff_id"],))
         )
 
     @staticmethod
@@ -325,6 +365,7 @@ class Harness:
             raise HTTPException(404, "Handoff not found")
         data = json.loads(row["summary"])
         data["status"] = row["status"]
+        data.setdefault("target", "human")
         if row["receipt"]:
             data["completion"] = json.loads(row["receipt"])
         return data
@@ -340,7 +381,11 @@ class Harness:
         ids = [r["id"] for r in self.db.all("SELECT id FROM sessions")]
         for sid in ids:
             self.engine.checkpointer.delete_thread(sid)
+        for row in self.db.all("SELECT session_id,handoff_id FROM specialist_handoffs"):
+            self.engine.checkpointer.delete_thread(f"specialist:{row['session_id']}:{row['handoff_id']}")
         tables = [
+            "specialist_sessions",
+            "specialist_handoffs",
             "session_playbooks",
             "sessions",
             "phone_sessions",
