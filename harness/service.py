@@ -99,6 +99,7 @@ class Harness:
                 (sid, profile, channel, external_id or sid, mode, token_hash(token), now()),
             )
             c.execute("INSERT INTO session_identity_modes VALUES(?,?)", (sid, kind))
+            c.execute("INSERT INTO session_playbooks VALUES(?,?)", (sid, self.db.setting("playbook", "v1")))
             if phone_authenticated:
                 c.execute("INSERT INTO phone_sessions VALUES(?,?)", (sid, profile))
         return {
@@ -114,6 +115,36 @@ class Harness:
         if not session:
             raise HTTPException(404, "Session not found")
         return session
+
+    def new_conversation(self, previous):
+        """Create a sibling transcript without ending the previous conversation.
+
+        A fresh public demo chat can choose another identity in the agent. A
+        capability to an OTP/channel-owned customer retains that customer's
+        independent continuity flow; neither path grants customer CRM login.
+        """
+        with self.engine.lock("session:" + previous["id"]):
+            previous = self.prepare_public_session(previous["id"])
+            mode = self.db.one("SELECT kind FROM session_identity_modes WHERE session_id=?", (previous["id"],))
+            kind = mode["kind"] if mode else "legacy"
+            if (kind == "legacy" and previous["channel"] == "web" and get_profile(previous["customer_id"])
+                    and not self.db.one("SELECT session_id FROM phone_sessions WHERE session_id=?", (previous["id"],))):
+                kind = "demo"
+            if kind in ("anonymous", "demo") or not self.can_chat(previous) and kind != "admin":
+                return self._create_session(None, previous["mode"])
+            if kind == "admin":
+                result = self._create_session(previous["customer_id"], previous["mode"])
+                if previous["verified"]:
+                    self.db.execute("UPDATE sessions SET verified=1 WHERE id=?", (result["session_id"],))
+                    result["identity_status"] = "verified"
+                    result["brief"] = self.engine.memory.brief(previous["customer_id"], flush=False)
+                return result
+            # Preserve the main branch's delegated capability for a channel or
+            # OTP identity. This does not run PhoneIdentity.bind or claim a new
+            # phone number, and cannot change customer_id.
+            return self._create_session(
+                previous["customer_id"], previous["mode"], phone_authenticated=bool(self.can_chat(previous)),
+            )
 
     def prepare_public_session(self, sid):
         """Detach legacy web preselection, retaining only its public transcript."""
@@ -435,6 +466,7 @@ class Harness:
         for sid in ids:
             self.engine.checkpointer.delete_thread(sid)
         tables = [
+            "session_playbooks",
             "sessions",
             "agent_runs",
             "agent_tool_receipts",

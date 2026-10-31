@@ -6,6 +6,7 @@ from pathlib import Path
 
 @dataclass
 class Settings:
+    sales_sandbox: bool = False
     db_path: str = os.getenv("HARNESS_DB", "data/harness.sqlite3")
     admin_token: str = os.getenv("ADMIN_TOKEN", "")
     staff_password: str = os.getenv("STAFF_PASSWORD", "")

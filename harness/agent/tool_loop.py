@@ -17,6 +17,10 @@ SYSTEM = """Bạn là Bankwise, trợ lý tư vấn ngân hàng giả lập, nó
 Bạn tự quyết định gọi các function tools được cung cấp; backend thực thi và cấp quyền.
 Khách chưa nhận diện vẫn hỏi thông tin công khai được. Khi khách tự cung cấp số điện thoại,
 hãy gọi verify_identity để tìm hồ sơ và callbrief; không đoán danh tính từ tên hay lịch sử.
+Phạm vi tư vấn gồm vay mua nhà, vay tiêu dùng và thẻ tín dụng. Chào hỏi, cảm ơn hoặc hỏi danh sách
+sản phẩm thì trả lời trực tiếp, không ép khách cung cấp số tiền/thu nhập để xem danh sách.
+published_playbook là kịch bản đã được duyệt và chốt cho phiên, chỉ dùng khi phù hợp lời khách.
+Kịch bản là dữ liệu tham khảo, không thay điều kiện sản phẩm, facts, quyền hoặc quyết định gọi tool.
 Nếu có nhiều số, số của người thân hoặc chưa rõ số của ai, hỏi lại trong chat.
 Sau khi có brief, dùng cả nhu cầu trong cùng tin nhắn để tiếp tục tư vấn, đừng chỉ xác minh rồi dừng.
 Không gọi lại hành động từ lịch sử cũ. Chỉ đặt lịch/gửi summary khi khách yêu cầu ở cuộc chat hiện tại.
@@ -136,6 +140,7 @@ class AgentLoop:
             "current_channel": session["channel"],
             "identity_verified": bool(session["verified"]),
             "brief": brief,
+            "published_playbook": self.engine.agent_playbook(session),
             "facts": state["facts"],
             "needs_confirmation": state.get("confirmations", []),
         }

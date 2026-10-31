@@ -7,6 +7,7 @@ for (const width of [375, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     let starts = 0;
     let ends = 0;
+    let siblings = 0;
     let verifications = 0;
     const turns = new Map<
       string,
@@ -14,8 +15,10 @@ for (const width of [375, 768, 1440]) {
     >();
     await page.route("**/api/**", async (route) => {
       const path = new URL(route.request().url()).pathname.replace("/api", "");
-      if (path === "/sessions") {
-        expect(route.request().postDataJSON()).toEqual({ mode: "harness" });
+      if (path === "/sessions" || path.endsWith("/new")) {
+        if (path === "/sessions")
+          expect(route.request().postDataJSON()).toEqual({ mode: "harness" });
+        else siblings += 1;
         starts += 1;
         const sessionId = `navigation-session-${starts}`;
         turns.set(sessionId, []);
@@ -133,8 +136,10 @@ for (const width of [375, 768, 1440]) {
     await page
       .getByRole("button", { name: "Bắt đầu phiên mới", exact: true })
       .click();
-    await expect(home).toBeVisible();
+    await expect(page).toHaveURL(/#conversation$/);
+    await expect(page.getByRole("log")).toHaveCount(0);
     await expect(composer).toHaveValue("");
+    await expect(composer).toBeEnabled();
     await composer.fill("Tôi muốn tìm hiểu vay tiêu dùng.");
     await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
     await expect(page.getByRole("log")).toContainText(
@@ -144,12 +149,13 @@ for (const width of [375, 768, 1440]) {
       "Điều kiện vay mua nhà là gì?",
     );
     expect(starts).toBe(2);
-    expect(ends).toBe(1);
+    expect(ends).toBe(0);
+    expect(siblings).toBe(1);
     expect(verifications).toBe(0);
   });
 }
 
-test("home stays available when ending a session is blocked by a staff handoff", async ({
+test("new conversations leave a waiting staff handoff available in history", async ({
   page,
 }) => {
   let ends = 0;
@@ -168,16 +174,28 @@ test("home stays available when ending a session is blocked by a staff handoff",
   );
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api", "");
+    if (path.endsWith("/new"))
+      return route.fulfill({
+        json: {
+          session_id: "new-session",
+          session_token: "new-capability",
+          user_id: null,
+          identity_status: "unverified",
+          status: "active",
+        },
+      });
     if (path.endsWith("/turns"))
       return route.fulfill({
         json: {
-          items: [
-            {
-              id: "saved",
-              text: "Tôi muốn gặp chuyên viên",
-              reply: "Đã gửi yêu cầu.",
-            },
-          ],
+          items: path.includes("waiting-session")
+            ? [
+                {
+                  id: "saved",
+                  text: "Tôi muốn gặp chuyên viên",
+                  reply: "Đã gửi yêu cầu.",
+                },
+              ]
+            : [],
         },
       });
     if (path.endsWith("/end")) {
@@ -187,11 +205,22 @@ test("home stays available when ending a session is blocked by a staff handoff",
         json: { detail: "Complete handoff before ending session" },
       });
     }
-    return route.fulfill({ json: { status: "waiting_human" } });
+    return route.fulfill({
+      json: {
+        status: path.includes("waiting-session") ? "waiting_human" : "active",
+      },
+    });
   });
   await page.goto("/chat#conversation");
+  await expect(page.getByRole("log")).toContainText("Đã gửi yêu cầu.");
   await page.getByRole("button", { name: "Bắt đầu phiên mới" }).click();
-  await expect(page.getByRole("alert")).toContainText("đợi chuyên viên");
+  await expect(
+    page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" }),
+  ).toBeEnabled();
+  await page
+    .locator("#customer-history")
+    .getByRole("button", { name: /Tôi muốn gặp chuyên viên Chờ chuyên viên/ })
+    .click();
   await page.getByRole("link", { name: "Về màn hình chính" }).click();
   await expect(
     page.getByRole("heading", { name: "Chúng tôi có thể hỗ trợ gì cho bạn?" }),
@@ -203,5 +232,5 @@ test("home stays available when ending a session is blocked by a staff handoff",
   await expect(
     page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" }),
   ).toBeDisabled();
-  expect(ends).toBe(1);
+  expect(ends).toBe(0);
 });

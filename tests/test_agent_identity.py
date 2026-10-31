@@ -237,6 +237,8 @@ def test_effective_configuration_exposes_history_mode(client):
     response = client.get("/admin/state", headers=ADMIN)
     assert response.status_code == 200
     assert response.json()["effective_config"]["identity_history_enabled"] is False
+    assert response.json()["effective_config"]["agent_mode"] == "rules"
+    assert response.json()["effective_config"]["backup_model"] is None
 
 
 def test_fixture_hash_tracks_input_journeys_but_excludes_oracle_answers(tmp_path, monkeypatch):
@@ -261,3 +263,56 @@ def test_fixture_hash_tracks_input_journeys_but_excludes_oracle_answers(tmp_path
     oracle.mkdir(parents=True)
     (oracle / "0900000002.json").write_text('{"reference_text": "never part of input"}')
     assert service.fixture_hash() == after
+
+
+@pytest.mark.parametrize("pronoun", ["anh ấy", "chị ấy", "em ấy", "anh đó", "chị đó", "em đó"])
+def test_third_person_pronouns_are_never_treated_as_the_callers_own_phone(client, pronoun):
+    session, _ = anonymous(client)
+    result = operation(client, session, "0900000002", text=f"Số điện thoại của {pronoun} là 0900000002")
+    assert result["error"].startswith("own_phone_required")
+    assert result["data"]["brief"] == {"redacted": True}
+    assert client.app.state.harness.session(session["session_id"])["verified"] == 0
+
+
+def test_new_demo_conversation_can_identify_another_customer_without_changing_old_handoff(client):
+    original, auth = anonymous(client)
+    operation(client, original, "0900000001")
+    harness = client.app.state.harness
+    # The separate conversation must not alter an existing handoff or its checkpoint.
+    response = client.post(f"/sessions/{original['session_id']}/handoff", headers=auth, json={"reason": "Tôi muốn gặp chuyên viên"})
+    assert response.status_code == 200
+    handoff_id = response.json()["handoff_id"]
+    sibling = client.post(f"/sessions/{original['session_id']}/new", headers=auth)
+    assert sibling.status_code == 200
+    assert sibling.json()["identity_status"] == "unverified" and sibling.json()["user_id"] is None
+    result = operation(client, sibling.json(), "0900000002")
+    assert result["data"]["user_id"] == "0900000002"
+    previous = harness.session(original["session_id"])
+    assert previous["customer_id"] == "hoa" and previous["status"] == "waiting_human"
+    assert harness.db.one("SELECT status FROM handoffs WHERE id=?", (handoff_id,))["status"] == "pending"
+
+
+@pytest.mark.parametrize("phone_authenticated", [False, True])
+def test_legacy_verified_web_new_conversation_distinguishes_demo_from_otp(client, phone_authenticated):
+    harness = client.app.state.harness
+    original, auth = anonymous(client)
+    operation(client, original, "0900000001")
+    sid = original["session_id"]
+    harness.db.execute("DELETE FROM session_identity_modes WHERE session_id=?", (sid,))
+    if phone_authenticated:
+        harness.db.execute("INSERT INTO phone_sessions VALUES(?,?)", (sid, "hoa"))
+
+    response = client.post(f"/sessions/{sid}/new", headers=auth)
+    assert response.status_code == 200
+    sibling = response.json()
+    assert harness.session(sid)["customer_id"] == "hoa"
+    assert harness.session(sid)["verified"] == 1
+    if phone_authenticated:
+        assert sibling["identity_status"] != "unverified"
+        assert sibling["user_id"] == "0900000001"
+        assert harness.session(sibling["session_id"])["customer_id"] == "hoa"
+        assert harness.db.one("SELECT customer_id FROM phone_sessions WHERE session_id=?", (sibling["session_id"],))["customer_id"] == "hoa"
+    else:
+        assert sibling["identity_status"] == "unverified" and sibling["user_id"] is None
+        assert sibling["brief"] == {"redacted": True}
+        assert harness.session(sibling["session_id"])["customer_id"] == "anon_" + sibling["session_id"]

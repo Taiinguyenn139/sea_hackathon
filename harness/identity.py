@@ -130,7 +130,7 @@ def validate_own_phone_claim(text, phone):
         raise ValueError("phone_not_in_current_message: Không dùng số điện thoại ngoài lời khách vừa khai.")
     low = text.casefold()
     relative = re.search(
-        r"(?:số(?: điện thoại| đt)?|điện thoại|sđt|phone)\s+(?:của\s+)?(?:vợ|chồng|mẹ|bố|ba|cha|anh trai|chị gái|em trai|em gái|con|bạn|người nhà)\b"
+        r"(?:số(?: điện thoại| đt)?|điện thoại|sđt|phone)\s+(?:của\s+)?(?:vợ|chồng|mẹ|bố|ba|cha|anh trai|chị gái|em trai|em gái|(?:anh|chị|em) (?:ấy|đó)|con|bạn|người nhà)\b"
         r"|(?:vợ|chồng|mẹ|bố|ba|cha|anh trai|chị gái|em trai|em gái|người nhà)\s+(?:tôi|mình|em|anh|chị)\s+(?:có|dùng|là|số|điện thoại)",
         low,
     )

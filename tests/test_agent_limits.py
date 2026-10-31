@@ -8,9 +8,11 @@ import pytest
 from fastapi.testclient import TestClient
 from test_agent_tools import Provider, answer, calls, message, new_session, settings
 
+from harness import llm
 from harness.agent import tool_loop
 from harness.api import create_app
 from harness.llm import DEFAULT_REPLY
+from harness.memory import service as memory_service
 
 
 def promotions(key, product="home_loan"):
@@ -90,6 +92,38 @@ def test_turn_deadline_is_checked_between_tools_in_the_same_batch(tmp_path, monk
         assert_stopped(reply, "agent_turn_deadline")
         assert len(provider.requests) == 1
         assert len(bank_audits(client)) == 1
+
+
+def test_input_classifier_consumes_the_shared_whole_message_budget(tmp_path, monkeypatch):
+    clock = {"now": time.monotonic()}
+    fake_time = SimpleNamespace(monotonic=lambda: clock["now"], time=time.time, sleep=time.sleep)
+    for module in (llm, tool_loop, memory_service):
+        monkeypatch.setattr(module, "time", fake_time)
+
+    class SlowClassifier(Provider):
+        classifications = 0
+
+        async def post(self, client, url, **kwargs):
+            instruction = kwargs["json"]["messages"][0]["content"]
+            if "INPUT_SECURITY_CLASSIFIER" in instruction:
+                self.classifications += 1
+                clock["now"] += 2
+            return await super().post(client, url, **kwargs)
+
+    provider = SlowClassifier([])
+    provider.install(monkeypatch)
+    config = settings(tmp_path, identity_history_enabled=False, agent_turn_budget_seconds=1)
+    with TestClient(create_app(config)) as client:
+        session, auth = new_session(client)
+        reply = message(client, session, auth, "Tôi muốn xem ưu đãi công khai")
+        assert_stopped(reply, "agent_turn_deadline")
+        assert reply["identity_status"] == "unverified" and reply["user_id"] is None
+        assert provider.classifications == 1
+        assert provider.requests == []
+        db = client.app.state.harness.db
+        assert not db.all("SELECT * FROM tool_calls")
+        assert not db.all("SELECT * FROM callbacks")
+        assert not db.all("SELECT * FROM outbox")
 
 
 @pytest.mark.parametrize("decline", [

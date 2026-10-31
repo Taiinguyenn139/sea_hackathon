@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowRight,
   ArrowLeft,
   ArrowUp,
   Check,
   CheckCheck,
+  Clock3,
+  RotateCcw,
+  History,
+  X,
   CircleHelp,
   CreditCard,
   Home,
@@ -29,20 +34,26 @@ import {
 } from "../api";
 import { BrandMark, ErrorBanner, Spinner } from "../ui";
 import { BankingScene, ServiceArt } from "../banking-art";
-const STORAGE = "bankwise-chat-session";
-const LEGACY_STORAGE = "mach-chat-session";
-const DRAFT_STORAGE = "bankwise-chat-draft";
-function savedSession(): ChatSession | null {
+import {
+  ChatHistory,
+  CHAT_HISTORY,
+  CURRENT_SESSION,
+  conversation,
+  readChatHistory,
+  type Conversation,
+} from "../chat-history";
+const DRAFT_PREFIX = "bankwise-chat-draft:";
+function readDraft(id?: string): string {
   try {
-    return JSON.parse(
-      sessionStorage.getItem(STORAGE) ??
-        sessionStorage.getItem(LEGACY_STORAGE) ??
-        "null",
-    );
+    return sessionStorage.getItem(DRAFT_PREFIX + (id ?? "anonymous")) ?? "";
   } catch {
-    return null;
+    return "";
   }
 }
+type ChatTurn = Turn & {
+  clientId?: string;
+  delivery?: "sending" | "sent" | "failed";
+};
 const suggestions = [
   {
     icon: Home,
@@ -64,14 +75,29 @@ const suggestions = [
   },
 ];
 export function CustomerChat() {
+  const [initial] = useState(() => readChatHistory(sessionStorage));
+  const [entries, setEntries] = useState(initial.entries);
+  const [historyHost, setHistoryHost] = useState<HTMLElement | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const historyDialog = useRef<HTMLDialogElement>(null);
+  const historyTrigger = useRef<HTMLButtonElement>(null);
+  const focusConversation = useRef(false);
+  const [storageError, setStorageError] = useState("");
+  const [historyError, setHistoryError] = useState("");
+  const [historyRetry, setHistoryRetry] = useState(0);
   const [view, setView] = useState<"home" | "conversation">(() =>
     window.location.hash === "#conversation" ? "conversation" : "home",
   );
-  const [session, setSession] = useState<ChatSession | null>(savedSession);
-  const [turns, setTurns] = useState<Turn[]>([]);
-  const [draft, setDraft] = useState(
-    () => sessionStorage.getItem(DRAFT_STORAGE) ?? "",
-  );
+  const [session, setSession] = useState<ChatSession | null>(initial.current);
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [draft, setDraft] = useState(() => {
+    const saved = readDraft(initial.current?.session_id);
+    try {
+      return saved || sessionStorage.getItem("bankwise-chat-draft") || "";
+    } catch {
+      return saved;
+    }
+  });
   const [pending, setPending] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -83,15 +109,58 @@ export function CustomerChat() {
   const [railOpen, setRailOpen] = useState(false);
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-  const currentSession = useRef(session);
   const sending = useRef(false);
+  const currentSession = useRef(session);
   const freshSession = useRef<string | null>(null);
+  const cached = useRef(
+    new Map<
+      string,
+      {
+        turns: ChatTurn[];
+        draft: string;
+        loaded: boolean;
+        error: string;
+        lastFailed: typeof lastFailed;
+      }
+    >(),
+  );
   const verified = ["verified", "identified"].includes(
     session?.identity_status ?? "",
   );
   const waiting =
     Boolean(session?.handoff_id) && session?.status !== "completed";
+  const ended = session?.status === "ended" || session?.status === "completed";
+  const currentEntry = entries.find(
+    (entry) => entry.session.session_id === session?.session_id,
+  );
   const isHome = view === "home";
+  useEffect(() => {
+    setHistoryHost(document.getElementById("customer-history"));
+  }, []);
+  useEffect(() => {
+    if (historyOpen) historyDialog.current?.showModal();
+    else if (historyDialog.current?.open) {
+      historyDialog.current.close();
+      if (focusConversation.current)
+        input.current?.focus({ preventScroll: true });
+      else historyTrigger.current?.focus();
+      focusConversation.current = false;
+    }
+  }, [historyOpen]);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(CHAT_HISTORY, JSON.stringify(entries));
+      if (session)
+        sessionStorage.setItem(CURRENT_SESSION, JSON.stringify(session));
+      else sessionStorage.removeItem(CURRENT_SESSION);
+      sessionStorage.removeItem("mach-chat-session");
+      setStorageError("");
+    } catch {
+      setStorageError(
+        "Trình duyệt chưa lưu được danh sách phiên. Lịch sử có thể không khôi phục sau khi tải lại trang.",
+      );
+    }
+  }, [entries, session]);
   function navigate(next: "home" | "conversation") {
     setView(next);
     window.location.hash = next;
@@ -105,9 +174,20 @@ export function CustomerChat() {
     return () => window.removeEventListener("hashchange", syncView);
   }, []);
   useEffect(() => {
-    if (isHome) document.getElementById("chat-home-title")?.focus();
-    else input.current?.focus();
-  }, [isHome]);
+    if (isHome)
+      document
+        .getElementById("chat-home-title")
+        ?.focus({ preventScroll: true });
+    else if (
+      !pending &&
+      !loading &&
+      !waiting &&
+      !ended &&
+      !historyOpen &&
+      !historyError
+    )
+      input.current?.focus({ preventScroll: true });
+  }, [isHome, pending, loading, waiting, ended, historyError]);
   useEffect(() => {
     if (!input.current) return;
     input.current.style.height = "auto";
@@ -116,29 +196,95 @@ export function CustomerChat() {
   function save(next: ChatSession | null) {
     currentSession.current = next;
     setSession(next);
-    if (next) sessionStorage.setItem(STORAGE, JSON.stringify(next));
-    else {
-      sessionStorage.removeItem(STORAGE);
-      sessionStorage.removeItem(LEGACY_STORAGE);
+    if (next)
+      setEntries((prev) =>
+        prev.some((entry) => entry.session.session_id === next.session_id)
+          ? prev.map((entry) =>
+              entry.session.session_id === next.session_id
+                ? { ...entry, session: next }
+                : entry,
+            )
+          : [conversation(next), ...prev],
+      );
+  }
+  function titleFromMessage(id: string, text: string, touch = true) {
+    setEntries((prev) =>
+      prev.map((entry) =>
+        entry.session.session_id === id
+          ? {
+              ...entry,
+              title:
+                !entry.renamed && entry.title === "Cuộc trò chuyện mới"
+                  ? text.trim().slice(0, 80)
+                  : entry.title,
+              updatedAt: touch ? new Date().toISOString() : entry.updatedAt,
+            }
+          : entry,
+      ),
+    );
+  }
+  function rememberView() {
+    if (session)
+      cached.current.set(session.session_id, {
+        turns,
+        draft,
+        loaded: !loading && !historyError,
+        error,
+        lastFailed,
+      });
+  }
+  function openConversation(next: ChatSession) {
+    if (pending || sending.current) return;
+    if (next.session_id !== session?.session_id) {
+      rememberView();
+      const previous = cached.current.get(next.session_id);
+      setTurns(previous?.turns ?? []);
+      setDraft(previous?.draft ?? readDraft(next.session_id));
+      setError(previous?.error ?? "");
+      setLastFailed(previous?.lastFailed ?? null);
+      setLoading(!previous?.loaded);
+      setHistoryError("");
+      setHint("");
+      save(next);
     }
+    focusConversation.current = true;
+    setHistoryOpen(false);
+    navigate("conversation");
   }
   useEffect(() => {
-    if (draft) sessionStorage.setItem(DRAFT_STORAGE, draft);
-    else sessionStorage.removeItem(DRAFT_STORAGE);
-  }, [draft]);
+    try {
+      const key = DRAFT_PREFIX + (session?.session_id ?? "anonymous");
+      if (draft) sessionStorage.setItem(key, draft);
+      else sessionStorage.removeItem(key);
+      sessionStorage.removeItem("bankwise-chat-draft");
+    } catch {
+      setStorageError(
+        "Trình duyệt chưa lưu được bản nháp. Hãy giữ tab này trong khi trao đổi.",
+      );
+    }
+  }, [session?.session_id, draft]);
   useEffect(() => {
-    if (!session || freshSession.current === session.session_id) {
+    if (
+      !session ||
+      freshSession.current === session.session_id ||
+      cached.current.get(session.session_id)?.loaded
+    ) {
       setLoading(false);
       return;
     }
     let live = true;
     setLoading(true);
+    setHistoryError("");
     loadTurns(session.session_id, session.session_token)
       .then((data) => {
-        if (live) setTurns(data);
+        if (live) {
+          setTurns(data);
+          const first = data.find((turn) => turn.role === "user");
+          if (first) titleFromMessage(session.session_id, first.text, false);
+        }
       })
       .catch((e) => {
-        if (live) setError(errorMessage(e));
+        if (live) setHistoryError(errorMessage(e));
       })
       .finally(() => {
         if (live) setLoading(false);
@@ -146,7 +292,32 @@ export function CustomerChat() {
     return () => {
       live = false;
     };
-  }, [session?.session_id]);
+  }, [session?.session_id, historyRetry]);
+  useEffect(() => {
+    if (!session || pending) return;
+    let live = true;
+    request<ChatSession>(`/sessions/${session.session_id}`, {
+      token: session.session_token,
+    })
+      .then((next) => {
+        if (
+          live &&
+          ["active", "waiting_human", "completed", "ended"].includes(
+            next.status ?? "",
+          )
+        )
+          save({
+            ...session,
+            ...next,
+            session_token: session.session_token,
+            demo_profile: session.demo_profile,
+          });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [session?.session_id, pending]);
   useEffect(() => {
     if (!isHome && (turns.length || pending))
       end.current?.scrollIntoView({
@@ -157,12 +328,14 @@ export function CustomerChat() {
       });
   }, [turns, pending, isHome]);
   useEffect(() => {
-    if (!session?.handoff_id) return;
+    if (!session?.handoff_id || ended) return;
+    let live = true;
     const timer = setInterval(() => {
       request<ChatSession>(`/sessions/${session.session_id}`, {
         token: session.session_token,
       })
         .then((next) => {
+          if (!live) return;
           if (next.status === "completed" || next.status === "active") {
             save({
               ...session,
@@ -175,38 +348,81 @@ export function CustomerChat() {
         })
         .catch(() => {});
     }, 5000);
-    return () => clearInterval(timer);
-  }, [session?.handoff_id]);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [session?.session_id, session?.handoff_id, ended]);
   async function send(text = draft, id: string = crypto.randomUUID()) {
-    if (!text.trim() || sending.current || pending || loading || waiting)
+    if (
+      !text.trim() ||
+      pending ||
+      loading ||
+      historyError ||
+      ended ||
+      waiting ||
+      sending.current
+    )
       return;
+    // Lock synchronously: repeated Enter events must share one in-flight request.
     sending.current = true;
     setPending(true);
     setError("");
     setLastFailed(null);
     navigate("conversation");
+    const message = text.trim();
+    const retrying = turns.some((turn) => turn.clientId === id);
+    setTurns((prev) =>
+      retrying
+        ? prev.map((turn) =>
+            turn.clientId === id ? { ...turn, delivery: "sending" } : turn,
+          )
+        : [
+            ...prev,
+            {
+              id: `local-${id}`,
+              clientId: id,
+              role: "user",
+              text: message,
+              delivery: "sending",
+            },
+          ],
+    );
+    // Keep a different, unsent draft when retrying an older failed message.
+    if (!retrying) setDraft("");
     try {
       let activeSession = currentSession.current;
       if (!activeSession) {
         activeSession = await createChatSession();
         freshSession.current = activeSession.session_id;
         save(activeSession);
-        setTurns([]);
       }
       const data = await request<Reply>(
         `/sessions/${activeSession.session_id}/messages`,
         {
           method: "POST",
-          body: { text: text.trim(), client_message_id: id },
+          body: { text: message, client_message_id: id },
           token: activeSession.session_token,
         },
       );
       setTurns((prev) => [
-        ...prev,
-        { role: "user", text: text.trim() },
-        { role: "assistant", text: data.reply },
+        ...prev.map((turn): ChatTurn =>
+          turn.clientId === id ? { ...turn, delivery: "sent" } : turn,
+        ),
+        { id: `reply-${id}`, role: "assistant", text: data.reply },
       ]);
-      setDraft("");
+      if (
+        !data.guard_events?.some(
+          (event) =>
+            !!event &&
+            typeof event === "object" &&
+            "stage" in event &&
+            event.stage === "input" &&
+            "action" in event &&
+            event.action === "block",
+        )
+      )
+        titleFromMessage(activeSession.session_id, message);
       if (
         data.identity_status ||
         data.user_id !== undefined ||
@@ -224,8 +440,13 @@ export function CustomerChat() {
           status: data.handoff_id ? "waiting_human" : activeSession.status,
         });
     } catch (e) {
+      setTurns((prev) =>
+        prev.map((turn) =>
+          turn.clientId === id ? { ...turn, delivery: "failed" } : turn,
+        ),
+      );
       setError(errorMessage(e));
-      setLastFailed({ text, id });
+      setLastFailed({ text: message, id });
     } finally {
       sending.current = false;
       setPending(false);
@@ -257,39 +478,80 @@ export function CustomerChat() {
     }
   }
   async function newChat() {
-    if (session) {
-      setPending(true);
-      try {
-        await request(`/sessions/${session.session_id}/end`, {
-          method: "POST",
-          body: {},
-          token: session.session_token,
-        });
-      } catch (e) {
-        if (!(e instanceof ApiError) || ![401, 403, 404].includes(e.status)) {
-          setError(errorMessage(e));
-          setPending(false);
-          return;
-        }
-      }
-    }
-    save(null);
-    freshSession.current = null;
-    setTurns([]);
-    setLoading(false);
-    setDraft("");
+    if (pending || sending.current) return;
+    setPending(true);
     setError("");
-    setHint("");
-    setLastFailed(null);
-    setPending(false);
-    navigate("home");
+    try {
+      let next: ChatSession;
+      if (session) {
+        try {
+          next = await request<ChatSession>(
+            `/sessions/${session.session_id}/new`,
+            { method: "POST", body: {}, token: session.session_token },
+          );
+        } catch (e) {
+          if (!(e instanceof ApiError) || ![401, 403, 404].includes(e.status))
+            throw e;
+          next = await createChatSession();
+        }
+        rememberView();
+      } else next = await createChatSession();
+      freshSession.current = next.session_id;
+      save(next);
+      setTurns([]);
+      setDraft("");
+      setLastFailed(null);
+      setHint("");
+      setLoading(false);
+      setHistoryError("");
+      setHistoryOpen(false);
+      navigate("conversation");
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setPending(false);
+    }
   }
   function selectPrompt(message: string) {
-    setDraft(message);
     void send(message);
   }
+  const historyProps = {
+    entries,
+    activeId: session?.session_id,
+    busy: pending,
+    onNew: () => void newChat(),
+    onSelect: (entry: Conversation) => openConversation(entry.session),
+    onRename: (id: string, title: string) =>
+      setEntries((prev) =>
+        prev.map((entry) =>
+          entry.session.session_id === id
+            ? { ...entry, title, renamed: true }
+            : entry,
+        ),
+      ),
+  };
   return (
     <div className={`chat-layout ${railOpen ? "rail-open" : ""}`}>
+      {historyHost &&
+        createPortal(<ChatHistory {...historyProps} />, historyHost)}
+      <dialog
+        className="history-dialog"
+        ref={historyDialog}
+        aria-label="Các cuộc trò chuyện"
+        onCancel={() => setHistoryOpen(false)}
+      >
+        <header>
+          <h2>Cuộc trò chuyện</h2>
+          <button
+            className="icon-button"
+            aria-label="Đóng danh sách phiên"
+            onClick={() => setHistoryOpen(false)}
+          >
+            <X size={20} />
+          </button>
+        </header>
+        <ChatHistory {...historyProps} />
+      </dialog>
       <section
         className={`chat-main ${isHome ? "is-welcome" : ""}`}
         aria-label="Hỗ trợ khách hàng ngân hàng"
@@ -310,7 +572,11 @@ export function CustomerChat() {
           <div className="assistant-identity">
             <BrandMark small />
             <div>
-              <h1>Trợ lý Bankwise</h1>
+              <h1 title={isHome ? "Trợ lý Bankwise" : currentEntry?.title}>
+                {isHome
+                  ? "Trợ lý Bankwise"
+                  : (currentEntry?.title ?? "Cuộc trò chuyện mới")}
+              </h1>
               <p>
                 <span className="status-dot" />{" "}
                 {waiting
@@ -322,6 +588,14 @@ export function CustomerChat() {
             </div>
           </div>
           <div className="chat-header-actions">
+            <button
+              ref={historyTrigger}
+              className="icon-button mobile-history-toggle"
+              aria-label="Mở danh sách phiên"
+              onClick={() => setHistoryOpen(true)}
+            >
+              <History size={20} />
+            </button>
             <button
               className="icon-button context-toggle"
               onClick={() => setRailOpen(!railOpen)}
@@ -337,7 +611,7 @@ export function CustomerChat() {
             <button
               className="icon-button"
               onClick={handoff}
-              disabled={!verified || pending || waiting}
+              disabled={!verified || pending || waiting || ended}
               aria-label="Gặp chuyên viên"
               title="Gặp chuyên viên"
             >
@@ -346,7 +620,7 @@ export function CustomerChat() {
             <button
               className="icon-button"
               onClick={newChat}
-              disabled={pending || !session}
+              disabled={pending}
               aria-label="Bắt đầu phiên mới"
               title="Bắt đầu phiên mới"
             >
@@ -354,14 +628,24 @@ export function CustomerChat() {
             </button>
           </div>
         </header>
-        {error && (
+        {(error || historyError || storageError) && (
           <div className="chat-feedback">
             <ErrorBanner
-              message={error}
+              message={error || historyError || storageError}
               onRetry={
-                lastFailed
-                  ? () => void send(lastFailed.text, lastFailed.id)
-                  : undefined
+                historyError
+                  ? () => {
+                      if (session) cached.current.delete(session.session_id);
+                      setHistoryError("");
+                      setLoading(true);
+                      setHistoryRetry((n) => n + 1);
+                    }
+                  : lastFailed
+                    ? () => {
+                        navigate("conversation");
+                        void send(lastFailed.text, lastFailed.id);
+                      }
+                    : undefined
               }
             />
           </div>
@@ -410,7 +694,9 @@ export function CustomerChat() {
                       className={`suggestion suggestion-${index} ${draft === message ? "is-selected" : ""}`}
                       onClick={() => selectPrompt(message)}
                       aria-pressed={draft === message}
-                      disabled={pending || loading || waiting}
+                      disabled={
+                        pending || loading || !!historyError || waiting || ended
+                      }
                     >
                       <span className="service-category">
                         <Icon size={15} />
@@ -456,7 +742,7 @@ export function CustomerChat() {
               </button>
             </section>
           )}
-          {!isHome && !turns.length && !loading && (
+          {!isHome && !turns.length && !loading && !historyError && (
             <div className="conversation-empty">
               <span className="resume-icon">
                 <MessageCircle size={26} />
@@ -480,8 +766,37 @@ export function CustomerChat() {
                     </div>
                     <div className="message-bubble">{turn.text}</div>
                     {turn.role === "user" && (
-                      <span className="delivered">
-                        <CheckCheck size={13} /> Đã gửi
+                      <span
+                        className={`delivered ${turn.delivery === "failed" ? "delivery-failed" : ""}`}
+                      >
+                        {turn.delivery === "sending" ? (
+                          <>
+                            <Clock3 size={13} /> Đang gửi…
+                          </>
+                        ) : turn.delivery === "failed" ? (
+                          <>
+                            Chưa gửi được
+                            <button
+                              type="button"
+                              disabled={
+                                pending ||
+                                loading ||
+                                !!historyError ||
+                                ended ||
+                                waiting
+                              }
+                              onClick={() =>
+                                void send(turn.text, turn.clientId)
+                              }
+                            >
+                              <RotateCcw size={12} /> Gửi lại
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCheck size={13} /> Đã gửi
+                          </>
+                        )}
                       </span>
                     )}
                   </div>
@@ -489,7 +804,7 @@ export function CustomerChat() {
               ))}
             </div>
           )}
-          {!isHome && pending && (
+          {!isHome && turns.some((turn) => turn.delivery === "sending") && (
             <div className="typing" role="status">
               <BrandMark small />
               <span className="typing-dots" aria-hidden="true">
@@ -508,6 +823,25 @@ export function CustomerChat() {
                 <p>
                   Yêu cầu của bạn đã được gửi. Vui lòng chờ chuyên viên hỗ trợ.
                 </p>
+              </div>
+            </div>
+          )}
+          {!isHome && ended && (
+            <div className="handoff-notice">
+              <MessageCircle size={20} />
+              <div>
+                <strong>Cuộc trò chuyện đã kết thúc</strong>
+                <p>
+                  Bạn có thể xem lại nội dung hoặc bắt đầu một cuộc trò chuyện
+                  mới.
+                </p>
+                <button
+                  className="button secondary"
+                  disabled={pending}
+                  onClick={newChat}
+                >
+                  Tạo cuộc trò chuyện mới
+                </button>
               </div>
             </div>
           )}
@@ -574,12 +908,18 @@ export function CustomerChat() {
                 }}
                 rows={2}
                 maxLength={4000}
-                disabled={waiting || pending || loading}
+                disabled={
+                  loading || !!historyError || ended || waiting || pending
+                }
                 aria-label="Tin nhắn cho trợ lý"
                 placeholder={
-                  waiting
-                    ? "Chuyên viên sẽ tiếp nhận yêu cầu của bạn…"
-                    : "Nhập câu hỏi cần hỗ trợ…"
+                  ended
+                    ? "Cuộc trò chuyện đã kết thúc. Tạo phiên mới để tiếp tục…"
+                    : loading
+                      ? "Đang khôi phục hội thoại…"
+                      : waiting
+                        ? "Chuyên viên sẽ tiếp nhận yêu cầu của bạn…"
+                        : "Nhập câu hỏi cần hỗ trợ…"
                 }
               />
               <div className="composer-footer">
@@ -591,7 +931,14 @@ export function CustomerChat() {
                 </span>
                 <button
                   className="send-button"
-                  disabled={!draft.trim() || pending || loading || waiting}
+                  disabled={
+                    !draft.trim() ||
+                    loading ||
+                    !!historyError ||
+                    ended ||
+                    pending ||
+                    waiting
+                  }
                   aria-label="Gửi tin nhắn"
                 >
                   <ArrowUp size={21} />
@@ -656,7 +1003,9 @@ export function CustomerChat() {
             <button
               key={title}
               onClick={() => selectPrompt(message)}
-              disabled={pending || loading || waiting}
+              disabled={
+                pending || loading || !!historyError || waiting || ended
+              }
             >
               <Icon size={19} />
               <span>{title}</span>
@@ -667,7 +1016,7 @@ export function CustomerChat() {
         <button
           className="human-help"
           onClick={handoff}
-          disabled={!verified || pending || waiting}
+          disabled={!verified || pending || waiting || ended}
         >
           <UserRound size={20} />
           <span>

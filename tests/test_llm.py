@@ -66,6 +66,38 @@ def test_primary_success_never_calls_backup(monkeypatch, caplog):
     assert "test-only-secret" not in caplog.text and "customer-input" not in caplog.text
 
 
+def test_openai_agent_receives_current_greeting_and_catalog_without_forcing_a_quote(tmp_path, monkeypatch):
+    agent_requests = []
+
+    async def post(self, url, **kwargs):
+        request = kwargs["json"]
+        messages = request["messages"]
+        instruction = messages[0]["content"]
+        if "INPUT_SECURITY_CLASSIFIER" in instruction:
+            return result({"category": "safe"})
+        if "Trích các đoạn" in instruction:
+            return result({"spans": []})
+        assert request["tools"] and request["tool_choice"] == "auto"
+        current = [message["content"] for message in messages if message["role"] == "user"][-1]
+        agent_requests.append(current)
+        draft = ("Chào anh/chị! Anh/chị muốn tìm hiểu sản phẩm nào?" if current == "Hello"
+                 else "Em tư vấn vay mua nhà và vay tiêu dùng. Anh/chị muốn tìm hiểu loại nào?")
+        return result({"draft": draft})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    app = create_app(configured(db_path=str(tmp_path / "conversation.sqlite3"), telegram_secret="test-webhook"))
+    with TestClient(app) as client:
+        sid = client.post("/sessions", json={"demo_profile": "hoa"}).json()
+        auth = {"Authorization": "Bearer " + sid["session_token"]}
+        for index, text in enumerate(["Hello", "Có những sản phẩm vay nào ???"]):
+            response = client.post(f"/sessions/{sid['session_id']}/messages", headers=auth,
+                                  json={"text": text, "client_message_id": str(index)})
+            assert response.status_code == 200
+            assert "số tiền muốn vay" not in response.json()["reply"]
+        assert not app.state.harness.db.all("SELECT * FROM tool_calls")
+    assert agent_requests == ["Hello", "Có những sản phẩm vay nào ???"]
+
+
 @pytest.mark.parametrize("failure", ["timeout", "connection", "http", "schema", "json", "truncated"])
 def test_backup_after_primary_failure(monkeypatch, failure):
     calls = []
