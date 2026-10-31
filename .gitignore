@@ -1,0 +1,120 @@
+# OS and editor-local files
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+.idea/
+*.swp
+*.swo
+*~
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# Coding agent local state (keep shared instructions, rules, and skills)
+# Claude Code
+.claude/settings.local.json
+.claude/worktrees/
+.claude/projects/
+.claude/session-env/
+CLAUDE.local.md
+
+# Codex
+.codex/auth.json
+.codex/config.local.toml
+.codex/history.jsonl
+.codex/sessions/
+.codex/archived_sessions/
+.codex/log/
+.codex/tmp/
+.codex/state_*.sqlite*
+
+# Cursor, Gemini CLI, and Aider
+.cursor/worktrees/
+.cursor/worktrees.json
+.gemini/settings.local.json
+.gemini/tmp/
+.gemini/history/
+.aider*
+!.aider.conf.yml
+!.aiderignore
+
+# Personal instruction overrides (keep AGENT.md and AGENTS.md)
+AGENT.local.md
+AGENTS.local.md
+
+# Local environment (keep sanitized templates)
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!.env.*.example
+.envrc.local
+
+# Credentials: use these locations for local credential files
+credentials/
+secrets/
+*.key
+*.p12
+*.pfx
+application_default_credentials.json
+gha-creds-*.json
+.config/gcloud/
+
+# Dependencies and package-manager caches (keep lockfiles)
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/install-state.gz
+.pnp.*
+
+# Build output and framework caches
+/dist/
+/build/
+/out/
+.next/
+.nuxt/
+.output/
+.svelte-kit/
+.astro/
+.angular/cache/
+.parcel-cache/
+.turbo/
+*.tsbuildinfo
+
+# Python local environments and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Test reports and coverage
+coverage/
+.coverage
+.coverage.*
+htmlcov/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Logs, caches, temporary files
+*.log
+.cache/
+.tmp/
+/tmp/
+/temp/
+
+# Local deployment state (keep infrastructure source and lockfiles)
+.terraform/
+*.tfstate
+*.tfstate.*
+.firebase/
