@@ -1,5 +1,29 @@
 # Cấu hình Telegram
 
+## Luồng demo đang triển khai: dùng cùng số điện thoại
+
+Deployment GCP bật `DEMO_PHONE_IDENTITY=true`. Trên web, nhập số điện thoại vào ô
+ở màn hình đầu rồi bấm **Bắt đầu chat**; trên Telegram gửi cùng số. Không cần chia sẻ
+contact, mã OTP hoặc quản trị viên liên kết. Ví dụ `0901234567` và
+`+84 90 123 4567` cùng trỏ về một hồ sơ, bất kể hồ sơ mẫu được chọn trên web.
+
+- Số có trong bộ dữ liệu nối vào hồ sơ mẫu; số mới tạo hồ sơ demo riêng.
+- Cả hai thứ tự web → Telegram và Telegram → web đều dùng chung memory.
+- Telegram giữ liên kết cho các lượt sau, kể cả `/start` và sau khi backend
+  khởi động lại. Nút **Cuộc trò chuyện mới** trên web giữ hồ sơ và memory.
+- Transcript và danh sách phiên vẫn riêng. Đổi sang số khác sau khi đã kết nối
+  cần mở phiên mới; hệ thống không chuyển memory của số cũ sang số mới.
+- `POST /demo/phone/session` nhận `{phone}`, mở phiên đã kết nối với transcript
+  trống. Số điện thoại không tạo một tin nhắn trong chat. Context hồ sơ dùng chung,
+  còn bản nháp, transcript, checkpoint và handoff độc lập theo phiên.
+- Liên kết contact/OTP cũ vẫn được nhận diện nếu số đã tồn tại. Memory đã ghi
+  cho một hồ sơ khác trước khi nhập số không tự gộp vào hồ sơ vừa chọn.
+
+Đây là cơ chế nhận diện dành cho demo. Biến cấu hình mặc định `false` ngoài
+deployment demo; khi tắt, luồng chia sẻ contact và xác nhận mã dưới đây vẫn hoạt động.
+Bảng `demo_phone_links` (schema 5) lưu liên kết demo riêng, không thay bảng xác nhận
+contact/OTP. Reset hội thoại giữ liên kết, tương tự các hồ sơ đã xác nhận.
+
 Adapter Telegram đã có trong backend. Để chạy bot thật cần token từ BotFather,
 webhook secret giống nhau ở backend và Telegram và URL HTTPS public.
 Khách mới tự có hồ sơ riêng và có thể chat ngay, không cần quản trị viên liên kết.
