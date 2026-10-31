@@ -150,6 +150,7 @@ for (const [width, height] of [
         name: "Chúng tôi có thể hỗ trợ gì cho bạn?",
       }),
     ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Dành cho chuyên viên" })).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
     await page.screenshot({
       path: testInfo.outputPath(`chat-${width}.png`),
