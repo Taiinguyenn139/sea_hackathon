@@ -275,12 +275,13 @@ def create_app(settings=None):
         response = harness.message(
             sid, body.text, body.client_message_id, request.client.host if request.client else "unknown"
         )
-        if harness.identity_status(harness.session(sid)) == "identified":
-            try:
-                response = {**response, "brief": harness.engine.memory.brief(harness.session(sid)["customer_id"])}
-            except LLMUnavailable:
-                response = {**response, "brief": {"redacted": True}}
-        tasks.add_task(flush_memory, harness.session(sid)["customer_id"])
+        if not any(e.get("stage") == "input" and e["action"] == "block" for e in response["guard_events"]):
+            if harness.identity_status(harness.session(sid)) == "identified":
+                try:
+                    response = {**response, "brief": harness.engine.memory.brief(harness.session(sid)["customer_id"])}
+                except LLMUnavailable:
+                    response = {**response, "brief": {"redacted": True}}
+            tasks.add_task(flush_memory, harness.session(sid)["customer_id"])
         if hasattr(app.state, "dispatcher"):
             tasks.add_task(app.state.dispatcher.send_pending)
         return response
@@ -474,6 +475,7 @@ def create_app(settings=None):
     @app.get("/admin/state", dependencies=[Depends(admin)])
     def state():
         from bank_tools.service import fixture_hash
+        from harness.input_guard import VERSION
 
         return {
             "backend": settings.llm_backend,
@@ -485,6 +487,8 @@ def create_app(settings=None):
                 "backend": settings.llm_backend,
                 "model": settings.openai_model,
                 "playbook": db.setting("playbook"),
+                "input_guard_version": VERSION,
+                "input_guard_semantic": settings.llm_backend == "openai",
             },
             "faults": db.all("SELECT * FROM faults"),
             "memory_jobs": db.all("SELECT turn_id,status,error FROM memory_jobs WHERE status!='processed'"),
@@ -504,7 +508,7 @@ def create_app(settings=None):
         except ValueError:
             raise HTTPException(400, "Invalid JSON")
         dispatcher = app.state.dispatcher
-        dispatcher.accept(payload)
+        await asyncio.to_thread(dispatcher.accept, payload)
         tasks.add_task(dispatcher.replay)
         return {"ok": True}
 
