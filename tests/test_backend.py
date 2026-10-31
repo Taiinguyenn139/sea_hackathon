@@ -261,6 +261,46 @@ def test_telegram_auth_private_dedupe(client):
     assert len(h.db.all("SELECT * FROM provider_events")) == 1
 
 
+@pytest.mark.parametrize("text,expected,intent", [
+    ("Hello", "Chào anh/chị", "greeting"),
+    ("Có những sản phẩm vay nào ???", "vay tiêu dùng", "loan_catalog"),
+    ("Ngân hàng có những dịch vụ nào?", "thẻ tín dụng", "product_catalog"),
+    ("Cảm ơn bạn!", "Rất vui", "acknowledgement"),
+])
+def test_web_public_conversation_answers_intent_before_collecting_quote_slots(client, text, expected, intent):
+    sid, auth = session(client)
+    result = send(client, sid, auth, text)
+    assert expected in result["reply"]
+    assert "số tiền muốn vay" not in result["reply"]
+    h = client.app.state.harness
+    assert not h.db.all("SELECT * FROM tool_calls")
+    trace = json.loads(h.db.one("SELECT data FROM traces WHERE session_id=?", (sid,))["data"])
+    assert trace["plan"]["intent"] == intent
+
+
+def test_telegram_hello_and_loan_catalog_do_not_repeat_default_question(client):
+    h = client.app.state.harness
+    h.db.execute("INSERT INTO identity_links VALUES('telegram','111','hoa')")
+    _, greeting = telegram_message(client, 1, "Hello")
+    _, catalog = telegram_message(client, 2, "Có những sản phẩm vay nào ???")
+    assert "Chào anh/chị" in greeting
+    assert "vay mua nhà" in catalog and "vay tiêu dùng" in catalog
+    assert "số tiền muốn vay" not in greeting + catalog
+    assert greeting != catalog
+    assert not h.db.all("SELECT * FROM tool_calls")
+
+
+def test_greeting_after_quote_does_not_trigger_another_quote(client):
+    sid, auth = session(client)
+    verify(client, sid, auth)
+    send(client, sid, auth, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ")
+    h = client.app.state.harness
+    before = len(h.db.all("SELECT * FROM tool_calls"))
+    result = send(client, sid, auth, "Xin chào", "greeting")
+    assert "Chào anh/chị" in result["reply"]
+    assert len(h.db.all("SELECT * FROM tool_calls")) == before
+
+
 def telegram_message(client, update_id, text, chat_id=111, stamp=None):
     h = client.app.state.harness
     h.settings.telegram_secret = "test-webhook"
