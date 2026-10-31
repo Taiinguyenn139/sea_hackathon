@@ -274,7 +274,7 @@ def test_telegram_first_phone_only_web_login_shares_memory(client):
     assert "Chia sẻ số điện thoại" in welcome["text"]
     assert json.loads(welcome["reply_markup"])["keyboard"][0][0]["request_contact"]
     update(client, 2, "Thu nhập 999 triệu")
-    assert not db.all("SELECT * FROM turns")
+    assert not db.all("SELECT * FROM turns WHERE text!=''")
     update(client, 3, contact={"phone_number": "0901234567", "user_id": 111})
     update(client, 4, "Tôi cần thẻ tín dụng, thu nhập 47 triệu, không có nợ")
     session = demo_login(client, "+84 90 123 4567")
@@ -346,4 +346,6 @@ def test_new_conversation_keeps_demo_phone_memory_and_telegram_link(client):
         f"/sessions/{new['session_id']}/turns",
         headers={"Authorization": "Bearer " + new["session_token"]},
     )
-    assert history.json()["items"] == []
+    opening = history.json()["items"]
+    assert len(opening) == 1 and opening[0]["text"] == ""
+    assert "47 triệu" in opening[0]["reply"]

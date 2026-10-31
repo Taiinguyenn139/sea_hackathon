@@ -1,10 +1,15 @@
 # Agent chat và function calling
 
-Khách có thể gõ câu hỏi hoặc chọn một gợi ý ngay trên màn chat Bankwise. Tin
-nhắn đầu tiên tự tạo phiên ẩn danh bằng `POST /sessions` với
-`{"mode":"harness"}`, rồi gửi `/sessions/{id}/messages`. Màn chat chính không
-còn bộ chọn hồ sơ, form ngày sinh, màn OTP hoặc panel nhận diện riêng. Về trang
-chủ, tiếp tục chat và tải lại trang vẫn giữ phiên, hội thoại và bản nháp.
+Khách nhập **Số điện thoại của bạn** và bấm **Bắt đầu chat** trên màn đầu để mở
+phiên đã kết nối qua `POST /auth/phone/login`. Bot mở lời ngay, nhắc nhu cầu đã
+được ghi nhớ nếu khách quay lại. Khi bật `DEMO_PHONE_IDENTITY`, đây là bước vào
+chat bắt buộc. **Cuộc trò chuyện mới** quay lại form trống để dùng cùng số hoặc
+đổi số; hội thoại và bản nháp cũ vẫn còn trong lịch sử.
+
+Ngoài chế độ demo, khách cũng có thể gõ câu hỏi/chọn gợi ý trực tiếp. Khi đó tin
+đầu tiên tạo phiên ẩn danh qua `POST /sessions` với `{"mode":"harness"}`, rồi
+agent nhận số trong tin nhắn để chọn tool như mô tả bên dưới. Không cần chọn hồ
+sơ, ngày sinh hay OTP. Tải lại giữ phiên và lời chào đã lưu.
 
 ## AI chọn tool, backend kiểm tra và thực thi
 
