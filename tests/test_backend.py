@@ -512,7 +512,10 @@ def test_bank_fact_canonical_ids_and_fault_count(client):
     assert h.engine.bank.call("get_rate", args, "hoa", "test-session")["error"] is None
 
 
-def test_guard_revalidates_second_draft(client, monkeypatch):
+@pytest.mark.parametrize("replacement", [
+    "Lãi {fact:missing}", "Lãi suất six percent mỗi năm.", "Khoản vay chắc chắn được duyệt.",
+])
+def test_guard_revalidates_second_draft(client, monkeypatch, replacement):
     engine = client.app.state.harness.engine
     state = {
         "session": {"mode": "harness", "customer_id": "hoa", "verified": True},
@@ -523,7 +526,7 @@ def test_guard_revalidates_second_draft(client, monkeypatch):
         "disclosures": [],
         "plan": {"missing": []},
     }
-    monkeypatch.setattr(engine, "rules_draft", lambda _: "Lãi {fact:missing}")
+    monkeypatch.setattr(engine, "rules_draft", lambda _: replacement)
     result = engine.guard(state)
     assert "{fact:" not in result["draft"]
     assert [e["attempt"] for e in result["guard_events"] if e["guard_id"] == "G1"] == [1, 2]
@@ -560,7 +563,14 @@ def test_eval_manifest_allowlist(client, tmp_path):
 
 @pytest.mark.parametrize(
     "draft",
-    ["Lãi sáu phần trăm mỗi năm", "Khoản vay hai tỷ đồng", "Lãi 6.9%", "Lãi {fact:missing}", "Lãi {fact:broken"],
+    ["Lãi sáu phần trăm mỗi năm", "Khoản vay hai tỷ đồng", "Lãi 6.9%", "Lãi {fact:missing}", "Lãi {fact:broken",
+     "Lãi suất six percent mỗi năm.", "Interest is six point nine percent.",
+     "Repayment over twenty-one months.", "Borrow two million dollars.",
+     "Khoản vay của anh/chị chắc chắn được duyệt.", "Ngân hàng cam kết phê duyệt khoản vay.",
+     "Your loan is guaranteed to be approved.",
+     "Không thể cam kết phê duyệt. Tuy nhiên khoản vay chắc chắn được duyệt.",
+     "Không thể cam kết phê duyệt nhưng khoản vay chắc chắn được duyệt.",
+     "We cannot guarantee approval but your loan will definitely be approved."],
 )
 def test_unbacked_draft_variants(client, monkeypatch, draft):
     engine = client.app.state.harness.engine
