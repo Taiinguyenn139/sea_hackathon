@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS sales_objects(kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(kind,id));
+CREATE TABLE IF NOT EXISTS session_playbooks(session_id TEXT PRIMARY KEY,version TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,customer_id TEXT,channel TEXT,external_id TEXT,mode TEXT,token_hash TEXT UNIQUE,verified INTEGER DEFAULT 0,status TEXT DEFAULT 'active',created_at TEXT);
 CREATE TABLE IF NOT EXISTS identity_links(channel TEXT,external_id TEXT,customer_id TEXT,PRIMARY KEY(channel,external_id));
@@ -26,6 +28,7 @@ CREATE TABLE IF NOT EXISTS staff_sessions(token_hash TEXT PRIMARY KEY,csrf TEXT,
 CREATE TABLE IF NOT EXISTS provider_events(id TEXT PRIMARY KEY,channel TEXT,payload TEXT,status TEXT,received_at REAL,error TEXT);
 CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,channel TEXT,target TEXT,text TEXT,status TEXT,receipt TEXT,attempts INTEGER DEFAULT 0,reply_markup TEXT);
 CREATE TABLE IF NOT EXISTS faults(tool TEXT PRIMARY KEY,mode TEXT,count INTEGER);
+CREATE TABLE IF NOT EXISTS sales_improvements(run_id TEXT NOT NULL,action_id TEXT NOT NULL,status TEXT NOT NULL,script TEXT NOT NULL,notes TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(run_id,action_id));
 """
 
 

@@ -16,6 +16,7 @@ import {
 import { CustomerChat } from "./pages/customer-chat";
 import { StaffConsole } from "./pages/staff-console";
 import { Benchmark } from "./pages/benchmark";
+import { SalesWorkspace } from "./pages/sales-workspace";
 import { StaffBoundary } from "./staff-auth";
 import { BrandMark } from "./ui";
 import "./styles/tokens.css";
@@ -26,7 +27,9 @@ const page = pathname.startsWith("/staff")
   ? "staff"
   : pathname.startsWith("/benchmark")
     ? "benchmark"
-    : "chat";
+    : pathname.startsWith("/sales")
+      ? "sales"
+      : "chat";
 function App() {
   return (
     <div className={`app-shell ${page === "chat" ? "customer-shell" : ""}`}>
@@ -59,21 +62,44 @@ function App() {
               {page === "chat" && <span className="nav-current" />}
             </a>
           </nav>
-          {page === "chat" ? <div id="customer-history" /> : <div className="sidebar-note">
-            <div className="sidebar-note-icon"><Landmark size={22} /></div>
-            <span className="sidebar-kicker">CHUYỆN CỦA BẠN</span>
-            <p>
-              Mỗi bước nhỏ.
-              <br />
-              Một tương lai lớn.
-            </p>
-            <div className="sidebar-sculpture" aria-hidden="true"><i /><i /><i /></div>
-            <div className="continuity-dots" aria-hidden="true"><i /><i /><i /><span /></div>
-          </div>}
+          {page === "chat" ? (
+            <div id="customer-history" />
+          ) : (
+            <div className="sidebar-note">
+              <div className="sidebar-note-icon">
+                <Landmark size={22} />
+              </div>
+              <span className="sidebar-kicker">CHUYỆN CỦA BẠN</span>
+              <p>
+                Mỗi bước nhỏ.
+                <br />
+                Một tương lai lớn.
+              </p>
+              <div className="sidebar-sculpture" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </div>
+              <div className="continuity-dots" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+                <span />
+              </div>
+            </div>
+          )}
           {page !== "chat" && (
             <>
               <div className="nav-label team-label">DÀNH CHO ĐỘI NGŨ</div>
               <nav aria-label="Không gian chuyên viên">
+                <a
+                  className={page === "sales" ? "nav-item active" : "nav-item"}
+                  href="/sales"
+                  aria-current={page === "sales" ? "page" : undefined}
+                >
+                  <Sparkles size={20} />
+                  <span>Cải thiện & luyện tập</span>
+                </a>
                 <a
                   className={page === "staff" ? "nav-item active" : "nav-item"}
                   href="/staff"
@@ -118,7 +144,9 @@ function App() {
                 ? "Hỗ trợ khách hàng"
                 : page === "staff"
                   ? "Chuyên viên"
-                  : "Đánh giá hệ thống"}
+                  : page === "sales"
+                    ? "Cải thiện & luyện tập"
+                    : "Đánh giá hệ thống"}
             </strong>
           </div>
           <div className="topbar-right">
@@ -128,10 +156,14 @@ function App() {
             <a
               href={page === "chat" ? "/staff" : "/chat"}
               className="topbar-link"
-              aria-label={page === "chat" ? "Dành cho chuyên viên" : "Hỗ trợ khách hàng"}
+              aria-label={
+                page === "chat" ? "Dành cho chuyên viên" : "Hỗ trợ khách hàng"
+              }
               data-short-label={page === "chat" ? "Đội ngũ" : "Trò chuyện"}
             >
-              <span>{page === "chat" ? "Dành cho chuyên viên" : "Hỗ trợ khách hàng"}</span>
+              <span>
+                {page === "chat" ? "Dành cho chuyên viên" : "Hỗ trợ khách hàng"}
+              </span>
               <ArrowUpRight size={15} />
             </a>
           </div>
@@ -141,7 +173,13 @@ function App() {
             <CustomerChat />
           ) : (
             <StaffBoundary>
-              {page === "staff" ? <StaffConsole /> : <Benchmark />}
+              {page === "staff" ? (
+                <StaffConsole />
+              ) : page === "sales" ? (
+                <SalesWorkspace />
+              ) : (
+                <Benchmark />
+              )}
             </StaffBoundary>
           )}
         </main>
