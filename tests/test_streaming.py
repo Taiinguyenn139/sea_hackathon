@@ -122,8 +122,15 @@ def events(response):
     return parsed
 
 
-@pytest.mark.parametrize("draft", ["Xin chào. Tôi có thể hỗ trợ bạn.", "Lãi suất 999 phần trăm. Chắc chắn được duyệt."])
-def test_sse_auth_guard_receipt_and_retry(tmp_path, monkeypatch, draft):
+@pytest.mark.parametrize("draft,blocked", [
+    ("Xin chào. Tôi có thể hỗ trợ bạn.", False),
+    ("Em không thể cam kết phê duyệt khoản vay.", False),
+    ("We cannot guarantee approval of your loan.", False),
+    ("Lãi suất 999 phần trăm. Chắc chắn được duyệt.", True),
+    ("Khoản vay của anh/chị chắc chắn được duyệt.", True),
+    ("Lãi suất six percent mỗi năm.", True),
+])
+def test_sse_auth_guard_receipt_and_retry(tmp_path, monkeypatch, draft, blocked):
     config = Settings(db_path=str(tmp_path / "stream.sqlite3"))
     app = create_app(config)
     calls = []
@@ -153,11 +160,15 @@ def test_sse_auth_guard_receipt_and_retry(tmp_path, monkeypatch, draft):
         assert received[0][0] == "status" and received[-1][0] == "result"
         texts = [data["text"] for kind, data in received if kind == "text"]
         assert texts == [received[-1][1]["reply"]]
-        if "999" in draft:
-            assert all("999" not in text for text in texts)
-            assert "999" not in received[-1][1]["reply"]
+        if blocked:
+            assert all(draft not in text for text in texts)
+            assert draft not in received[-1][1]["reply"]
+            if "999" in draft:
+                assert "999" not in received[-1][1]["reply"]
+            assert all(draft not in str(row) for row in app.state.harness.db.all("SELECT * FROM turns"))
         else:
-            assert texts and texts[0].startswith("Xin chào.")
+            assert texts and draft.startswith(texts[0].rstrip())
+            assert received[-1][1]["reply"] == draft
         count = len(calls)
         retry = events(client.post(path, headers=auth, json=body))
         assert retry[-1] == received[-1]

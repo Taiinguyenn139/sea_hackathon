@@ -29,13 +29,20 @@ class Harness:
         self.phone_identity = PhoneIdentity(db)
 
     def telegram_customer(self, target, name):
-        """Resolve an explicit bank link or create a private prospect identity."""
+        """Use a private customer even when an old admin link points at a demo."""
         with self.db.transaction() as c:
             link = c.execute(
                 "SELECT customer_id FROM identity_links WHERE channel='telegram' AND external_id=?", (target,)
             ).fetchone()
-            if link:
+            if link and (not get_profile(link["customer_id"]) or self.agent_fixture_link(target, link["customer_id"]) or (
+                self.settings.demo_phone_identity and c.execute(
+                    "SELECT customer_id FROM demo_phone_links WHERE customer_id=?", (link["customer_id"],)
+                ).fetchone()
+            )):
                 return link["customer_id"]
+            if link:
+                # An old admin fixture selector is not customer/channel proof.
+                c.execute("DELETE FROM identity_links WHERE channel='telegram' AND external_id=?", (target,))
             customer = ident("guest_", ["telegram", target])
             display_name = name.strip()[:100] if isinstance(name, str) and name.strip() else "Khách Telegram"
             c.execute(
@@ -43,6 +50,18 @@ class Harness:
                 (customer, "telegram", target, display_name, now()),
             )
             return customer
+
+    def agent_fixture_link(self, target, customer):
+        profile = get_profile(customer)
+        return bool(profile and self.db.one(
+            "SELECT tc.id FROM tool_calls tc JOIN sessions s ON s.id=tc.session_id "
+            "JOIN session_identity_modes m ON m.session_id=s.id "
+            "WHERE tc.tool='verify_identity' AND s.channel='telegram' AND s.external_id=? "
+            "AND s.customer_id=? AND s.verified=1 AND m.kind='demo' "
+            "AND json_extract(tc.result,'$.data.verified')=1 "
+            "AND json_extract(tc.result,'$.data.user_id')=? LIMIT 1",
+            (target, customer, profile["user_id"]),
+        ))
 
     def can_chat(self, session):
         # A channel-owned prospect can discuss their own needs without claiming
@@ -87,11 +106,16 @@ class Harness:
             "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
             (profile, channel, external_id),
         ) is not None
+        linked = channel == "telegram" and self.db.one(
+            "SELECT p.id FROM customer_profiles p JOIN identity_links l ON l.customer_id=p.id "
+            "WHERE l.channel='telegram' AND l.external_id=? AND p.id=? AND p.telegram_id=?",
+            (external_id, profile, external_id),
+        ) is not None
         demo_link = self.settings.demo_phone_identity and channel == "telegram" and self.db.one(
             "SELECT customer_id FROM identity_links WHERE channel='telegram' AND external_id=? AND customer_id=?",
             (external_id, profile),
         ) is not None and self.db.one("SELECT customer_id FROM demo_phone_links WHERE customer_id=?", (profile,)) is not None
-        if profile is not None and not identity and not guest and not demo_link:
+        if profile is not None and not identity and not guest and not linked and not demo_link:
             raise HTTPException(400, "Unknown demo profile")
         result = self._create_session(profile, mode, channel, external_id, phone_authenticated=demo_link)
         if demo_link and identity:
@@ -123,9 +147,16 @@ class Harness:
             "identity_status": self.identity_status(session),
             "user_id": self.user_id(session["customer_id"]),
             "brief": self.engine.memory.brief(session["customer_id"]),
+            "telegram_url": "https://t.me/" + self.settings.telegram_bot_username,
         }
 
     def _create_session(self, profile, mode="harness", channel="web", external_id=None, phone_authenticated=False):
+        if channel == "telegram" and self.db.one(
+            "SELECT p.id FROM customer_profiles p JOIN identity_links l ON l.customer_id=p.id "
+            "WHERE l.channel='telegram' AND l.external_id=? AND p.id=? AND p.telegram_id=?",
+            (external_id, profile, external_id),
+        ):
+            phone_authenticated = True
         if profile is not None:
             self.engine.memory.flush(profile)
         sid = "s_" + secrets.token_hex(12)
@@ -141,13 +172,17 @@ class Harness:
             c.execute("INSERT INTO session_playbooks VALUES(?,?)", (sid, self.db.setting("playbook", "v1")))
             if phone_authenticated:
                 c.execute("INSERT INTO phone_sessions VALUES(?,?)", (sid, profile))
-        return {
+        result = {
             "session_id": sid,
             "session_token": token,
             "user_id": self.user_id(profile) if phone_authenticated or get_profile(profile) else None,
             "identity_status": self.identity_status(self.session(sid)),
             "brief": self.engine.memory.brief(profile) if phone_authenticated else {"redacted": True},
         }
+        if phone_authenticated and (self.db.one("SELECT id FROM customer_profiles WHERE id=?", (profile,))
+                                    or self.db.one("SELECT customer_id FROM demo_phone_links WHERE customer_id=?", (profile,))):
+            result["telegram_url"] = "https://t.me/" + self.settings.telegram_bot_username
+        return result
 
     def session(self, sid):
         session = self.db.one("SELECT * FROM sessions WHERE id=?", (sid,))

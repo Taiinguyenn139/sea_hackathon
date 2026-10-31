@@ -1,39 +1,35 @@
 # Cấu hình Telegram
 
-## Chat web chính và các API nhận diện demo
+## Chat web chính và các tích hợp nhận diện riêng
 
-Màn hình chat web chính luôn mở khung soạn tin, kể cả khi bật
-`DEMO_PHONE_IDENTITY=true`. Lần gửi đầu gọi `POST /sessions` với
-`{mode: "harness"}` để mở phiên ẩn danh. Khách gửi số điện thoại của mình trong
-chat; AI chọn gọi `verify_identity`, rồi dùng kết quả tool để cập nhật hồ sơ và
-call brief. Gửi số là một tin nhắn trong transcript. Không có ô nhập số riêng,
-bước chọn hồ sơ hoặc biểu mẫu OTP trên màn hình này.
+Chat web chính cho nhập tin nhắn ngay. Lần gửi đầu gọi `POST /sessions` với
+`{mode: "harness"}` để tạo phiên ẩn danh. Khách gửi số của mình trong chat; AI
+quyết định gọi `verify_identity` và dùng kết quả tool để kết nối hồ sơ, call brief
+và memory. Không có form số điện thoại, chọn hồ sơ hoặc OTP trên màn hình này,
+kể cả khi bật `DEMO_PHONE_IDENTITY=true`.
 
 Mỗi phiên giữ transcript, bản nháp, checkpoint và handoff riêng. Phiên web demo
-mới bắt đầu ẩn danh để có thể nhận diện một khách khác; phiên cũ và handoff cũ
-vẫn còn trong lịch sử. Các phiên đã kết nối cùng hồ sơ đọc và đóng góp memory
-chung theo quyền backend. Một phiên đã gắn hồ sơ không tự đổi sang người khác.
+mới bắt đầu ẩn danh để nhận diện người khác; lịch sử phiên cũ vẫn còn. Những
+phiên đã kết nối cùng hồ sơ đọc và đóng góp memory chung theo quyền backend.
+Nhận diện demo không thay thế đăng nhập khách hàng để dùng CRM.
 
-`DEMO_PHONE_IDENTITY=true` vẫn bật cơ chế demo ở backend:
+Các đường tích hợp backend vẫn được giữ:
 
-- API legacy `POST /demo/phone/session` nhận `{phone}`, mở phiên đã kết nối với
-  transcript trống; số nhập qua API này không tạo tin nhắn. Màn hình chat chính
-  không gọi endpoint này.
-- Adapter Telegram demo có thể nhận số bằng văn bản và giữ liên kết cho các
-  lượt tiếp theo. Số được chuẩn hóa, ví dụ `0901234567` và `+84 90 123 4567`
-  là cùng số. Số trong dữ liệu mẫu dùng hồ sơ có sẵn; số mới có hồ sơ demo riêng.
-- Web và Telegram đã kết nối cùng hồ sơ dùng chung memory, còn transcript vẫn
-  riêng từng phiên. Liên kết contact/OTP đã có không tự gộp memory từ hồ sơ khác.
+- `POST /auth/phone/login` nhận `{phone}`, trả session/brief ngay, không OTP.
+  `PhoneLogin` là component riêng cho hợp đồng này; chat chính không sử dụng.
+- Khi `DEMO_PHONE_IDENTITY=true`, `/auth/phone/login` và API legacy
+  `POST /demo/phone/session` mở hồ sơ demo theo số, transcript trống. Số nhập qua
+  API không tạo một tin nhắn; số trong bộ mẫu dùng hồ sơ có sẵn, số mới có hồ sơ
+  demo riêng. Telegram demo nhận contact hoặc số bằng văn bản theo cùng liên kết.
+- Khi tắt flag, `/auth/phone/login` mở hồ sơ hội thoại cá nhân. Telegram yêu cầu
+  contact do chính người gửi chia sẻ trước khi xử lý tư vấn. Các endpoint OTP cũ
+  vẫn tồn tại để tương thích, không thuộc luồng chat chính.
 
-Đây là nhận diện dành cho demo, không chứng minh quyền sở hữu số hoặc thay thế
-đăng nhập khách hàng để dùng CRM. Flag mặc định tắt ngoài cấu hình demo.
-Bảng `demo_phone_links` (schema 5) lưu liên kết demo riêng; contact/OTP phía dưới
-vẫn là luồng backend riêng và không xuất hiện trong màn hình chat chính.
-
-Adapter Telegram đã có trong backend. Để chạy bot thật cần token từ BotFather,
-webhook secret giống nhau ở backend và Telegram và URL HTTPS public.
-Khách mới tự có hồ sơ riêng và có thể chat ngay, không cần quản trị viên liên kết.
-Chỉ hỗ trợ tin nhắn văn bản trong chat riêng.
+Số được chuẩn hóa E.164, ví dụ `0901234567` và `+84 90 123 4567` cùng số.
+Các API demo chỉ dựa trên số, không chứng minh quyền sở hữu số; chỉ dùng dữ liệu
+hư cấu. Bảng `demo_phone_links` lưu liên kết demo riêng, không tự gộp memory từ
+một hồ sơ khác. Adapter Telegram thật cần token BotFather, webhook secret khớp
+backend và URL HTTPS public. Phần dưới hướng dẫn cấu hình adapter và API riêng.
 
 ## Token bot
 
@@ -109,92 +105,52 @@ python3 scripts/setup_telegram.py \
   --check-only
 ```
 
-## Khách mới bắt đầu chat
+## Luồng khi `DEMO_PHONE_IDENTITY=false`
 
-Gửi `/start` trong chat riêng hoặc nhắn thẳng nhu cầu, ví dụ:
-`Tôi cần tư vấn thẻ tín dụng, thu nhập 40 triệu/tháng`.
+- Telegram: mở bot, bấm Start → bấm **Chia sẻ số điện thoại** → chat ngay.
+- Client tích hợp riêng: gọi `POST /auth/phone/login` với số để lấy phiên.
+  Chat web chính vẫn tạo phiên ẩn danh và nhận số trong tin nhắn qua AI/tool.
+- Dùng cùng số điện thoại ở hai kênh để tiếp tục cùng memory. Khách có thể bắt
+  đầu từ API web riêng hoặc Telegram; backend tạo hồ sơ nếu chưa có, không cần
+  OTP, chọn Hoa/Minh hay quản trị viên tạo identity link.
+- Response API riêng có `telegram_url` cho client muốn hiển thị liên kết bot.
+  `TELEGRAM_BOT_USERNAME` cấu hình tên bot, mặc định `sea_bank_bot`.
+- Khi chưa chia sẻ contact, bot yêu cầu chia sẻ số và chưa xử lý nhu cầu tư vấn.
+  Chỉ contact có `contact.user_id` trùng người gửi trong chat riêng được nhận.
+  Gõ số điện thoại trong tin nhắn không thay thế nút chia sẻ.
+- Số được chuẩn hóa E.164: `0901234567`, `84901234567` và `+84901234567`
+  dùng cùng khóa. `POST /auth/phone/login` nhận `{phone}` và trả session/brief
+  ngay. `identity_status=identified` là hồ sơ hội thoại, không phải đăng nhập ngân hàng.
+- Hợp đồng demo chủ động cho phép ai biết số điện thoại truy cập memory của số đó.
+  Không sử dụng dữ liệu nhạy cảm thật hoặc coi đây là xác thực danh tính.
+  Các endpoint mã xác nhận cũ vẫn tồn tại để tương thích; chat chính không dùng.
+- Khách đi từ website trước được tạo hồ sơ với liên kết Telegram tạm `web:<id>`.
+  Khi chủ số chia sẻ contact trên Telegram, bot gắn vào chính hồ sơ đó, giữ
+  memory web. Một số đã gắn với Telegram khác không tự chuyển chủ.
+- `/start` mở phiên mới và giữ memory; không vượt qua handoff đang chờ chuyên viên.
+  Transcript từng phiên riêng biệt; thông tin đã ghi nhớ dùng chung.
 
-Backend tự tạo hồ sơ khách riêng theo chat Telegram và dùng chung bộ tư vấn,
-công cụ ngân hàng, memory và console chuyên viên của web. Khách có thể cập nhật
-thông tin tài chính trong hội thoại, ví dụ `Thu nhập chính xác 50 triệu`.
-Mỗi chat có bộ nhớ riêng; không tự gán khách mới vào Hoa hoặc Minh.
+## Liên kết demo cũ
 
-Gửi `/start` để mở phiên mới vẫn giữ các thông tin đã ghi nhớ. Hồ sơ và memory
-được lưu trong SQLite nên tiếp tục dùng được sau khi backend khởi động lại.
-Trong lúc chuyên viên tiếp nhận, `/start` không bỏ qua quy trình bàn giao.
+Khi `DEMO_PHONE_IDENTITY=false`, các identity link cũ tới Hoa/Minh không còn quyết định hồ sơ của người chat bot.
+Bot tự dùng hồ sơ cá nhân; người dùng chỉ cần chia sẻ số, không cần nhập số demo.
+Nếu contact cùng chủ Telegram trùng với phone binding demo cũ, binding chuyển
+sang hồ sơ cá nhân khi chia sẻ lại. Không sao chép memory demo dùng chung vào
+hồ sơ cá nhân. Khách đã có hồ sơ riêng tiếp tục dùng memory hiện có.
 
-Trước khi chia sẻ số điện thoại, hồ sơ có trạng thái `guest`. Sau khi chia sẻ
-số của chính mình, khách có hồ sơ `identified` lưu bền vững với số điện thoại
-là khóa liên kết duy nhất. Hồ sơ này không tự nhận CIF hoặc trạng thái đã xác
-minh tài khoản ngân hàng. Mã khách nội bộ được giữ nguyên để không mất memory
-đã tạo trước khi chia sẻ số.
+## Kịch bản kiểm tra API riêng và Telegram hai chiều
 
-Schema phiên bản 4 tự thêm bảng hồ sơ, xác nhận số điện thoại và quyền phiên
-web; bổ sung `reply_markup` cho outbox. Dữ liệu cũ được giữ nguyên. Quy trình
-release backup database trước khi chạy bản mới.
-Reset hội thoại qua API quản trị giữ hồ sơ khách và liên kết định danh, đồng
-thời xóa các thông tin hội thoại như với khách demo.
+1. Telegram `/start`, chia sẻ contact, nhắn `Thu nhập chính xác 47 triệu`.
+2. Gọi `/auth/phone/login` bằng cùng số: brief phải dùng 47 triệu, không yêu cầu mã.
+3. Gửi `Thu nhập chính xác 53 triệu` qua API message của phiên đó; Telegram
+   hỏi lại phải dùng 53 triệu.
+4. Với số mới khác, làm ngược lại: mở phiên bằng API web riêng, rồi chia sẻ
+   contact cùng số trên Telegram; memory web phải được giữ.
+5. Gọi API mở phiên khác với cùng số: memory vẫn còn, transcript phiên mới riêng.
 
-## API contact/OTP tiếp tục trên web (luồng tích hợp riêng)
-
-Luồng này áp dụng khi không dùng nhận diện demo; API vẫn được giữ cho client
-tích hợp riêng, còn màn hình chat chính không hiển thị biểu mẫu này.
-
-1. Trên Telegram, bấm **Chia sẻ số điện thoại** ở lời chào hoặc gửi `/phone`
-   để hiện lại nút. Khi tắt flag demo, bot không tự nhận số từ tin nhắn thường.
-2. Backend chỉ nhận contact có `contact.user_id` trùng người gửi trong chat
-   riêng. Gửi số bằng văn bản hoặc contact của người khác không liên kết hồ sơ.
-3. Số được chuẩn hóa bằng `phonenumbers` về E.164; mặc định vùng Việt Nam khi
-   nhập số trong nước. Ví dụ `0901234567` và `+84901234567` là một khóa.
-   Cột `customer_profiles.phone_e164` có ràng buộc duy nhất.
-4. Client tích hợp gọi API yêu cầu mã với cùng số rồi xác nhận mã nhận qua
-   Telegram. Backend mới cấp capability phiên thuộc hồ sơ đó và bản tóm tắt
-   nhu cầu đã ghi nhận; client chịu trách nhiệm cung cấp giao diện riêng.
-5. Web và Telegram dùng cùng `customer_id`, bộ tư vấn và memory. Thông tin
-   xác nhận mới ở một kênh được dùng cho lần tư vấn tiếp theo ở kênh còn lại.
-   Transcript riêng từng phiên vẫn tách biệt; ngữ cảnh dùng chung qua memory.
-
-API public `/auth/phone/start` nhận `{phone}` và trả `{challenge_id, expires_in}`.
-API `/auth/phone/confirm` nhận `{challenge_id, code}`; chỉ sau khi xác nhận mới
-trả capability phiên web và brief. Không thể lấy ngữ cảnh bằng cách chỉ nhập
-một số điện thoại. Mã sáu chữ số hết hạn sau 10 phút, dùng một lần, tối đa năm
-lần thử; mỗi số được yêu cầu ba mã trong 15 phút, mỗi IP tối đa mười yêu cầu.
-Yêu cầu mã mới làm mã cũ mất hiệu lực. Mã đi qua outbox bền vững của Telegram.
-
-Bản demo chưa tích hợp SMS OTP hoặc đăng nhập khách hàng ngân hàng, nên dùng
-Telegram để xác nhận quyền truy cập số đã chia sẻ. Chat web demo tạo phiên
-ẩn danh rồi nhận số khách gửi trong chat qua tool `verify_identity`.
-Luồng nhận diện demo không thay thế mã Telegram của hồ sơ đã liên kết thực. Public API
-`/sessions` không cho nhập ID hồ sơ Telegram để chiếm phiên khách khác.
-Nếu một số đã liên kết với hồ sơ khác, bot giữ nguyên các hồ sơ và yêu cầu
-hỗ trợ; không tự gộp lịch sử của hai người. Chưa có luồng tự đổi số điện thoại.
-
-## Liên kết hồ sơ ngân hàng demo (tùy chọn)
-
-Chỉ dùng khi cần cho một chat đại diện hồ sơ demo đã có. Quản trị viên xác nhận
-chat của người dùng và lấy `message.chat.id` từ update nhận được trên VM;
-không công khai nội dung update hoặc credential. Liên kết này thay hồ sơ khách
-độc lập bằng hồ sơ demo cho các phiên tiếp theo; không tự chuyển memory cũ
-sang hồ sơ ngân hàng.
-
-Với `ADMIN_TOKEN` đã nạp vào môi trường, liên kết chat đã xác nhận:
-
-```sh
-python3 scripts/setup_telegram.py \
-  --app-url https://YOUR_BACKEND_HOST \
-  --token-file secrets/telegram-token.txt \
-  --chat-id YOUR_PRIVATE_CHAT_ID \
-  --profile hoa
-```
-
-Lệnh này gọi endpoint quản trị `/admin/identity-links/telegram`. Hồ sơ ngân hàng
-demo đã liên kết cho phép hỏi dữ liệu công khai; gửi số điện thoại khớp hồ sơ
-để nhận diện demo trước khi dùng lịch sử ngân hàng hoặc hai tool yêu cầu định danh.
-
-Gửi `/start` lần nữa, sau đó gửi `0900000001` cho hồ sơ `hoa`
-(hoặc `0900000002` cho `minh`). Khi bot xác nhận đã nhận diện hồ sơ demo, thử nhắn
-`Tôi cần tư vấn thẻ tín dụng, thu nhập 40 triệu/tháng` và kiểm tra phản hồi.
-Đăng ký webhook thành công chưa thay thế việc thử luồng này trên Telegram thật.
-
-Tham khảo: [hướng dẫn tạo bot](https://core.telegram.org/bots/tutorial#obtain-your-bot-token)
-và [hợp đồng webhook Telegram](https://core.telegram.org/bots/api#setwebhook).
+Kiểm thử local bằng DB tạm và Telegram adapter: `uv run pytest -q`.
+Kiểm thử API/backend local hai chiều: `node web/tests/phone-demo-smoke.mjs`. Chạy thêm
+`DEMO_PHONE_IDENTITY=true node web/tests/phone-demo-smoke.mjs` để kiểm tra cấu hình
+deployment demo. Các lệnh này dùng DB tạm, backend rules và Telegram webhook giả lập; không mở
+trình duyệt hoặc gửi tới bot thật, không chứng minh AI đã chọn gọi tool. Kiểm tra
+luồng AI thực theo [AGENT_CHAT.md](AGENT_CHAT.md).

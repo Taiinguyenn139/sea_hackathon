@@ -41,9 +41,10 @@ tự tạo phiên ẩn danh và để AI chọn gọi `verify_identity` khi khá
 trong `.env`; hai model phải khác nhau. `rules` dành cho kiểm tra offline, không chứng minh AI đã chọn tool.
 
 [Cấu hình Telegram](docs/telegram.md): tạo bot, nạp credential và đăng ký webhook.
-Khách mới có hồ sơ riêng và chat ngay; chia sẻ số điện thoại để tiếp tục cùng
-ngữ cảnh trên web. Liên kết hồ sơ demo là tùy chọn. Script kiểm tra kết
-nối và đăng ký webhook mà không in credential.
+Telegram có luồng chia sẻ contact riêng. Chat web chính nhận số ngay trong
+tin nhắn rồi để AI gọi tool nhận diện; các API đăng nhập bằng số vẫn được giữ
+cho tích hợp demo riêng. Đây là nhận diện demo, không thay thế đăng nhập ngân hàng.
+Script kiểm tra kết nối và đăng ký webhook không in credential.
 
 ## Kiểm tra an toàn đầu vào
 
@@ -57,7 +58,9 @@ guard và placeholder, không lưu nguyên văn hoặc các trường dư của 
   đọc nhãn và kiểm tra checksum số thẻ. Câu hỏi về OTP/mật khẩu không chứa bí mật,
   thu nhập, khoản vay, kỳ hạn và nhận diện bằng số điện thoại demo vẫn được xử lý.
 - `G9`: chặn các mẫu prompt injection trực tiếp như ghi đè chỉ dẫn, giả vai system,
-  yêu cầu lộ prompt nội bộ hoặc tắt kiểm soát. Khi `LLM_BACKEND=openai`, mỗi đầu
+  yêu cầu lộ prompt nội bộ hoặc tắt kiểm soát. Câu phủ định độc lập như
+  “Tôi không muốn tắt bảo mật” không bị chặn bởi luật này; các lệnh khác trong
+  cùng tin nhắn vẫn được kiểm tra. Khi `LLM_BACKEND=openai`, mỗi đầu
   vào vượt qua luật còn được phân loại ngữ nghĩa bằng một lần gọi LLM, chỉ nhận
   text hiện tại, không nhận lịch sử hoặc tools. Classifier dùng primary/backup
   và ngân sách thời gian như các bước LLM khác, ghi log `purpose=input_guard`.
@@ -90,6 +93,18 @@ loại PII. Nội dung vượt qua luật được gửi tới classifier khi b�
 chưa bao phủ mọi cách che giấu/mã hóa bí mật. Không tự làm sạch lịch sử đã lưu.
 Quyền truy cập, xác minh danh tính, kiểm tra tool và guard đầu ra vẫn cần được giữ.
 Hướng dẫn tham khảo: [OWASP Prompt Injection Prevention](https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html).
+
+## Kiểm tra câu trả lời
+
+Ở mode `harness`, G1 kiểm tra số liệu không có `{fact:id}`, fact không hợp lệ
+và mẫu cam kết chắc chắn duyệt vay hoặc giải ngân. Các số tài chính viết bằng
+chữ tiếng Anh như `six percent`, `six point nine percent`, `twenty-one months`
+được kiểm tra bên cạnh các mẫu tiếng Việt. Cam kết bị chặn ghi reason
+`unsupported_approval_guarantee`; câu phủ định như “Em không thể cam kết phê
+duyệt khoản vay” vẫn hợp lệ. Nếu bản thay thế cũng không đạt, trả câu an toàn.
+Luồng agent kiểm tra toàn bộ phản hồi trước khi phát snapshot cuối qua SSE,
+nên nội dung không đạt không được đưa ra bản xem trước. Các luật này chỉ bao phủ những
+mẫu đã nhận diện, không thay thế đánh giá ngữ nghĩa cho mọi cách diễn đạt.
 
 ## Kiểm tra và build
 
@@ -236,7 +251,7 @@ mới mở một phiên ẩn danh để có thể nhận diện người khác; 
 còn. Các phiên đã kết nối cùng hồ sơ dùng chung memory theo quyền của backend.
 
 Backend vẫn giữ `POST /demo/phone/session` cho các tích hợp demo cũ khi bật
-flag; màn hình chat chính không gọi API này. Telegram có cơ chế liên kết số
-riêng theo cấu hình demo; khi tắt flag, luồng contact/OTP vẫn được hỗ trợ ở
-backend. Nhận diện demo không thay thế đăng nhập khách hàng để dùng CRM.
+flag và `POST /auth/phone/login` cho đăng nhập hội thoại bằng số không OTP;
+màn hình chat chính không gọi hai API này. Telegram có cơ chế chia sẻ contact
+riêng theo cấu hình demo; các endpoint OTP cũ vẫn tồn tại để tương thích. Nhận diện demo không thay thế đăng nhập khách hàng để dùng CRM.
 Chi tiết ở [Telegram](docs/telegram.md).

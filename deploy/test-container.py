@@ -13,7 +13,7 @@ def docker(*args):
     return subprocess.run(["docker", *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
-def main():
+def main(demo_phone=False):
     name = "harness-smoke-" + secrets.token_hex(4)
     with tempfile.TemporaryDirectory(prefix="harness-container-", dir="/private/tmp" if Path("/private/tmp").exists() else None) as folder:
         root = Path(folder)
@@ -25,6 +25,8 @@ def main():
         webhook_secret = secrets.token_urlsafe(48)
         env = root / "runtime.env"
         env.write_text("ADMIN_TOKEN=" + secrets.token_urlsafe(32) + "\nSTAFF_PASSWORD=" + staff + "\nTELEGRAM_WEBHOOK_SECRET=" + webhook_secret + "\nHARNESS_RELEASE_GATE=/release/ready\nDEPLOY_REVISION=container-smoke\n")
+        with env.open("a") as config:
+            config.write("DEMO_PHONE_IDENTITY=" + str(demo_phone).lower() + "\n")
         env.chmod(0o600)
         try:
             docker("run", "-d", "--name", name, "--env-file", str(env), "--read-only",
@@ -72,9 +74,9 @@ def main():
             reply = request(f"/sessions/{sid}/messages", {"text": "Tôi muốn vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ", "client_message_id": "smoke-1"}, token)
             assert "2 tỷ" in reply["reply"] and "7,1" in reply["reply"] and reply["used_fact_ids"]
 
-            def telegram(update_id, text=None, contact=None):
-                message = {"date": int(time.time()), "chat": {"id": 424242, "type": "private"},
-                           "from": {"id": 424242, "is_bot": False, "first_name": "Smoke"}}
+            def telegram(update_id, text=None, contact=None, chat_id=424242):
+                message = {"date": int(time.time()), "chat": {"id": chat_id, "type": "private"},
+                           "from": {"id": chat_id, "is_bot": False, "first_name": "Smoke"}}
                 if text is not None:
                     message["text"] = text
                 if contact is not None:
@@ -85,7 +87,7 @@ def main():
                 for _ in range(30):
                     state = json.loads(docker("exec", name, "python", "-c", """
 import json, sqlite3, sys
-c = sqlite3.connect('/data/harness.sqlite3')
+c = sqlite3.connect('file:/data/harness.sqlite3?mode=ro', uri=True)
 row = c.execute('SELECT status,error FROM provider_events WHERE id=?', (sys.argv[1],)).fetchone()
 print(json.dumps(row))
 """, f"telegram:{update_id}"))
@@ -93,41 +95,41 @@ print(json.dumps(row))
                         assert state[1] is None, "Telegram event was rejected"
                         return
                     time.sleep(0.2)
-                raise RuntimeError("Telegram inbox processing did not complete")
+                raise RuntimeError(f"Telegram inbox processing did not complete: {state}")
 
-            def guest_state():
+            def guest_state(chat_id=424242):
                 return json.loads(docker("exec", name, "python", "-c", """
-import json, sqlite3
-c = sqlite3.connect('/data/harness.sqlite3')
-customer = c.execute("SELECT id FROM guest_customers WHERE channel='telegram' AND external_id='424242'").fetchone()[0]
-reply = c.execute("SELECT text FROM outbox WHERE target='424242' ORDER BY rowid DESC LIMIT 1").fetchone()[0]
-income = c.execute("SELECT value FROM facts WHERE customer_id=? AND key='income' AND status='active'", (customer,)).fetchone()[0]
-print(json.dumps({'customer': customer, 'reply': reply, 'income': income}))
-"""))
+import json, sqlite3, sys
+c = sqlite3.connect('file:/data/harness.sqlite3?mode=ro', uri=True)
+customer = c.execute("SELECT customer_id FROM sessions WHERE channel='telegram' AND external_id=? AND status='active' ORDER BY rowid DESC LIMIT 1", (sys.argv[1],)).fetchone()[0]
+reply, markup = c.execute("SELECT text,reply_markup FROM outbox WHERE target=? ORDER BY rowid DESC LIMIT 1", (sys.argv[1],)).fetchone()
+income = c.execute("SELECT value FROM facts WHERE customer_id=? AND key='income' AND status='active'", (customer,)).fetchone()
+print(json.dumps({'customer': customer, 'reply': reply, 'markup': json.loads(markup) if markup else None, 'income': income[0] if income else None}))
+""", str(chat_id)))
 
-            telegram(100, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
+            # New onboarding requires the sender's contact before consulting.
+            telegram(100, "/start")
+            welcome = guest_state()
+            assert welcome["markup"]["keyboard"][0][0]["request_contact"] is True
+            if not demo_phone:
+                telegram(101, "Thu nhập 999 triệu")
+                assert guest_state()["income"] is None, "Unbound chat created financial memory"
+            telegram(102, contact={"phone_number": "0901234567", "user_id": 424242})
+            assert guest_state()["markup"] == {"remove_keyboard": True}
+            telegram(103, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
             guest = guest_state()
             assert guest["customer"].startswith("guest_") and "100 triệu" in guest["reply"]
+            assert guest["income"] == "40000000"
             docker("restart", name)
             # Docker may reassign an ephemeral host port when restarting.
             base = "http://" + docker("port", name, "8080/tcp").splitlines()[0]
             healthy()
             turns = request(f"/sessions/{sid}/turns", token=token)
             assert turns.get("turns") or turns.get("items"), "SQLite state lost on restart"
-            telegram(101, "Thu nhập chính xác 50 triệu")
+            telegram(104, "Thu nhập chính xác 50 triệu")
             restored_guest = guest_state()
             assert restored_guest["customer"] == guest["customer"] and restored_guest["income"] == "50000000"
-            telegram(102, contact={"phone_number": "0901234567", "user_id": 424242})
-            phone_challenge = request("/auth/phone/start", {"phone": "+84901234567"})
-            code = docker("exec", name, "python", "-c", """
-import re, sqlite3, sys
-from bank_tools.service import ident
-c = sqlite3.connect('/data/harness.sqlite3')
-key = ident('out_', ['phone-login', sys.argv[1]])
-text = c.execute('SELECT text FROM outbox WHERE id=?', (key,)).fetchone()[0]
-print(re.search(r'\\b(\\d{6})\\b', text)[1])
-""", phone_challenge["challenge_id"])
-            phone_session = request("/auth/phone/confirm", {"challenge_id": phone_challenge["challenge_id"], "code": code})
+            phone_session = request("/auth/phone/login", {"phone": "+84901234567"})
             assert phone_session["identity_status"] == "identified"
             assert phone_session["brief"]["customer_id"] == guest["customer"]
             assert any(f["key"] == "income" and f["value"] == "50000000" for f in phone_session["brief"]["needs"])
@@ -135,12 +137,34 @@ print(re.search(r'\\b(\\d{6})\\b', text)[1])
                                 {"text": "Tiếp tục tư vấn thẻ tín dụng", "client_message_id": "phone-continue"},
                                 phone_session["session_token"])
             assert "100 triệu" in continued["reply"]
+            request(f"/sessions/{phone_session['session_id']}/messages",
+                    {"text": "Thu nhập chính xác 53 triệu", "client_message_id": "phone-update"},
+                    phone_session["session_token"])
+            telegram(105, "Tiếp tục tư vấn thẻ tín dụng")
+            assert guest_state()["income"] == "53000000"
+
+            # Reverse order: a web-first profile must retain its identity and
+            # memory when Telegram later supplies the same normalized phone.
+            web_first = request("/demo/phone/session" if demo_phone else "/auth/phone/login", {"phone": "0901234568"})
+            request(f"/sessions/{web_first['session_id']}/messages",
+                    {"text": "Tôi cần thẻ tín dụng, thu nhập 61 triệu, không có nợ", "client_message_id": "web-first"},
+                    web_first["session_token"])
+            telegram(106, "/start", chat_id=424243)
+            telegram(107, contact={"phone_number": "+84901234568", "user_id": 424243}, chat_id=424243)
+            telegram(108, "Tiếp tục tư vấn thẻ tín dụng", chat_id=424243)
+            linked = guest_state(424243)
+            assert linked["customer"] == web_first["brief"]["customer_id"]
+            assert linked["income"] == "61000000" and "100 triệu" in linked["reply"]
+            challenge_count = docker("exec", name, "python", "-c",
+                                     "import sqlite3; print(sqlite3.connect('file:/data/harness.sqlite3?mode=ro', uri=True).execute('SELECT count(*) FROM phone_challenges').fetchone()[0])")
+            assert challenge_count == "0", "Phone-only onboarding unexpectedly requested an OTP"
             with urllib.request.urlopen(base + "/", timeout=10) as response:
                 assert "<html" in response.read().decode().lower(), "Frontend missing"
-            print("PASS: production read-only container, bank quote, Telegram onboarding/update, persistent restart, phone-keyed context on web, static frontend")
+            print(f"PASS (DEMO_PHONE_IDENTITY={demo_phone}): production read-only container, bank quote, contact-first Telegram onboarding, persistent restart, phone-only web login, bidirectional memory, web-first linking, static frontend")
         finally:
             subprocess.run(["docker", "rm", "-f", name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":
     main()
+    main(demo_phone=True)

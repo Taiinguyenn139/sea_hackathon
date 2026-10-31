@@ -11,6 +11,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
 from bank_tools.service import BankTools, canonical, ident, now
+from harness.input_guard import normalized
 from harness.llm import DEFAULT_REPLY, DraftSuggestion, LLMUnavailable, PlanSuggestion, json_completion
 from harness.memory.service import Memory, extract
 from harness.streaming import emit, stream_sink
@@ -62,6 +63,37 @@ def conversation_intent(text):
     return "advice"
 
 
+def has_approval_guarantee(draft):
+    value = normalized(draft)
+    patterns = (
+        r"\b(?:chac chan|cam ket|bao dam|dam bao)\b(?=[^.!?;]{0,60}\b(?:duyet|giai ngan|cho vay)\b)",
+        (r"\b(?:guarantee(?:d|s)?|definitely|certainly)\b(?=[^.!?;]{0,60}"
+         r"\b(?:approved|approval|disbursed|funded)\b)"),
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, value):
+            # A disclaimer is allowed; a later positive claim is checked on its
+            # own. Do not exempt an entire draft because it contains "not".
+            if not re.search(
+                r"\b(?:khong|chua)(?: the)?(?: cam ket| bao dam| dam bao)?\s*$"
+                r"|\b(?:cannot|can not|can't|do not|don't|not)\s*$", value[:match.start()],
+            ):
+                return True
+    return False
+
+
+ENGLISH_NUMBER = (
+    r"(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|"
+    r"fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|"
+    r"ninety|hundred|thousand|million|billion|trillion|half|quarter)"
+)
+ENGLISH_FINANCIAL_NUMBER = re.compile(
+    rf"\b{ENGLISH_NUMBER}(?:[\s-]+(?:(?:and|point)[\s-]+)?{ENGLISH_NUMBER})*\s*"
+    r"(?:%|(?:percent|per cent|percentage points?|basis points?|dollars?|dong|vnd|usd|"
+    r"euros?|months?|years?|phan tram|ty|trieu|dong|thang|nam)\b)"
+)
+
+
 def draft_problem(draft, facts, as_of):
     ids = re.findall(r"\{fact:([^}]+)\}", draft)
     stripped = re.sub(r"\{fact:[^}]+\}", "", draft)
@@ -69,9 +101,10 @@ def draft_problem(draft, facts, as_of):
         r"\b(?:không|một|hai|ba|bốn|năm|sáu|bảy|tám|chín|mười|trăm|nghìn)(?:\s+[a-zà-ỹ]+){0,5}\s+(?:phần trăm|tỷ|triệu|đồng|tháng|năm)\b",
         stripped.lower(),
     )
-    invalid = bool(re.search(r"\d", stripped) or written_number or "{fact:" in stripped) or any(
-        i not in facts for i in ids
-    )
+    invalid = bool(
+        re.search(r"\d", stripped) or written_number or "{fact:" in stripped
+        or ENGLISH_FINANCIAL_NUMBER.search(normalized(stripped)) or has_approval_guarantee(draft)
+    ) or any(i not in facts for i in ids)
     stale = any(
         i in facts
         and (
@@ -644,7 +677,8 @@ class Engine:
         if stale:
             events.append(event("G3", "expired_fact", "refresh"))
         if invalid or stale:
-            events.append(event("G1", "unbacked_number_or_fact", "regenerate", 1))
+            reason = "unsupported_approval_guarantee" if has_approval_guarantee(draft) else "unbacked_number_or_fact"
+            events.append(event("G1", reason, "regenerate", 1))
             draft = self.rules_draft(s)
             if any(draft_problem(draft, s["facts"], self.db.setting("clock"))):
                 draft = "Em cần xác nhận lại thông tin trước khi đưa ra báo giá. Anh/chị muốn gặp chuyên viên không?"

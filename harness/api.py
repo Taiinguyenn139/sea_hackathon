@@ -281,6 +281,15 @@ def create_app(settings=None):
             "handoff_id": h["id"] if h else None,
         }
 
+    @app.post("/auth/phone/login")
+    def phone_demo_login(body: PhoneLoginInput):
+        if settings.demo_phone_identity:
+            return harness.demo_phone_session(body.phone)
+        customer = harness.phone_identity.demo_customer(body.phone)
+        result = harness._create_session(customer, phone_authenticated=True)
+        result["telegram_url"] = "https://t.me/" + settings.telegram_bot_username
+        return result
+
     @app.post("/sessions/{sid}/new")
     def new_conversation(sid: str, request: Request):
         # Ownership is checked before any legacy migration or sibling creation.
