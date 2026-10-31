@@ -1,0 +1,61 @@
+{
+  "profile": "hoa",
+  "dob": "1988-05-12",
+  "scenario_id": "personal-loan",
+  "product": "personal_loan",
+  "customer_claims": [
+    [
+      "VND",
+      100000000
+    ],
+    [
+      "months",
+      24
+    ],
+    [
+      "VND",
+      30000000
+    ],
+    [
+      "VND",
+      0
+    ]
+  ],
+  "sessions": [
+    {
+      "channel": "web",
+      "as_of": "2026-10-31",
+      "verify": true,
+      "steps": [
+        {
+          "text": "Tôi cần vay tiêu dùng 100 triệu đồng trong 24 tháng, thu nhập 30 triệu đồng mỗi tháng, không có nợ.",
+          "reveals": [
+            "amount",
+            "term",
+            "income",
+            "debt"
+          ],
+          "expect": {
+            "offer": true
+          }
+        },
+        {
+          "text": "Tôi muốn nộp hồ sơ vay.",
+          "stage": "apply",
+          "handoff": true,
+          "handoff_required": [
+            "reason",
+            "next_step",
+            "brief.customer_id",
+            "brief.needs",
+            "bot_said"
+          ]
+        }
+      ]
+    }
+  ],
+  "loan": {
+    "amount": "100000000",
+    "term": 24
+  }
+}

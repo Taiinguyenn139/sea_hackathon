@@ -1,0 +1,43 @@
+{
+  "profile": "hoa",
+  "dob": "1988-05-12",
+  "scenario_id": "credit-card",
+  "product": "credit_card",
+  "customer_claims": [
+    [
+      "VND",
+      30000000
+    ]
+  ],
+  "sessions": [
+    {
+      "channel": "web",
+      "as_of": "2026-10-31",
+      "verify": true,
+      "steps": [
+        {
+          "text": "Tôi muốn mở thẻ tín dụng, thu nhập 30 triệu đồng mỗi tháng.",
+          "reveals": [
+            "income"
+          ],
+          "expect": {
+            "offer": true,
+            "offer_unit": "VND"
+          }
+        },
+        {
+          "text": "Tôi muốn gặp chuyên viên.",
+          "stage": "apply",
+          "handoff": true,
+          "handoff_required": [
+            "reason",
+            "next_step",
+            "brief.customer_id",
+            "brief.needs",
+            "bot_said"
+          ]
+        }
+      ]
+    }
+  ]
+}

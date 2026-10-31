@@ -1,0 +1,105 @@
+name: Test and deploy GCP
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: '0.8.23'
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+      - run: uv run ruff check harness bank_tools eval simulators tests tests_eval
+      - run: uv run mypy harness
+      - run: npm --prefix web ci
+      - run: npm --prefix web run lint && npm --prefix web run test && npm --prefix web run build
+      - name: Validate deployment scripts
+        run: bash -n deploy/release.sh deploy/startup.sh deploy/configure-proxy.sh deploy/provision-gcp.sh deploy/configure-github.sh deploy/initialize-secrets.sh
+      - name: Build production container
+        run: docker build -t memory-harness:deploy-check .
+      - name: Verify container readiness and persistent restart
+        run: python3 deploy/test-container.py
+
+  deploy:
+    needs: verify
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.GCP_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: demo
+    concurrency:
+      group: demo-gcp
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_ZONE: ${{ vars.GCP_ZONE }}
+      GCP_INSTANCE: ${{ vars.GCP_INSTANCE }}
+      GCP_ARTIFACT_REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY }}
+      DEPLOY_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check required deployment variables
+        run: |
+          for name in GCP_PROJECT_ID GCP_REGION GCP_ZONE GCP_INSTANCE GCP_ARTIFACT_REPOSITORY; do
+            test -n "${!name}" || { echo "Missing variable $name"; exit 1; }
+          done
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+      - name: Build and push immutable image
+        run: |
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_ARTIFACT_REPOSITORY}/app:${DEPLOY_SHA}"
+          docker build --pull -t "$IMAGE" .
+          docker push "$IMAGE"
+          DIGEST=$(gcloud artifacts docker images describe "$IMAGE" --project="$GCP_PROJECT_ID" --format='value(image_summary.digest)')
+          test -n "$DIGEST"
+          echo "DEPLOY_IMAGE=${IMAGE%:*}@${DIGEST}" >> "$GITHUB_ENV"
+      - name: Transfer deployment script via IAP
+        run: |
+          gcloud compute scp deploy/release.sh "${GCP_INSTANCE}:release-${DEPLOY_SHA}.sh" \
+            --project="$GCP_PROJECT_ID" --zone="$GCP_ZONE" --tunnel-through-iap --quiet
+      - name: Back up, release and verify revision
+        id: release
+        run: |
+          LATEST_SHA=$(git ls-remote origin refs/heads/main | cut -f1)
+          test -n "$LATEST_SHA"
+          if test "$LATEST_SHA" != "$DEPLOY_SHA"; then
+            echo 'A newer main revision exists; skipping this obsolete release.'
+            echo 'skipped=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gcloud compute ssh "$GCP_INSTANCE" --project="$GCP_PROJECT_ID" --zone="$GCP_ZONE" \
+            --tunnel-through-iap --quiet \
+            --command="sudo bash release-${DEPLOY_SHA}.sh '${DEPLOY_IMAGE}' '${DEPLOY_SHA}'"
+      - name: Verify public HTTPS
+        if: steps.release.outputs.skipped != 'true'
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          test -n "$APP_URL"
+          curl --fail --silent --show-error --connect-timeout 5 --max-time 15 --retry 6 --retry-delay 5 "$APP_URL/healthz" | \
+            python3 -c 'import json,os,sys; r=json.load(sys.stdin); assert r["status"] == "ok"; assert r["revision"] == os.environ["DEPLOY_SHA"], r'
+          echo "Deployment verified: $APP_URL ($DEPLOY_SHA)" >> "$GITHUB_STEP_SUMMARY"

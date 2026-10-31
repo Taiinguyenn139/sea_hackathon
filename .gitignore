@@ -118,3 +118,17 @@ test-results/
 *.tfstate
 *.tfstate.*
 .firebase/
+
+# Memory Harness runtime data and build output
+web/dist/
+web/test-results/
+web/playwright-report/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.sqlite3.*
+*.checkpoints*
+data/
+runtime.env
+*.db
+*.db-*

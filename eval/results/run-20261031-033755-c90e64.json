@@ -1,0 +1,2107 @@
+{
+  "schema_version": 1,
+  "run_id": "run-20261031-033755-c90e64",
+  "created_at": "2026-10-31T03:37:55.239016+00:00",
+  "status": "incomplete",
+  "split": "dev",
+  "backend": "rules",
+  "seed": 42,
+  "repetitions": 1,
+  "results": [
+    {
+      "scenario_id": "credit-card",
+      "mode": "no_memory",
+      "repetition": 0,
+      "seed": 42,
+      "status": "failed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 3,
+        "provenance_errors": 0,
+        "traced_replies": 2,
+        "expected_offers": 1,
+        "missing_offers": 0,
+        "handoff_present": 5,
+        "handoff_required": 5,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 0,
+        "failures": 1
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": 1.0,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 1.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn mở thẻ tín dụng, thu nhập 30 triệu đồng mỗi tháng.",
+          "reply": "Hạn mức thẻ tham khảo từ 10 triệu đồng đến 100 triệu đồng. Phí thường niên 500.000 đồng.\n\nPhí và hạn mức thẻ phụ thuộc điều kiện sản phẩm và kết quả thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "f_1dd05a70c949aaa70146",
+            "f_38825d570069e1d92ed3",
+            "f_4e934a1f109b022fc61d"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 1,
+          "step": 1,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn gặp chuyên viên.",
+          "reply": "Em đã chuyển yêu cầu cùng thông tin đã trao đổi cho chuyên viên. Anh/chị vui lòng chờ phản hồi.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G6",
+              "reason": "customer_requested_human",
+              "action": "handoff",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "error": "HTTP 409: /sessions/s_b1864128b44bbe1184379b5e/end"
+        }
+      ]
+    },
+    {
+      "scenario_id": "credit-card",
+      "mode": "full_history",
+      "repetition": 0,
+      "seed": 42,
+      "status": "failed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 3,
+        "provenance_errors": 0,
+        "traced_replies": 2,
+        "expected_offers": 1,
+        "missing_offers": 0,
+        "handoff_present": 5,
+        "handoff_required": 5,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 0,
+        "failures": 1
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": 1.0,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 1.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn mở thẻ tín dụng, thu nhập 30 triệu đồng mỗi tháng.",
+          "reply": "Hạn mức thẻ tham khảo từ 10 triệu đồng đến 100 triệu đồng. Phí thường niên 500.000 đồng.\n\nPhí và hạn mức thẻ phụ thuộc điều kiện sản phẩm và kết quả thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "f_1dd05a70c949aaa70146",
+            "f_38825d570069e1d92ed3",
+            "f_4e934a1f109b022fc61d"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 1,
+          "step": 1,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn gặp chuyên viên.",
+          "reply": "Em đã chuyển yêu cầu cùng thông tin đã trao đổi cho chuyên viên. Anh/chị vui lòng chờ phản hồi.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G6",
+              "reason": "customer_requested_human",
+              "action": "handoff",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "error": "HTTP 409: /sessions/s_0f239de8c373d5f9ba7ff326/end"
+        }
+      ]
+    },
+    {
+      "scenario_id": "credit-card",
+      "mode": "harness",
+      "repetition": 0,
+      "seed": 42,
+      "status": "failed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 3,
+        "provenance_errors": 0,
+        "traced_replies": 2,
+        "expected_offers": 1,
+        "missing_offers": 0,
+        "handoff_present": 5,
+        "handoff_required": 5,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 0,
+        "failures": 1
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": 1.0,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 1.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn mở thẻ tín dụng, thu nhập 30 triệu đồng mỗi tháng.",
+          "reply": "Hạn mức thẻ tham khảo từ 10 triệu đồng đến 100 triệu đồng. Phí thường niên 500.000 đồng.\n\nPhí và hạn mức thẻ phụ thuộc điều kiện sản phẩm và kết quả thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "f_1dd05a70c949aaa70146",
+            "f_38825d570069e1d92ed3",
+            "f_4e934a1f109b022fc61d"
+          ],
+          "guard_events": [
+            {
+              "guard_id": "G5",
+              "reason": "required_disclosure",
+              "action": "append",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "session_number": 1,
+          "step": 1,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn gặp chuyên viên.",
+          "reply": "Em đã chuyển yêu cầu cùng thông tin đã trao đổi cho chuyên viên. Anh/chị vui lòng chờ phản hồi.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G6",
+              "reason": "customer_requested_human",
+              "action": "handoff",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "error": "HTTP 409: /sessions/s_42dfc5f6f25c53479f79a42c/end"
+        }
+      ]
+    },
+    {
+      "scenario_id": "duplicate-message",
+      "mode": "no_memory",
+      "repetition": 0,
+      "seed": 42,
+      "status": "failed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 6,
+        "provenance_errors": 0,
+        "traced_replies": 2,
+        "expected_offers": 1,
+        "missing_offers": 0,
+        "handoff_present": 5,
+        "handoff_required": 5,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 0,
+        "failures": 1
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": 1.0,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 1.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_901eea6ac57932eee81b",
+            "cf_1b89b662f3521225b189",
+            "f_db10b07f9e3a743ff03c",
+            "f_d0612fa4a23cd3f8ecff",
+            "f_522bed407d805458f840",
+            "f_43fae0f44dfb4175d48d"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 1,
+          "step": 1,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Chuyển cho chuyên viên giúp tôi.",
+          "reply": "Em đã chuyển yêu cầu cùng thông tin đã trao đổi cho chuyên viên. Anh/chị vui lòng chờ phản hồi.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G6",
+              "reason": "customer_requested_human",
+              "action": "handoff",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "error": "HTTP 409: /sessions/s_c3ff0c1805b2e4e908e71329/end"
+        }
+      ]
+    },
+    {
+      "scenario_id": "duplicate-message",
+      "mode": "full_history",
+      "repetition": 0,
+      "seed": 42,
+      "status": "failed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 6,
+        "provenance_errors": 0,
+        "traced_replies": 2,
+        "expected_offers": 1,
+        "missing_offers": 0,
+        "handoff_present": 5,
+        "handoff_required": 5,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 0,
+        "failures": 1
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": 1.0,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 1.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_ffe34a511a25b748b25e",
+            "cf_f253f7587db85d655f8c",
+            "f_db10b07f9e3a743ff03c",
+            "f_d0612fa4a23cd3f8ecff",
+            "f_522bed407d805458f840",
+            "f_43fae0f44dfb4175d48d"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 1,
+          "step": 1,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Chuyển cho chuyên viên giúp tôi.",
+          "reply": "Em đã chuyển yêu cầu cùng thông tin đã trao đổi cho chuyên viên. Anh/chị vui lòng chờ phản hồi.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G6",
+              "reason": "customer_requested_human",
+              "action": "handoff",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "error": "HTTP 409: /sessions/s_0fa744c49408d9728a782a3b/end"
+        }
+      ]
+    },
+    {
+      "scenario_id": "duplicate-message",
+      "mode": "harness",
+      "repetition": 0,
+      "seed": 42,
+      "status": "failed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 6,
+        "provenance_errors": 0,
+        "traced_replies": 2,
+        "expected_offers": 1,
+        "missing_offers": 0,
+        "handoff_present": 5,
+        "handoff_required": 5,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 0,
+        "failures": 1
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": 1.0,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 1.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_c207a3e39d7cd3a13ab5",
+            "cf_778bcc5d26d6430ef94f",
+            "f_db10b07f9e3a743ff03c",
+            "f_d0612fa4a23cd3f8ecff",
+            "f_522bed407d805458f840",
+            "f_43fae0f44dfb4175d48d"
+          ],
+          "guard_events": [
+            {
+              "guard_id": "G5",
+              "reason": "required_disclosure",
+              "action": "append",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "session_number": 1,
+          "step": 1,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Chuyển cho chuyên viên giúp tôi.",
+          "reply": "Em đã chuyển yêu cầu cùng thông tin đã trao đổi cho chuyên viên. Anh/chị vui lòng chờ phản hồi.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G6",
+              "reason": "customer_requested_human",
+              "action": "handoff",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "error": "HTTP 409: /sessions/s_25ea9391cfd0784d3c44b32d/end"
+        }
+      ]
+    },
+    {
+      "scenario_id": "expired-promotion",
+      "mode": "no_memory",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 1,
+        "eligible_questions": 1,
+        "price_errors": 0,
+        "numeric_claims": 6,
+        "provenance_errors": 0,
+        "traced_replies": 2,
+        "expected_offers": 2,
+        "missing_offers": 1,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 2,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": 1.0,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.5,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-09-30",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,5 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 14.911.000 đồng mỗi tháng trong ưu đãi, sau đó 19.771.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_56cb8409a7c11760dd55",
+            "cf_171c5014096eb9181f4d",
+            "f_d585a1b08b2af1de1a36",
+            "f_3d7152f43d9f90580c4c",
+            "f_ecb393c574f43f91468d",
+            "f_9a2b81e6daae82c6042d"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 2,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn tiếp tục khoản vay mua nhà, ưu đãi hiện tại thế nào?",
+          "reply": "Anh/chị cho em biết số tiền muốn vay để em tư vấn phù hợp nhé?",
+          "issues": [
+            "reasked:amount",
+            "missing_offer"
+          ],
+          "used_fact_ids": [],
+          "guard_events": []
+        }
+      ]
+    },
+    {
+      "scenario_id": "expired-promotion",
+      "mode": "full_history",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 12,
+        "provenance_errors": 0,
+        "traced_replies": 2,
+        "expected_offers": 2,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 2,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-09-30",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,5 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 14.911.000 đồng mỗi tháng trong ưu đãi, sau đó 19.771.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_0f354fe8067dd4939249",
+            "cf_a35eaf6f7387f082dbe9",
+            "f_d585a1b08b2af1de1a36",
+            "f_3d7152f43d9f90580c4c",
+            "f_ecb393c574f43f91468d",
+            "f_9a2b81e6daae82c6042d"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 2,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn tiếp tục khoản vay mua nhà, ưu đãi hiện tại thế nào?",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_0f354fe8067dd4939249",
+            "cf_a35eaf6f7387f082dbe9",
+            "f_69d94808cd784272a1bb",
+            "f_3dd2c5b9ef5452e6e212",
+            "f_57e4aa9bc3b339bdab1d",
+            "f_1fe2050aaa66294f43b4"
+          ],
+          "guard_events": []
+        }
+      ]
+    },
+    {
+      "scenario_id": "expired-promotion",
+      "mode": "harness",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 12,
+        "provenance_errors": 0,
+        "traced_replies": 2,
+        "expected_offers": 2,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 2,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-09-30",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,5 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 14.911.000 đồng mỗi tháng trong ưu đãi, sau đó 19.771.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_3105063c02827e342a79",
+            "cf_14619c3051d2c8a84dde",
+            "f_d585a1b08b2af1de1a36",
+            "f_3d7152f43d9f90580c4c",
+            "f_ecb393c574f43f91468d",
+            "f_9a2b81e6daae82c6042d"
+          ],
+          "guard_events": [
+            {
+              "guard_id": "G5",
+              "reason": "required_disclosure",
+              "action": "append",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "session_number": 2,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn tiếp tục khoản vay mua nhà, ưu đãi hiện tại thế nào?",
+          "reply": "Ưu đãi trước đã hết hạn; em cập nhật thông tin hiện tại. Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_3105063c02827e342a79",
+            "cf_14619c3051d2c8a84dde",
+            "f_69d94808cd784272a1bb",
+            "f_3dd2c5b9ef5452e6e212",
+            "f_57e4aa9bc3b339bdab1d",
+            "f_1fe2050aaa66294f43b4"
+          ],
+          "guard_events": [
+            {
+              "guard_id": "G3",
+              "reason": "previous_quote_expired",
+              "action": "refresh",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            },
+            {
+              "guard_id": "G5",
+              "reason": "required_disclosure",
+              "action": "append",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario_id": "home-cross-channel",
+      "mode": "no_memory",
+      "repetition": 0,
+      "seed": 42,
+      "status": "failed",
+      "counters": {
+        "redundant_questions": 1,
+        "eligible_questions": 1,
+        "price_errors": 0,
+        "numeric_claims": 6,
+        "provenance_errors": 0,
+        "traced_replies": 3,
+        "expected_offers": 2,
+        "missing_offers": 1,
+        "handoff_present": 5,
+        "handoff_required": 5,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 0,
+        "failures": 1
+      },
+      "kpis": {
+        "reask_rate": 1.0,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.5,
+        "handoff_completeness": 1.0,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 1.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_110511ac3b858d961639",
+            "cf_8d41d82372c63ba45f73",
+            "f_db10b07f9e3a743ff03c",
+            "f_d0612fa4a23cd3f8ecff",
+            "f_522bed407d805458f840",
+            "f_43fae0f44dfb4175d48d"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 2,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn tiếp tục khoản vay mua nhà lần trước.",
+          "reply": "Anh/chị cho em biết số tiền muốn vay để em tư vấn phù hợp nhé?",
+          "issues": [
+            "reasked:amount",
+            "missing_offer"
+          ],
+          "used_fact_ids": [],
+          "guard_events": []
+        },
+        {
+          "session_number": 2,
+          "step": 1,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn gặp chuyên viên để nộp hồ sơ.",
+          "reply": "Em đã chuyển yêu cầu cùng thông tin đã trao đổi cho chuyên viên. Anh/chị vui lòng chờ phản hồi.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G6",
+              "reason": "customer_requested_human",
+              "action": "handoff",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "error": "HTTP 409: /sessions/s_bbffb9c6f4610dcf92feb680/end"
+        }
+      ]
+    },
+    {
+      "scenario_id": "home-cross-channel",
+      "mode": "full_history",
+      "repetition": 0,
+      "seed": 42,
+      "status": "failed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 12,
+        "provenance_errors": 0,
+        "traced_replies": 3,
+        "expected_offers": 2,
+        "missing_offers": 0,
+        "handoff_present": 5,
+        "handoff_required": 5,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 0,
+        "failures": 1
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": 1.0,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 1.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_16d1a21689b67188ef65",
+            "cf_d3f93a9377c57c075be9",
+            "f_db10b07f9e3a743ff03c",
+            "f_d0612fa4a23cd3f8ecff",
+            "f_522bed407d805458f840",
+            "f_43fae0f44dfb4175d48d"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 2,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn tiếp tục khoản vay mua nhà lần trước.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_16d1a21689b67188ef65",
+            "cf_d3f93a9377c57c075be9",
+            "f_69d94808cd784272a1bb",
+            "f_3dd2c5b9ef5452e6e212",
+            "f_57e4aa9bc3b339bdab1d",
+            "f_1fe2050aaa66294f43b4"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 2,
+          "step": 1,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn gặp chuyên viên để nộp hồ sơ.",
+          "reply": "Em đã chuyển yêu cầu cùng thông tin đã trao đổi cho chuyên viên. Anh/chị vui lòng chờ phản hồi.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G6",
+              "reason": "customer_requested_human",
+              "action": "handoff",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "error": "HTTP 409: /sessions/s_44c4873a1d29468806cab2cc/end"
+        }
+      ]
+    },
+    {
+      "scenario_id": "home-cross-channel",
+      "mode": "harness",
+      "repetition": 0,
+      "seed": 42,
+      "status": "failed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 12,
+        "provenance_errors": 0,
+        "traced_replies": 3,
+        "expected_offers": 2,
+        "missing_offers": 0,
+        "handoff_present": 5,
+        "handoff_required": 5,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 0,
+        "failures": 1
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": 1.0,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 1.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_c6a13c7db6598bbd2bbe",
+            "cf_a113e472025909302948",
+            "f_db10b07f9e3a743ff03c",
+            "f_d0612fa4a23cd3f8ecff",
+            "f_522bed407d805458f840",
+            "f_43fae0f44dfb4175d48d"
+          ],
+          "guard_events": [
+            {
+              "guard_id": "G5",
+              "reason": "required_disclosure",
+              "action": "append",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "session_number": 2,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn tiếp tục khoản vay mua nhà lần trước.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_c6a13c7db6598bbd2bbe",
+            "cf_a113e472025909302948",
+            "f_69d94808cd784272a1bb",
+            "f_3dd2c5b9ef5452e6e212",
+            "f_57e4aa9bc3b339bdab1d",
+            "f_1fe2050aaa66294f43b4"
+          ],
+          "guard_events": [
+            {
+              "guard_id": "G5",
+              "reason": "required_disclosure",
+              "action": "append",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "session_number": 2,
+          "step": 1,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn gặp chuyên viên để nộp hồ sơ.",
+          "reply": "Em đã chuyển yêu cầu cùng thông tin đã trao đổi cho chuyên viên. Anh/chị vui lòng chờ phản hồi.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G6",
+              "reason": "customer_requested_human",
+              "action": "handoff",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "error": "HTTP 409: /sessions/s_c8cef5792bedff7231823812/end"
+        }
+      ]
+    },
+    {
+      "scenario_id": "income-conflict",
+      "mode": "no_memory",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 2,
+        "eligible_questions": 2,
+        "price_errors": 0,
+        "numeric_claims": 6,
+        "provenance_errors": 0,
+        "traced_replies": 3,
+        "expected_offers": 1,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 2,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": 1.0,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_a6bb04b885203b7f39d7",
+            "cf_bbd24c2568c89e8d9d61",
+            "f_db10b07f9e3a743ff03c",
+            "f_d0612fa4a23cd3f8ecff",
+            "f_522bed407d805458f840",
+            "f_43fae0f44dfb4175d48d"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 2,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn tiếp tục vay mua nhà. Thu nhập của tôi là 40 triệu đồng mỗi tháng.",
+          "reply": "Anh/chị cho em biết số tiền muốn vay để em tư vấn phù hợp nhé?",
+          "issues": [
+            "reasked:amount"
+          ],
+          "used_fact_ids": [],
+          "guard_events": []
+        },
+        {
+          "session_number": 2,
+          "step": 1,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi xác nhận thu nhập hiện tại là 40 triệu đồng mỗi tháng.",
+          "reply": "Anh/chị cho em biết số tiền muốn vay để em tư vấn phù hợp nhé?",
+          "issues": [
+            "reasked:amount"
+          ],
+          "used_fact_ids": [],
+          "guard_events": []
+        }
+      ]
+    },
+    {
+      "scenario_id": "income-conflict",
+      "mode": "full_history",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 18,
+        "provenance_errors": 0,
+        "traced_replies": 3,
+        "expected_offers": 1,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 2,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_6f2a83fbb42b4d197adf",
+            "cf_8df7ac0b6639fbdfdbf7",
+            "f_db10b07f9e3a743ff03c",
+            "f_d0612fa4a23cd3f8ecff",
+            "f_522bed407d805458f840",
+            "f_43fae0f44dfb4175d48d"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 2,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn tiếp tục vay mua nhà. Thu nhập của tôi là 40 triệu đồng mỗi tháng.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_6f2a83fbb42b4d197adf",
+            "cf_8df7ac0b6639fbdfdbf7",
+            "f_69d94808cd784272a1bb",
+            "f_3dd2c5b9ef5452e6e212",
+            "f_57e4aa9bc3b339bdab1d",
+            "f_1fe2050aaa66294f43b4"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 2,
+          "step": 1,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi xác nhận thu nhập hiện tại là 40 triệu đồng mỗi tháng.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_6f2a83fbb42b4d197adf",
+            "cf_8df7ac0b6639fbdfdbf7",
+            "f_69d94808cd784272a1bb",
+            "f_3dd2c5b9ef5452e6e212",
+            "f_57e4aa9bc3b339bdab1d",
+            "f_1fe2050aaa66294f43b4"
+          ],
+          "guard_events": []
+        }
+      ]
+    },
+    {
+      "scenario_id": "income-conflict",
+      "mode": "harness",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 18,
+        "provenance_errors": 0,
+        "traced_replies": 3,
+        "expected_offers": 1,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 2,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_75b1a2dfc2a7a2ed584a",
+            "cf_06231f4f74ba98ec2e20",
+            "f_db10b07f9e3a743ff03c",
+            "f_d0612fa4a23cd3f8ecff",
+            "f_522bed407d805458f840",
+            "f_43fae0f44dfb4175d48d"
+          ],
+          "guard_events": [
+            {
+              "guard_id": "G5",
+              "reason": "required_disclosure",
+              "action": "append",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "session_number": 2,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn tiếp tục vay mua nhà. Thu nhập của tôi là 40 triệu đồng mỗi tháng.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_75b1a2dfc2a7a2ed584a",
+            "cf_06231f4f74ba98ec2e20",
+            "f_69d94808cd784272a1bb",
+            "f_3dd2c5b9ef5452e6e212",
+            "f_57e4aa9bc3b339bdab1d",
+            "f_1fe2050aaa66294f43b4"
+          ],
+          "guard_events": [
+            {
+              "guard_id": "G5",
+              "reason": "required_disclosure",
+              "action": "append",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "session_number": 2,
+          "step": 1,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi xác nhận thu nhập hiện tại là 40 triệu đồng mỗi tháng.",
+          "reply": "Khoản vay 2 tỷ đồng kỳ hạn 240 tháng có mức lãi tham khảo 6,9 %/năm. Thời gian ưu đãi 12 tháng. Trả góp minh họa 15.386.000 đồng mỗi tháng trong ưu đãi, sau đó 19.795.000 đồng.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_75b1a2dfc2a7a2ed584a",
+            "cf_06231f4f74ba98ec2e20",
+            "f_69d94808cd784272a1bb",
+            "f_3dd2c5b9ef5452e6e212",
+            "f_57e4aa9bc3b339bdab1d",
+            "f_1fe2050aaa66294f43b4"
+          ],
+          "guard_events": [
+            {
+              "guard_id": "G5",
+              "reason": "required_disclosure",
+              "action": "append",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario_id": "personal-loan",
+      "mode": "no_memory",
+      "repetition": 0,
+      "seed": 42,
+      "status": "failed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 6,
+        "provenance_errors": 0,
+        "traced_replies": 2,
+        "expected_offers": 1,
+        "missing_offers": 0,
+        "handoff_present": 5,
+        "handoff_required": 5,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 0,
+        "failures": 1
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": 1.0,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 1.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi cần vay tiêu dùng 100 triệu đồng trong 24 tháng, thu nhập 30 triệu đồng mỗi tháng, không có nợ.",
+          "reply": "Khoản vay 100 triệu đồng kỳ hạn 24 tháng có mức lãi tham khảo 12,9 %/năm. Thời gian ưu đãi 6 tháng. Trả góp minh họa 4.749.000 đồng mỗi tháng trong ưu đãi, sau đó 4.880.000 đồng.\n\nLãi suất và điều kiện chính thức phụ thuộc kết quả thẩm định. Khoản trả góp chỉ mang tính minh họa.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_3d29c90e3fe023b3e1f5",
+            "cf_9fcbe39111ee2e6a233c",
+            "f_5bbc45c1fcc22d04db34",
+            "f_8f0cdfaa4a65706e5159",
+            "f_8e89bcee927f2c5b47c2",
+            "f_681caf279fa7fe669451"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 1,
+          "step": 1,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn nộp hồ sơ vay.",
+          "reply": "Em đã chuyển yêu cầu cùng thông tin đã trao đổi cho chuyên viên. Anh/chị vui lòng chờ phản hồi.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G6",
+              "reason": "customer_requested_human",
+              "action": "handoff",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "error": "HTTP 409: /sessions/s_f2f2ebaa47f10e11a3eda043/end"
+        }
+      ]
+    },
+    {
+      "scenario_id": "personal-loan",
+      "mode": "full_history",
+      "repetition": 0,
+      "seed": 42,
+      "status": "failed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 6,
+        "provenance_errors": 0,
+        "traced_replies": 2,
+        "expected_offers": 1,
+        "missing_offers": 0,
+        "handoff_present": 5,
+        "handoff_required": 5,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 0,
+        "failures": 1
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": 1.0,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 1.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi cần vay tiêu dùng 100 triệu đồng trong 24 tháng, thu nhập 30 triệu đồng mỗi tháng, không có nợ.",
+          "reply": "Khoản vay 100 triệu đồng kỳ hạn 24 tháng có mức lãi tham khảo 12,9 %/năm. Thời gian ưu đãi 6 tháng. Trả góp minh họa 4.749.000 đồng mỗi tháng trong ưu đãi, sau đó 4.880.000 đồng.\n\nLãi suất và điều kiện chính thức phụ thuộc kết quả thẩm định. Khoản trả góp chỉ mang tính minh họa.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_3d1609c3c4275b6d4eb6",
+            "cf_16a3d6793aff7d716716",
+            "f_5bbc45c1fcc22d04db34",
+            "f_8f0cdfaa4a65706e5159",
+            "f_8e89bcee927f2c5b47c2",
+            "f_681caf279fa7fe669451"
+          ],
+          "guard_events": []
+        },
+        {
+          "session_number": 1,
+          "step": 1,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn nộp hồ sơ vay.",
+          "reply": "Em đã chuyển yêu cầu cùng thông tin đã trao đổi cho chuyên viên. Anh/chị vui lòng chờ phản hồi.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G6",
+              "reason": "customer_requested_human",
+              "action": "handoff",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "error": "HTTP 409: /sessions/s_2eb2dbbc8855f4ded7a241ff/end"
+        }
+      ]
+    },
+    {
+      "scenario_id": "personal-loan",
+      "mode": "harness",
+      "repetition": 0,
+      "seed": 42,
+      "status": "failed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 6,
+        "provenance_errors": 0,
+        "traced_replies": 2,
+        "expected_offers": 1,
+        "missing_offers": 0,
+        "handoff_present": 5,
+        "handoff_required": 5,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 0,
+        "failures": 1
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": 0.0,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": 0.0,
+        "handoff_completeness": 1.0,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 1.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi cần vay tiêu dùng 100 triệu đồng trong 24 tháng, thu nhập 30 triệu đồng mỗi tháng, không có nợ.",
+          "reply": "Khoản vay 100 triệu đồng kỳ hạn 24 tháng có mức lãi tham khảo 12,9 %/năm. Thời gian ưu đãi 6 tháng. Trả góp minh họa 4.749.000 đồng mỗi tháng trong ưu đãi, sau đó 4.880.000 đồng.\n\nLãi suất và điều kiện chính thức phụ thuộc kết quả thẩm định. Khoản trả góp chỉ mang tính minh họa.",
+          "issues": [],
+          "used_fact_ids": [
+            "cf_a332e418ee01fc3caad1",
+            "cf_fa7836ae60c003e1a3a2",
+            "f_5bbc45c1fcc22d04db34",
+            "f_8f0cdfaa4a65706e5159",
+            "f_8e89bcee927f2c5b47c2",
+            "f_681caf279fa7fe669451"
+          ],
+          "guard_events": [
+            {
+              "guard_id": "G5",
+              "reason": "required_disclosure",
+              "action": "append",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "session_number": 1,
+          "step": 1,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn nộp hồ sơ vay.",
+          "reply": "Em đã chuyển yêu cầu cùng thông tin đã trao đổi cho chuyên viên. Anh/chị vui lòng chờ phản hồi.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G6",
+              "reason": "customer_requested_human",
+              "action": "handoff",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        },
+        {
+          "error": "HTTP 409: /sessions/s_e15ec61c84b8549a9f9d9735/end"
+        }
+      ]
+    },
+    {
+      "scenario_id": "tool-timeout",
+      "mode": "no_memory",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 0,
+        "provenance_errors": 0,
+        "traced_replies": 1,
+        "expected_offers": 0,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 1,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": null,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": null,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Hệ thống ngân hàng đang gián đoạn. Em đã ghi nhận yêu cầu để chuyên viên xác nhận lại.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": []
+        }
+      ]
+    },
+    {
+      "scenario_id": "tool-timeout",
+      "mode": "full_history",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 0,
+        "provenance_errors": 0,
+        "traced_replies": 1,
+        "expected_offers": 0,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 1,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": null,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": null,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Hệ thống ngân hàng đang gián đoạn. Em đã ghi nhận yêu cầu để chuyên viên xác nhận lại.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": []
+        }
+      ]
+    },
+    {
+      "scenario_id": "tool-timeout",
+      "mode": "harness",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 0,
+        "provenance_errors": 0,
+        "traced_replies": 1,
+        "expected_offers": 0,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 1,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": null,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": null,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "telegram",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reply": "Hệ thống ngân hàng đang gián đoạn. Em đã ghi nhận yêu cầu để chuyên viên xác nhận lại.\n\nLãi sau ưu đãi thả nổi theo công bố của ngân hàng. Khoản trả góp chỉ mang tính minh họa; điều kiện chính thức được xác nhận khi thẩm định.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G2",
+              "reason": "tool_failed",
+              "action": "callback",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            },
+            {
+              "guard_id": "G5",
+              "reason": "required_disclosure",
+              "action": "append",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario_id": "unsuitable-income",
+      "mode": "no_memory",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 0,
+        "provenance_errors": 0,
+        "traced_replies": 1,
+        "expected_offers": 0,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 1,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": null,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": null,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 5 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng.",
+          "reply": "Hồ sơ hiện chưa phù hợp điều kiện sản phẩm. Em có thể chuyển chuyên viên để trao đổi phương án phù hợp hơn.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": []
+        }
+      ]
+    },
+    {
+      "scenario_id": "unsuitable-income",
+      "mode": "full_history",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 0,
+        "provenance_errors": 0,
+        "traced_replies": 1,
+        "expected_offers": 0,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 1,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": null,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": null,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 5 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng.",
+          "reply": "Hồ sơ hiện chưa phù hợp điều kiện sản phẩm. Em có thể chuyển chuyên viên để trao đổi phương án phù hợp hơn.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": []
+        }
+      ]
+    },
+    {
+      "scenario_id": "unsuitable-income",
+      "mode": "harness",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 0,
+        "provenance_errors": 0,
+        "traced_replies": 1,
+        "expected_offers": 0,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 1,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": null,
+        "provenance_error_rate": 0.0,
+        "missing_offer_rate": null,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 5 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng.",
+          "reply": "Hồ sơ hiện chưa phù hợp điều kiện sản phẩm. Em có thể chuyển chuyên viên để trao đổi phương án phù hợp hơn.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G4",
+              "reason": "unsuitable",
+              "action": "decline",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario_id": "unverified-identity",
+      "mode": "no_memory",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 0,
+        "provenance_errors": 0,
+        "traced_replies": 0,
+        "expected_offers": 0,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 1,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": null,
+        "provenance_error_rate": null,
+        "missing_offer_rate": null,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Cho tôi xem lại khoản vay và ưu đãi lần trước.",
+          "reply": "Để tiếp tục, anh/chị vui lòng xác minh ngày sinh trong bước xác minh.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G7",
+              "reason": "identity_unverified",
+              "action": "verify",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario_id": "unverified-identity",
+      "mode": "full_history",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 0,
+        "provenance_errors": 0,
+        "traced_replies": 0,
+        "expected_offers": 0,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 1,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": null,
+        "provenance_error_rate": null,
+        "missing_offer_rate": null,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Cho tôi xem lại khoản vay và ưu đãi lần trước.",
+          "reply": "Để tiếp tục, anh/chị vui lòng xác minh ngày sinh trong bước xác minh.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G7",
+              "reason": "identity_unverified",
+              "action": "verify",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scenario_id": "unverified-identity",
+      "mode": "harness",
+      "repetition": 0,
+      "seed": 42,
+      "status": "completed",
+      "counters": {
+        "redundant_questions": 0,
+        "eligible_questions": 0,
+        "price_errors": 0,
+        "numeric_claims": 0,
+        "provenance_errors": 0,
+        "traced_replies": 0,
+        "expected_offers": 0,
+        "missing_offers": 0,
+        "handoff_present": 0,
+        "handoff_required": 0,
+        "converted": 0,
+        "scenarios": 1,
+        "calls": 1,
+        "failures": 0
+      },
+      "kpis": {
+        "reask_rate": null,
+        "price_error_rate": null,
+        "provenance_error_rate": null,
+        "missing_offer_rate": null,
+        "handoff_completeness": null,
+        "calls_to_conversion": null,
+        "conversion_rate": 0.0,
+        "failure_rate": 0.0
+      },
+      "turns": [
+        {
+          "session_number": 1,
+          "step": 0,
+          "channel": "web",
+          "as_of": "2026-10-31",
+          "input": "Cho tôi xem lại khoản vay và ưu đãi lần trước.",
+          "reply": "Để tiếp tục, anh/chị vui lòng xác minh ngày sinh trong bước xác minh.",
+          "issues": [],
+          "used_fact_ids": [],
+          "guard_events": [
+            {
+              "guard_id": "G7",
+              "reason": "identity_unverified",
+              "action": "verify",
+              "stage": "guard",
+              "attempt": 0,
+              "fact_ids": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "no_memory": {
+      "reask_rate": 1.0,
+      "price_error_rate": 0.0,
+      "provenance_error_rate": 0.0,
+      "missing_offer_rate": 0.25,
+      "handoff_completeness": 1.0,
+      "calls_to_conversion": null,
+      "conversion_rate": 0.0,
+      "failure_rate": 0.444444
+    },
+    "full_history": {
+      "reask_rate": null,
+      "price_error_rate": 0.0,
+      "provenance_error_rate": 0.0,
+      "missing_offer_rate": 0.0,
+      "handoff_completeness": 1.0,
+      "calls_to_conversion": null,
+      "conversion_rate": 0.0,
+      "failure_rate": 0.444444
+    },
+    "harness": {
+      "reask_rate": null,
+      "price_error_rate": 0.0,
+      "provenance_error_rate": 0.0,
+      "missing_offer_rate": 0.0,
+      "handoff_completeness": 1.0,
+      "calls_to_conversion": null,
+      "conversion_rate": 0.0,
+      "failure_rate": 0.444444
+    }
+  },
+  "counters": {
+    "no_memory": {
+      "redundant_questions": 4,
+      "eligible_questions": 4,
+      "price_errors": 0,
+      "numeric_claims": 33,
+      "provenance_errors": 0,
+      "traced_replies": 16,
+      "expected_offers": 8,
+      "missing_offers": 2,
+      "handoff_present": 20,
+      "handoff_required": 20,
+      "converted": 0,
+      "scenarios": 9,
+      "calls": 7,
+      "failures": 4
+    },
+    "full_history": {
+      "redundant_questions": 0,
+      "eligible_questions": 0,
+      "price_errors": 0,
+      "numeric_claims": 57,
+      "provenance_errors": 0,
+      "traced_replies": 16,
+      "expected_offers": 8,
+      "missing_offers": 0,
+      "handoff_present": 20,
+      "handoff_required": 20,
+      "converted": 0,
+      "scenarios": 9,
+      "calls": 7,
+      "failures": 4
+    },
+    "harness": {
+      "redundant_questions": 0,
+      "eligible_questions": 0,
+      "price_errors": 0,
+      "numeric_claims": 57,
+      "provenance_errors": 0,
+      "traced_replies": 16,
+      "expected_offers": 8,
+      "missing_offers": 0,
+      "handoff_present": 20,
+      "handoff_required": 20,
+      "converted": 0,
+      "scenarios": 9,
+      "calls": 7,
+      "failures": 4
+    }
+  },
+  "gates": {
+    "price_errors_zero": true,
+    "handoff_complete": true,
+    "no_missing_offer": true,
+    "run_complete": false,
+    "provenance_valid": true,
+    "behavior_checks": false
+  },
+  "metadata": {
+    "oracle_hash": "fb1fe9b910ef2fb111dd3d256d87c3d9585fcffcdd80b1269feb7f278b070d3a",
+    "scenario_hash": "dfb34aef45a96c948926545dded4f55f5cadf5a91ef2f541dc3b1619c01d8a12",
+    "frozen_manifest": null,
+    "server": {
+      "backend": "rules",
+      "model": null,
+      "playbook": "v1",
+      "fixture_hash": "5ba7bcb1b50b8ee2b1c44580487c698d2b4be5365af0ce7dda843c9ab6ee0d54",
+      "effective_config": {
+        "backend": "rules",
+        "model": "",
+        "playbook": "v1"
+      }
+    },
+    "expected_results": 27
+  },
+  "judge": {
+    "status": "skipped",
+    "reason": "Optional judge not requested; deterministic KPIs only"
+  }
+}
