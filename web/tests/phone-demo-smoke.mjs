@@ -136,9 +136,9 @@ try {
   });
   const s1 = await login(first, "+84901234567");
   expect(s1.brief.needs.find((f) => f.key === "income").value).toBe("47000000");
-  await send(first, "Thu nhập chính xác 53 triệu");
+  await send(first, "Lương mới được tăng lên 53 triệu rồi");
   await waitIncome("0901234567", "53000000");
-  await tg(111, "Thu nhập chính xác 55 triệu");
+  await tg(111, "Thu nhập hiện tại của tôi là 55 triệu");
   await waitIncome("0901234567", "55000000");
   // Web first -> shared contact attaches Telegram to the already existing customer.
   const second = await browser.newPage();
@@ -146,7 +146,7 @@ try {
   await send(second, "Thu nhập chính xác 61 triệu");
   await tg(222, "/start");
   await tg(222, null, "+84901234568");
-  await tg(222, "Thu nhập chính xác 63 triệu");
+  await tg(222, "Lương mới được tăng lên 63 triệu rồi");
   await waitIncome("0901234568", "63000000");
   const third = await browser.newPage();
   const resumed = await login(third, "+84 90 123 4568");

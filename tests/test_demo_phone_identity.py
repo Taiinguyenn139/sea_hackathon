@@ -267,3 +267,116 @@ def test_contact_and_both_web_entry_points_share_one_memory(client, web_first, p
     assert restarted["customer_id"] == tg["customer_id"]
     assert income_in_trace(client, restarted["id"]) == ["53000000"]
     assert not db.all("SELECT * FROM phone_challenges")
+
+
+@pytest.mark.parametrize("update_on_web", [True, False])
+@pytest.mark.parametrize("text", [
+    "Lương mới được tăng lên 53 triệu rồi",
+    "Tôi cập nhật thu nhập thành 53 triệu/tháng",
+    "Thu nhập hiện tại của tôi là 53 triệu",
+    "Lương tôi bây giờ là 53 triệu",
+    "Thu nhập của tôi giảm xuống 53 triệu rồi",
+])
+def test_natural_income_update_replaces_cross_channel_memory(client, update_on_web, text):
+    session = client.post("/demo/phone/session", json={"phone": "0901234567"}).json()
+    tg = telegram(client, 1, "0901234567")
+    # Both transcripts contain the old figure: neither may revive it later.
+    initial = "Tôi muốn vay mua nhà 2 tỷ trong 20 năm, thu nhập 47 triệu/tháng"
+    if update_on_web:
+        say(client, session, initial, "initial")
+        telegram(client, 2, initial)
+    else:
+        telegram(client, 2, initial)
+        say(client, session, initial, "initial")
+    if update_on_web:
+        response = client.post(
+            f"/sessions/{session['session_id']}/messages/stream", headers=auth(session),
+            json={"text": text, "client_message_id": "update"},
+        )
+        assert response.status_code == 200 and "event: result" in response.text
+        assert "event: error" not in response.text
+        telegram(client, 3, "Thu nhập và thời hạn vay mới nhất của tôi là bao nhiêu?")
+        resumed_id = tg["id"]
+    else:
+        telegram(client, 3, text)
+        say(client, session, "Thu nhập và thời hạn vay mới nhất của tôi là bao nhiêu?", "recall")
+        resumed_id = session["session_id"]
+    assert income_in_trace(client, resumed_id) == ["53000000"]
+    db = client.app.state.harness.db
+    customer = session["brief"]["customer_id"]
+    assert db.all("SELECT value FROM facts WHERE customer_id=? AND key='income' AND status='active'",
+                  (customer,)) == [{"value": "53000000"}]
+    assert not db.all("SELECT id FROM facts WHERE customer_id=? AND status='conflicted'", (customer,))
+    fresh = client.post("/demo/phone/session", json={"phone": "+84901234567"}).json()
+    assert any(f["key"] == "income" and f["value"] == "53000000" for f in fresh["brief"]["needs"])
+
+
+def test_conflicted_income_is_not_revived_from_either_transcript(client):
+    session = client.post("/demo/phone/session", json={"phone": "0901234567"}).json()
+    tg = telegram(client, 1, "0901234567")
+    telegram(client, 2, "Thu nhập 47 triệu")
+    say(client, session, "Thu nhập 53 triệu", "ambiguous")
+    telegram(client, 3, "Thu nhập của tôi là bao nhiêu?")
+    response = say(client, session, "Thu nhập của tôi là bao nhiêu?", "recall")
+    assert income_in_trace(client, tg["id"]) == []
+    assert income_in_trace(client, session["session_id"]) == []
+    assert "chưa thống nhất" in response["reply"]
+    # Confirmation still clears genuine ambiguity and is visible from the other channel.
+    say(client, session, "Xác nhận thu nhập chính xác 53 triệu", "confirm")
+    telegram(client, 4, "Thu nhập của tôi là bao nhiêu?")
+    assert income_in_trace(client, tg["id"]) == ["53000000"]
+
+
+@pytest.mark.parametrize("update,expected", [
+    ("Lương mới được tăng lên 53 triệu rồi", "53000000"),
+    ("Thu nhập 53 triệu", None),
+])
+def test_openai_draft_cannot_reuse_old_income_after_cross_channel_update(settings, monkeypatch, update, expected):
+    from dataclasses import replace
+
+    import httpx
+
+    drafts = []
+    old_income_id = None
+
+    async def completion(self, url, **kwargs):
+        nonlocal old_income_id
+        messages = kwargs["json"]["messages"]
+        instruction = messages[0]["content"]
+        payload = json.loads(messages[1]["content"])
+        if "INPUT_SECURITY_CLASSIFIER" in instruction:
+            value = {"category": "safe"}
+        elif "Phân loại hội thoại" in instruction:
+            value = {"stage": "discover", "objection": None, "intent": "advice"}
+        elif "Trích các đoạn" in instruction:
+            value = {"spans": [payload["text"]]}
+        else:
+            drafts.append(payload)
+            income = next((f for f in payload["facts"].values() if f["key"] == "income"), None)
+            if income and income["value"] == "47000000":
+                old_income_id = income["id"]
+            # In the conflict case simulate a model trying to cite the old
+            # transcript; the output guard must reject that fact identifier.
+            fid = income["id"] if income else old_income_id
+            draft = "Thu nhập hiện tại là {fact:" + fid + "}." if fid else payload["rules_draft"]
+            value = {"draft": draft}
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": json.dumps(value)}, "finish_reason": "stop"}],
+            "usage": {"total_tokens": 10},
+        })
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", completion)
+    settings = replace(settings, llm_backend="openai", openai_key="test-only-key",
+                       openai_model="test-primary", openai_backup_model="test-backup")
+    with TestClient(create_app(settings)) as client:
+        tg = telegram(client, 1, "0901234567")
+        telegram(client, 2, "Thu nhập 47 triệu")
+        session = client.post("/demo/phone/session", json={"phone": "0901234567"}).json()
+        say(client, session, update, "update")
+        telegram(client, 3, "Thu nhập của tôi là bao nhiêu?")
+        assert income_in_trace(client, tg["id"]) == ([expected] if expected else [])
+        assert drafts[-1]["known"].get("income") == expected
+        db = client.app.state.harness.db
+        reply = db.one("SELECT reply FROM turns WHERE session_id=? ORDER BY rowid DESC LIMIT 1", (tg["id"],))["reply"]
+        assert "47 triệu" not in reply
+        assert ("53 triệu" if expected else "chưa thống nhất") in reply
