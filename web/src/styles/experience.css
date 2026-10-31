@@ -85,7 +85,7 @@ button:disabled { opacity: .5; }
 .signature-mark { display: grid; place-items: center; height: 25px; width: 25px; border: 1px solid #d6ddc7; border-radius: 50%; background: #edf0e3; }
 
 /* Decorative banking illustration. No customer balances or card numbers. */
-.banking-scene { position: relative; height: 266px; min-width: 0; isolation: isolate; }
+.banking-scene { position: relative; height: 266px; min-width: 0; isolation: isolate; overflow: clip; }
 .scene-grid { position: absolute; inset: 10px 0 5px; background-image: linear-gradient(#7284630a 1px, transparent 1px), linear-gradient(90deg, #7284630a 1px, transparent 1px); background-size: 23px 23px; mask-image: radial-gradient(ellipse, #000 15%, transparent 72%); }
 .scene-orbit { position: absolute; width: 270px; height: 190px; border: 1px solid #adbb8b80; border-radius: 50%; top: 25px; left: calc(50% - 135px); transform: rotate(-25deg); }
 .orbit-back { width: 310px; height: 235px; left: calc(50% - 155px); top: 5px; border-style: dashed; opacity: .5; }

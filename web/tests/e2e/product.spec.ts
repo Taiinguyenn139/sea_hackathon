@@ -73,7 +73,7 @@ test("customer verifies before chat; retry reuses message id and displays real r
   await expect(page.getByRole("log")).toContainText("Mình đã ghi nhận");
   expect(messageIds[0]).toBe(messageIds[1]);
   await page.evaluate(() => document.fonts.ready);
-  await page.screenshot({ path: testInfo.outputPath("chat-conversation.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("chat-conversation.png"), fullPage: true, animations: "disabled" });
 });
 
 test("staff auth gates private content and incomplete benchmark is not presented as complete", async ({
@@ -151,6 +151,11 @@ for (const [width, height] of [
       }),
     ).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
+    await page.screenshot({
+      path: testInfo.outputPath(`chat-${width}.png`),
+      fullPage: true,
+      animations: "disabled",
+    });
     expect(await page.locator(".conversation-scroll").evaluate(
       (element) => element.scrollHeight <= element.clientHeight,
     )).toBe(true);
@@ -159,10 +164,6 @@ for (const [width, height] of [
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-    await page.screenshot({
-      path: testInfo.outputPath(`chat-${width}.png`),
-      fullPage: true,
-    });
     const toggle = page.getByRole("button", { name: /thông tin hỗ trợ/ });
     const wasExpanded = await toggle.getAttribute("aria-expanded") === "true";
     await toggle.click();
@@ -170,7 +171,7 @@ for (const [width, height] of [
     if (wasExpanded) await expect(page.getByRole("complementary", { name: "Thông tin hỗ trợ" })).toBeHidden();
     else await expect(page.getByRole("complementary", { name: "Thông tin hỗ trợ" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await page.screenshot({ path: testInfo.outputPath(`chat-context-${width}.png`), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`chat-context-${width}.png`), fullPage: true, animations: "disabled" });
   });
 
 test("staff queue uses real counts and supports search with reset", async ({ page }, testInfo) => {
@@ -189,7 +190,7 @@ test("staff queue uses real counts and supports search with reset", async ({ pag
   await expect(page.getByRole("button", { name: /Tư vấn hồ sơ vay mua nhà/ })).toBeVisible();
   await expect(page.getByLabel("Tổng quan công việc")).toContainText("1");
   await page.evaluate(() => document.fonts.ready);
-  await page.screenshot({ path: testInfo.outputPath("staff-desktop.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("staff-desktop.png"), fullPage: true, animations: "disabled" });
   await page.getByRole("searchbox", { name: "Tìm yêu cầu hỗ trợ" }).fill("hoa");
   await expect(page.getByRole("button", { name: /Tư vấn hồ sơ vay mua nhà/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Hướng dẫn mở thẻ/ })).toHaveCount(0);
@@ -205,7 +206,7 @@ test("staff login preview and reduced motion preference", async ({ page }, testI
   await page.goto("/staff");
   await expect(page.getByRole("heading", { name: "Chào mừng trở lại" })).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-  await page.screenshot({ path: testInfo.outputPath("staff-login.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("staff-login.png"), fullPage: true, animations: "disabled" });
   await page.route("**/api/demo/profiles", (route) => route.fulfill({ json: { profiles: [] } }));
   await page.goto("/chat");
   await expect(page.locator(".illustrated-card")).toHaveCSS("animation-name", "none");
