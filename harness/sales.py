@@ -425,6 +425,7 @@ class Sales:
                     release_gate="",
                     environment="development",
                     sales_sandbox=True,
+                    ai_specialist_enabled=False,  # Existing playbook oracle evaluates the original human handoff.
                 )
             )
             target_db = sandbox.state.harness.db

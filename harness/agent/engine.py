@@ -43,6 +43,8 @@ class TurnState(TypedDict, total=False):
     memory_result: dict
     cards: list
     action_notes: list
+    llm_unavailable: bool
+
     profile_context: dict
 
 
@@ -164,16 +166,19 @@ def format_fact(f):
 
 
 class Engine:
-    def __init__(self, db, settings):
+    responder = "assistant"
+    draft_prefix = ""
+
+    def __init__(self, db, settings, shared=None):
         self.db = db
         self.settings = settings
-        self.memory = Memory(db, settings)
-        self.bank = BankTools(db)
-        self.locks = {}
-        self.locks_lock = threading.Lock()
+        self.memory = shared.memory if shared else Memory(db, settings)
+        self.bank = shared.bank if shared else BankTools(db)
+        self.locks = shared.locks if shared else {}
+        self.locks_lock = shared.locks_lock if shared else threading.Lock()
         cp_path = ":memory:" if db.path == ":memory:" else db.path + ".checkpoints"
-        self.cp_conn = sqlite3.connect(cp_path, check_same_thread=False)
-        self.checkpointer = SqliteSaver(self.cp_conn)
+        self.cp_conn = shared.cp_conn if shared else sqlite3.connect(cp_path, check_same_thread=False)
+        self.checkpointer = shared.checkpointer if shared else SqliteSaver(self.cp_conn)
         graph = StateGraph(TurnState)
         for name in [
             "load_context",
@@ -222,9 +227,21 @@ class Engine:
             return {"status": "missing", "source": source}
         return {"status": "available", "source": source, "name": name.strip()}
 
+    def thread_id(self, session):
+        return session["id"]
+
+    def handoff_requested(self, text):
+        return any(t in text.lower() for t in ["chuyên viên", "gặp người", "khiếu nại", "nộp hồ sơ", "ký hợp đồng"])
+
+    def plan_data(self, s):
+        return {"text": s["text"], "known": s["known"]}
+
+    def llm_purpose(self, purpose):
+        return purpose if self.responder == "assistant" else "specialist_" + purpose
+
     def run(self, session, text, turn_id):
         with self.lock(session["customer_id"]):
-            config = {"configurable": {"thread_id": session["id"]}}
+            config = {"configurable": {"thread_id": self.thread_id(session)}}
             try:
                 return self.graph.invoke(
                     {
@@ -250,6 +267,7 @@ class Engine:
                         "plan": {},
                         "draft": "",
                         "reply": "",
+                        "llm_unavailable": False,
                     },
                     config,
                 )
@@ -259,7 +277,7 @@ class Engine:
                 state = dict(self.graph.get_state(config).values)
                 if state.get("turn_id") != turn_id:
                     state = {}
-                state.update(reply=DEFAULT_REPLY, used_fact_ids=[], source_spans=[], disclosures=[])
+                state.update(reply=DEFAULT_REPLY, used_fact_ids=[], source_spans=[], disclosures=[], llm_unavailable=True)
                 return state
 
     def load_context(self, s):
@@ -373,7 +391,9 @@ class Engine:
         extraction = self.memory.turn_extraction(s["turn_id"]) if authorized else None
         saved = extraction is not None
         if extraction is None:
-            extraction = self.memory.interpret(s["text"], session["id"], s["turn_id"])
+            extraction = {"facts": []} if session.get("specialist_welcome") else self.memory.interpret(
+                s["text"], session["id"], s["turn_id"]
+            )
         facts, known, conflicts = dict(profile_facts), {}, set()
         parts = list(profile_parts)
         if authorized and session["mode"] == "harness":
@@ -423,7 +443,7 @@ class Engine:
         low = s["text"].lower()
         known = s["known"]
         product = known.get("product", "home_loan")
-        handoff = any(t in low for t in ["chuyên viên", "gặp người", "khiếu nại", "nộp hồ sơ", "ký hợp đồng"])
+        handoff = self.handoff_requested(s["text"])
         intent = conversation_intent(s["text"])
         wants_name = asks_profile_name(s["text"])
         suggestion = None if intent == "profile_name" else json_completion(
@@ -437,9 +457,9 @@ class Engine:
             "greeting: chào hỏi; loan_catalog: hỏi có những loại vay nào; product_catalog: hỏi các sản phẩm/dịch vụ "
             "được tư vấn; acknowledgement: cảm ơn. Không biến câu hỏi tổng quan thành yêu cầu báo giá. "
             "Không trả số liệu hoặc tool arguments.",
-            {"text": s["text"], "known": known},
+            self.plan_data(s),
             schema=PlanSuggestion,
-            purpose="plan",
+            purpose=self.llm_purpose("plan"),
         )
         stage = "apply" if handoff else "discover"
         objection = known.get("objection")
@@ -773,7 +793,7 @@ class Engine:
             last_prefix = prefix
         candidate = json_completion(
             self.settings,
-            "Trả lời trực tiếp tin nhắn khách hàng bằng tiếng Việt, theo intent và ý chính của rules_draft. "
+            self.draft_prefix + "Trả lời trực tiếp tin nhắn khách hàng bằng tiếng Việt, theo intent và ý chính của rules_draft. "
             "Chào hỏi hoặc hỏi danh sách sản phẩm thì giới thiệu đúng phạm vi tư vấn, không ép khách cung cấp "
             "số tiền vay hay thu nhập để xem danh sách. Chỉ báo giá khi có facts. "
             "profile_name chỉ là tên chủ phiên từ nguồn được chỉ rõ; không dùng làm tên người khác. "
@@ -786,7 +806,7 @@ class Engine:
              "known": s["known"], "facts": s["facts"], "context_parts": s["context_parts"],
              "memory_result": s.get("memory_result", {})},
             schema=DraftSuggestion,
-            purpose="draft",
+            purpose=self.llm_purpose("draft"),
             on_delta=preview if stream_sink.get() else None,
         )
         if candidate and isinstance(candidate.get("draft"), str) and 0 < len(candidate["draft"]) < 8000:
@@ -871,11 +891,9 @@ class Engine:
             reply += "\n\n" + " ".join(s["disclosures"])
         return {"reply": reply, "source_spans": spans, "used_fact_ids": list(dict.fromkeys(used))}
 
-    def handoff_prepare(self, s):
-        session = s["session"]
+    def handoff_snapshot(self, session, reason, hid):
         cid = session["customer_id"]
         self.memory.flush(cid)
-        hid = ident("ho_", [session["id"], s["turn_id"]])
         brief = self.memory.brief(cid)
         turns = []
         for row in self.db.all(
@@ -893,17 +911,22 @@ class Engine:
                     "tool_call_ids": [call["id"] for call in trace.get("tool_calls", []) if call.get("id")],
                 }
             )
-        summary = {
+        return {
             "handoff_id": hid,
             "session_id": session["id"],
             "customer_id": cid,
             "status": "pending",
-            "reason": s["text"],
+            "reason": reason,
             "brief": brief,
             "bot_said": turns,
             "open_questions": [f["key"] for f in brief["conflicts"]],
             "next_step": "Chuyên viên xác nhận các thông tin còn mở và tư vấn bước tiếp theo.",
         }
+
+    def handoff_prepare(self, s):
+        session = s["session"]
+        hid = ident("ho_", [session["id"], s["turn_id"]])
+        summary = self.handoff_snapshot(session, s["text"], hid)
         self.db.execute(
             "INSERT OR IGNORE INTO handoffs VALUES(?,?,?,?,?,?)",
             (hid, session["id"], "pending", canonical(summary), None, now()),
