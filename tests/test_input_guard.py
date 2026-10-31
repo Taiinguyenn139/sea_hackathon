@@ -329,6 +329,8 @@ def test_telegram_approved_message_runs_classifier_once(client, monkeypatch):
     harness = client.app.state.harness
     harness.db.execute("UPDATE sessions SET channel='telegram',external_id='111' WHERE id=?", (sid,))
     harness.db.execute("INSERT INTO identity_links VALUES('telegram','111','hoa')")
+    customer = harness.telegram_customer("111", "QA")
+    harness.phone_identity.bind(customer, "QA", "111", {"phone_number": "0901234567", "user_id": 111}, 111)
     enable_llm(client)
     calls = []
 

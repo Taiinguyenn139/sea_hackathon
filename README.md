@@ -34,8 +34,9 @@ Backend `rules` chạy không cần API key. Telegram và backend LLM cần cred
 qua kho secret, không đưa giá trị vào Git hoặc chat.
 
 [Cấu hình Telegram](docs/telegram.md): tạo bot, nạp credential và đăng ký webhook.
-Khách mới có hồ sơ riêng và chat ngay; chia sẻ số điện thoại để tiếp tục cùng
-ngữ cảnh trên web. Liên kết hồ sơ demo là tùy chọn. Script kiểm tra kết
+Khách mới chia sẻ số điện thoại trên Telegram rồi chat ngay. Trên web chỉ cần
+nhập cùng số để dùng chung ngữ cảnh, không cần OTP hay liên kết demo thủ công.
+Có thể bắt đầu từ kênh nào cũng được; đây là cơ chế truy cập đơn giản dành cho demo. Script kiểm tra kết
 nối và đăng ký webhook mà không in credential.
 
 ## Kiểm tra an toàn đầu vào
@@ -229,7 +230,8 @@ alias `hoa`/`minh` được giữ để dùng tiếp memory cũ.
 ## Nhận diện cùng hồ sơ trên web và Telegram trong bản demo
 
 Demo GCP bật `DEMO_PHONE_IDENTITY=true`: nhập số điện thoại vào ô ở màn hình đầu
-trên web, bấm **Bắt đầu chat**, rồi nhập cùng số trong chat Telegram. Hai kênh dùng
+trên web, bấm **Bắt đầu chat**; trên Telegram bấm Start và **Chia sẻ số điện thoại**
+hoặc nhập cùng số trong chat. Hai kênh dùng
 chung hồ sơ và memory, không cần OTP. `0901234567` và `+84 90 123 4567` là cùng
 một số. Số trong bộ mẫu nối vào hồ sơ có sẵn; số mới tạo hồ sơ demo riêng.
 
@@ -237,4 +239,5 @@ Số nhập ở màn hình đầu không tạo tin nhắn. Mỗi phiên có tran
 luồng xử lý riêng; các phiên cùng hồ sơ vẫn đóng góp và đọc memory chung.
 Tạo phiên mới không sao chép hội thoại hoặc handoff của phiên trước. Muốn đổi sang số khác sau
 khi đã kết nối, mở phiên mới rồi nhập số khác. Chi tiết ở [Telegram](docs/telegram.md).
-Ngoài deployment demo, cấu hình mặc định tắt và giữ luồng contact/OTP hiện có.
+Ngoài deployment demo, cấu hình mặc định tắt: Telegram yêu cầu chia sẻ contact;
+web dùng **Tiếp tục bằng số điện thoại**, không cần OTP.

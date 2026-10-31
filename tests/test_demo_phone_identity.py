@@ -229,3 +229,41 @@ def test_existing_telegram_guest_can_select_web_profile_without_merging_old_fact
     assert tg["customer_id"] == session["brief"]["customer_id"]
     telegram(client, 3, "Tiếp tục tư vấn thẻ tín dụng")
     assert income_in_trace(client, tg["id"]) == ["50000000"]
+
+
+@pytest.mark.parametrize("web_first", [False, True])
+@pytest.mark.parametrize("phone", ["0901234567", "0900000002"])
+def test_contact_and_both_web_entry_points_share_one_memory(client, web_first, phone):
+    def enter(path):
+        response = client.post(path, json={"phone": phone})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    if web_first:
+        first = enter("/demo/phone/session")
+        say(client, first, "Thu nhập chính xác 40 triệu", "initial")
+    telegram(client, 1, "/start")
+    db = client.app.state.harness.db
+    welcome = db.one("SELECT reply_markup FROM outbox ORDER BY rowid DESC LIMIT 1")
+    assert json.loads(welcome["reply_markup"])["keyboard"][0][0]["request_contact"]
+    response = client.post(
+        "/webhooks/telegram", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook"},
+        json={"update_id": 2, "message": {
+            "date": 1002, "chat": {"id": 111, "type": "private"}, "from": {"id": 111},
+            "contact": {"phone_number": phone, "user_id": 111},
+        }},
+    )
+    assert response.status_code == 200
+    tg = telegram(client, 3, "Tiếp tục tư vấn thẻ tín dụng" if web_first else "Thu nhập chính xác 40 triệu")
+    assert income_in_trace(client, tg["id"]) == ["40000000"]
+    for path in ("/auth/phone/login", "/demo/phone/session"):
+        session = enter(path)
+        assert session["brief"]["customer_id"] == tg["customer_id"]
+        assert session["telegram_url"].startswith("https://t.me/")
+        assert any(f["key"] == "income" and f["value"] == "40000000" for f in session["brief"]["needs"])
+    say(client, session, "Thu nhập chính xác 53 triệu", "correct")
+    restarted = telegram(client, 4, "/start")
+    telegram(client, 5, "Tiếp tục tư vấn thẻ tín dụng")
+    assert restarted["customer_id"] == tg["customer_id"]
+    assert income_in_trace(client, restarted["id"]) == ["53000000"]
+    assert not db.all("SELECT * FROM phone_challenges")

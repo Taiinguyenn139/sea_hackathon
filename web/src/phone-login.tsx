@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { ArrowRight, Phone, ShieldCheck } from "lucide-react";
+import { ArrowRight, Phone } from "lucide-react";
 import { errorMessage, request, type ChatSession } from "./api";
 import { ErrorBanner, Spinner } from "./ui";
 import "./styles/phone-login.css";
@@ -12,50 +12,26 @@ export function PhoneLogin({
   onCancel: () => void;
 }) {
   const [phone, setPhone] = useState("");
-  const [challenge, setChallenge] = useState("");
-  const [code, setCode] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-
-  async function sendCode() {
-    setPending(true);
-    setError("");
-    try {
-      const result = await request<{ challenge_id: string }>(
-        "/auth/phone/start",
-        {
-          method: "POST",
-          body: { phone },
-        },
-      );
-      setChallenge(result.challenge_id);
-      setCode("");
-    } catch (error) {
-      setError(errorMessage(error));
-    } finally {
-      setPending(false);
-    }
-  }
-
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (pending) return;
-    if (!challenge) return sendCode();
     setPending(true);
     setError("");
     try {
-      const session = await request<ChatSession>("/auth/phone/confirm", {
-        method: "POST",
-        body: { challenge_id: challenge, code },
-      });
-      onSuccess(session);
+      onSuccess(
+        await request<ChatSession>("/auth/phone/login", {
+          method: "POST",
+          body: { phone },
+        }),
+      );
     } catch (error) {
       setError(errorMessage(error));
     } finally {
       setPending(false);
     }
   }
-
   return (
     <form
       className="phone-login"
@@ -63,79 +39,40 @@ export function PhoneLogin({
       aria-label="Tiếp tục bằng số điện thoại"
     >
       <div className="phone-login-heading">
-        {challenge ? <ShieldCheck size={22} /> : <Phone size={22} />}
+        <Phone size={22} />
         <div>
-          <strong>Tiếp nối cuộc trò chuyện của bạn</strong>
+          <strong>Một hồ sơ cho website và Telegram</strong>
           <p>
-            {challenge
-              ? "Nhập mã xác nhận gửi tới Telegram đã liên kết với số điện thoại này. Mã có hiệu lực trong 10 phút."
-              : "Dùng số điện thoại đã chia sẻ với bot Telegram để giữ lại nhu cầu và thông tin bạn đã trao đổi."}
+            Nhập số điện thoại để bắt đầu chat ngay. Nếu đã chat trên Telegram,
+            dùng cùng số đã chia sẻ để tiếp tục ngữ cảnh.
           </p>
+          <p>Bản demo: chỉ cần số điện thoại, không yêu cầu mã xác nhận.</p>
         </div>
       </div>
       {error && <ErrorBanner message={error} />}
-      {!challenge ? (
-        <label>
-          Số điện thoại
-          <input
-            type="tel"
-            autoComplete="tel"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="090 123 4567"
-            maxLength={64}
-            required
-            disabled={pending}
-          />
-        </label>
-      ) : (
-        <>
-          <label>
-            Mã xác nhận
-            <input
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              value={code}
-              onChange={(e) =>
-                setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
-              }
-              pattern="[0-9]{6}"
-              minLength={6}
-              maxLength={6}
-              required
-              disabled={pending}
-            />
-          </label>
-          <p className="phone-login-help">
-            Nếu chưa nhận mã, mở bot Telegram và bấm “Chia sẻ số điện thoại”,
-            rồi yêu cầu mã mới.
-          </p>
-        </>
-      )}
+      <label>
+        Số điện thoại
+        <input
+          type="tel"
+          autoComplete="tel"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="090 123 4567"
+          maxLength={64}
+          required
+          disabled={pending}
+        />
+      </label>
       <div className="phone-login-actions">
-        <button
-          className="button primary"
-          disabled={pending || (challenge ? code.length !== 6 : !phone.trim())}
-        >
+        <button className="button primary" disabled={pending || !phone.trim()}>
           {pending ? (
             <Spinner label="Đang xử lý…" />
           ) : (
             <>
-              {challenge ? "Xác nhận và tiếp tục" : "Nhận mã qua Telegram"}
-              <ArrowRight size={16} />
+              Bắt đầu trò chuyện <ArrowRight size={16} />
             </>
           )}
         </button>
-        {challenge && (
-          <button
-            className="button secondary"
-            type="button"
-            onClick={sendCode}
-            disabled={pending}
-          >
-            Yêu cầu mã mới
-          </button>
-        )}
         <button
           className="button secondary"
           type="button"

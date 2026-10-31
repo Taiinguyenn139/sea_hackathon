@@ -281,6 +281,7 @@ def test_web_public_conversation_answers_intent_before_collecting_quote_slots(cl
 def test_telegram_hello_and_loan_catalog_do_not_repeat_default_question(client):
     h = client.app.state.harness
     h.db.execute("INSERT INTO identity_links VALUES('telegram','111','hoa')")
+    share_telegram_phone(client)
     _, greeting = telegram_message(client, 1, "Hello")
     _, catalog = telegram_message(client, 2, "Có những sản phẩm vay nào ???")
     assert "Chào anh/chị" in greeting
@@ -331,7 +332,22 @@ def telegram_message(client, update_id, text, chat_id=111, stamp=None):
     return customer, reply
 
 
+def share_telegram_phone(client, chat_id=111, stamp=1):
+    h = client.app.state.harness
+    h.settings.telegram_secret = "test-webhook"
+    # Contact first, independently of the numbered conversation turns.
+    response = client.post("/webhooks/telegram", headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook"}, json={
+        "update_id": 100000 + chat_id, "message": {
+            "date": stamp, "chat": {"id": chat_id, "type": "private"},
+            "from": {"id": chat_id, "first_name": "Khách mới"},
+            "contact": {"phone_number": "0901234567" if chat_id == 111 else "0901234568", "user_id": chat_id},
+        },
+    })
+    assert response.status_code == 200
+
+
 def test_telegram_new_customer_can_start_and_update_needs(client):
+    share_telegram_phone(client)
     customer, welcome = telegram_message(client, 1, "/start")
     assert "sản phẩm" in welcome and "quản trị" not in welcome
     assert customer not in {"hoa", "minh"}
@@ -345,16 +361,18 @@ def test_telegram_new_customer_can_start_and_update_needs(client):
     assert not any(f["key"] == "income" and f["value"] == "40000000" for f in brief["needs"])
     s = h.db.one("SELECT * FROM sessions WHERE customer_id=?", (customer,))
     assert not s["verified"]  # Conversation access does not assert a bank identity.
-    assert client.get(f"/sessions/{s['id']}", headers=ADMIN).json()["identity_status"] == "guest"
+    assert client.get(f"/sessions/{s['id']}", headers=ADMIN).json()["identity_status"] == "identified"
     telegram_message(client, 3, "Thu nhập chính xác 50 triệu")
     assert len(h.db.all("SELECT * FROM guest_customers")) == 1
-    assert len(h.db.all("SELECT * FROM sessions")) == 1
+    assert len(h.db.all("SELECT * FROM sessions WHERE status='active'")) == 1
     assert len(h.db.all("SELECT * FROM turns")) == 2
 
 
 def test_telegram_first_message_is_processed_and_customers_are_isolated(client):
+    share_telegram_phone(client)
     customer, reply = telegram_message(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
     assert "100 triệu" in reply
+    share_telegram_phone(client, 222)
     other, reply = telegram_message(client, 2, "Tôi cần thẻ tín dụng", chat_id=222)
     assert other != customer and "thu nhập" in reply and "100 triệu" not in reply
     memory = client.app.state.harness.engine.memory
@@ -365,7 +383,7 @@ def test_telegram_first_message_is_processed_and_customers_are_isolated(client):
     assert client.post("/sessions", json={"demo_profile": customer}).status_code == 400
     telegram_message(client, 3, "/start hoa", chat_id=222)
     h = client.app.state.harness
-    assert h.db.one("SELECT * FROM identity_links WHERE external_id='222'") is None
+    assert h.db.one("SELECT * FROM identity_links WHERE external_id='222'")["customer_id"] == other
     assert h.db.one("SELECT customer_id FROM sessions WHERE external_id='222' ORDER BY rowid DESC LIMIT 1")[
         "customer_id"
     ] == other
@@ -374,6 +392,7 @@ def test_telegram_first_message_is_processed_and_customers_are_isolated(client):
 def test_telegram_guest_memory_survives_new_session_and_process_restart(tmp_path):
     settings = Settings(db_path=str(tmp_path / "guest.sqlite3"), admin_token="admin-test", staff_password="staff-test")
     with TestClient(create_app(settings)) as client:
+        share_telegram_phone(client)
         customer, _ = telegram_message(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
         telegram_message(client, 2, "/start")
         _, reply = telegram_message(client, 3, "Tiếp tục tư vấn thẻ tín dụng")
@@ -386,27 +405,18 @@ def test_telegram_guest_memory_survives_new_session_and_process_restart(tmp_path
         assert len(h.db.all("SELECT * FROM sessions WHERE status='active'")) == 1
 
 
-def test_telegram_explicit_bank_link_still_requires_verification(client):
-    guest, _ = telegram_message(client, 1, "Thu nhập 40 triệu")
-    assert client.post(
-        "/admin/identity-links/telegram", headers=ADMIN, json={"external_id": "111", "customer_id": "hoa"}
-    ).status_code == 200
-    customer, reply = telegram_message(client, 2, "Tôi cần thẻ tín dụng")
-    assert customer == "hoa" and "thu nhập" in reply
-    harness = client.app.state.harness
-    linked = harness.db.one("SELECT * FROM sessions WHERE customer_id='hoa' AND channel='telegram'")
-    assert not linked["verified"]
-    assert len(harness.engine.bank.definitions("hoa", linked["id"])) == 6
-    _, reply = telegram_message(client, 3, "0900000001")
-    assert "nhận diện hồ sơ demo" in reply
-    assert harness.session(linked["id"])["verified"] == 1
-    assert len(harness.engine.bank.definitions("hoa", linked["id"])) == 8
-    _, reply = telegram_message(client, 4, "Tôi cần thẻ tín dụng")
-    assert "thu nhập" in reply  # The former prospect's income was not attached to Hoa.
-    assert client.app.state.harness.engine.memory.brief(guest)["needs"]
+def test_telegram_legacy_bank_link_uses_private_onboarding(client):
+    client.post("/admin/identity-links/telegram", headers=ADMIN,
+                json={"external_id": "111", "customer_id": "hoa"})
+    customer, reply = telegram_message(client, 1, "/start")
+    assert customer != "hoa" and "Chia sẻ số điện thoại" in reply
+    assert not client.app.state.harness.db.all("SELECT * FROM turns")
+    share_telegram_phone(client, stamp=200)
+    assert client.app.state.harness.db.one("SELECT * FROM identity_links WHERE external_id='111'")["customer_id"] != "hoa"
 
 
 def test_telegram_guest_can_handoff_with_shared_bank_brief(client):
+    share_telegram_phone(client)
     customer, _ = telegram_message(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
     _, reply = telegram_message(client, 2, "Tôi muốn gặp chuyên viên")
     assert "chuyển yêu cầu" in reply
@@ -418,6 +428,7 @@ def test_telegram_guest_can_handoff_with_shared_bank_brief(client):
 
 
 def test_telegram_guest_summary_keeps_private_action_locked(client):
+    share_telegram_phone(client)
     customer, _ = telegram_message(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
     _, reply = telegram_message(client, 2, "Gửi tóm tắt")
     h = client.app.state.harness
@@ -425,7 +436,7 @@ def test_telegram_guest_summary_keeps_private_action_locked(client):
     assert all(json.loads(call["result"])["error"] for call in calls)
     assert not h.db.all("SELECT * FROM outbox WHERE status='mock_sent'")
     assert "số điện thoại" in reply
-    assert len(h.db.all("SELECT * FROM outbox WHERE target='111'")) == 2
+    assert len(h.db.all("SELECT * FROM outbox WHERE target='111'")) == 3
     assert h.engine.memory.brief(customer)["quotes"]
     assert not h.engine.memory.brief("hoa")["needs"]
 

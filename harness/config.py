@@ -18,6 +18,7 @@ class Settings:
     llm_call_budget_seconds: float = field(default_factory=lambda: float(os.getenv("LLM_CALL_BUDGET_SECONDS", "20")))
     telegram_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     telegram_secret: str = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    telegram_bot_username: str = os.getenv("TELEGRAM_BOT_USERNAME", "sea_bank_bot")
     results_dir: Path = Path(os.getenv("HARNESS_RESULTS_DIR", "eval/results"))
     cookie_secure: bool = os.getenv("COOKIE_SECURE", "false").lower() == "true"
     revision: str = os.getenv("DEPLOY_REVISION", "local")
@@ -30,6 +31,10 @@ class Settings:
         return not self.release_gate or Path(self.release_gate).is_file()
 
     def __post_init__(self):
+        import re
+
+        if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", self.telegram_bot_username):
+            raise ValueError("Invalid TELEGRAM_BOT_USERNAME")
         if self.environment == "production":
             if len(self.admin_token) < 24 or len(self.staff_password) < 16:
                 raise ValueError("Production ADMIN_TOKEN and STAFF_PASSWORD must be configured with strong values")
