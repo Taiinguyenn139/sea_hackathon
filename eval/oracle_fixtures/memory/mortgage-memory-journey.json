@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "scenario_id": "mortgage-memory-journey",
+  "customer_id": "hoa",
+  "modes": ["harness"],
+  "checkpoints": [
+    {
+      "session_number": 1, "as_of": "2026-09-27", "conflict_keys": [],
+      "unique_active_keys": ["amount", "term", "income", "property_value", "debt"],
+      "facts": [
+        {"key": "amount", "value": "2000000000", "unit": "đồng", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 0]},
+        {"key": "term", "value": "240", "unit": "tháng", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 0]},
+        {"key": "income", "value": "45000000", "unit": "đồng", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 0]},
+        {"key": "property_value", "value": "3000000000", "unit": "đồng", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 0]},
+        {"key": "debt", "value": "0", "unit": "đồng", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 0]},
+        {"key": "objection", "value": "rate_high", "unit": "", "source_type": "customer", "status": "superseded", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 1]},
+        {"key": "objection", "value": "need_spouse", "unit": "", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 2]},
+        {"key": "promo_rate", "value": "6.5", "unit": "%/năm", "source_type": "bank_tool", "status": "active", "channel": "web", "observed_at": "2026-09-27", "valid_until": "2026-09-30"},
+        {"key": "promo_months", "value": "12", "unit": "tháng", "source_type": "bank_tool", "status": "active", "channel": "web", "observed_at": "2026-09-27", "valid_until": "2026-09-30"}
+      ]
+    },
+    {
+      "session_number": 2, "as_of": "2026-09-28", "conflict_keys": ["income"],
+      "unique_active_keys": ["amount", "term", "property_value", "debt"],
+      "facts": [
+        {"key": "amount", "value": "2000000000", "unit": "đồng", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 0]},
+        {"key": "term", "value": "240", "unit": "tháng", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 0]},
+        {"key": "income", "value": "45000000", "unit": "đồng", "source_type": "customer", "status": "conflicted", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 0]},
+        {"key": "income", "value": "40000000", "unit": "đồng", "source_type": "customer", "status": "conflicted", "channel": "telegram", "observed_at": "2026-09-28", "source_step": [2, 0]},
+        {"key": "promo_rate", "value": "6.5", "unit": "%/năm", "source_type": "bank_tool", "status": "active", "channel": "web", "observed_at": "2026-09-27", "valid_until": "2026-09-30"}
+      ]
+    },
+    {
+      "session_number": 3, "as_of": "2026-10-31", "conflict_keys": [],
+      "unique_active_keys": ["amount", "term", "income", "property_value", "debt"],
+      "facts": [
+        {"key": "amount", "value": "2000000000", "unit": "đồng", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 0]},
+        {"key": "term", "value": "240", "unit": "tháng", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 0]},
+        {"key": "income", "value": "45000000", "unit": "đồng", "source_type": "customer", "status": "superseded", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 0]},
+        {"key": "income", "value": "40000000", "unit": "đồng", "source_type": "customer", "status": "superseded", "channel": "telegram", "observed_at": "2026-09-28", "source_step": [2, 0]},
+        {"key": "income", "value": "40000000", "unit": "đồng", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-10-31", "source_step": [3, 0]},
+        {"key": "objection", "value": "need_spouse", "unit": "", "source_type": "customer", "status": "superseded", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 2]},
+        {"key": "objection", "value": "rate_high", "unit": "", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-10-31", "source_step": [3, 1]},
+        {"key": "promo_rate", "value": "6.5", "unit": "%/năm", "source_type": "bank_tool", "status": "expired", "channel": "web", "observed_at": "2026-09-27", "valid_until": "2026-09-30"},
+        {"key": "promo_rate", "value": "6.9", "unit": "%/năm", "source_type": "bank_tool", "status": "active", "channel": "web", "observed_at": "2026-10-31", "valid_until": "2026-12-31"},
+        {"key": "promo_months", "value": "12", "unit": "tháng", "source_type": "bank_tool", "status": "active", "channel": "web", "observed_at": "2026-10-31", "valid_until": "2026-12-31"}
+      ]
+    }
+  ]
+}

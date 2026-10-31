@@ -40,6 +40,13 @@ python3 deploy/test-container.py
 
 Kết quả benchmark đi kèm là tập dev với dữ liệu giả. Chưa có kết quả held-out độc lập.
 
+## Dữ liệu memory
+
+[Hướng dẫn dataset](docs/DATASET.md) mô tả journey ba phiên, schema scenario,
+expected memory và cách bật checkpoint checks trong eval runner bằng
+`--memory-oracles eval/oracle_fixtures/memory`. Dữ liệu dùng chung mock ngân hàng
+hiện có; expected memory chỉ dành cho evaluator.
+
 ## Deploy
 
 [Hướng dẫn GCP](docs/deployment.md) sở hữu cách cấu hình variables, OIDC/Secret Manager,
