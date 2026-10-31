@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY,session_id TEXT,client_id T
 CREATE TABLE IF NOT EXISTS facts(id TEXT,customer_id TEXT,key TEXT,value TEXT,unit TEXT,source_type TEXT,source_ref TEXT,channel TEXT,observed_at TEXT,valid_until TEXT,status TEXT,confidence REAL,PRIMARY KEY(id,customer_id));
 CREATE TABLE IF NOT EXISTS tool_calls(id TEXT PRIMARY KEY,session_id TEXT,tool TEXT,args TEXT,result TEXT,created_at TEXT);
 CREATE TABLE IF NOT EXISTS traces(turn_id TEXT PRIMARY KEY,session_id TEXT,data TEXT);
+CREATE TABLE IF NOT EXISTS agent_runs(turn_id TEXT PRIMARY KEY,session_id TEXT NOT NULL,state TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS agent_tool_receipts(operation_id TEXT PRIMARY KEY,session_id TEXT NOT NULL,customer_id TEXT NOT NULL,tool TEXT NOT NULL,request_hash TEXT NOT NULL,result TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS session_identity_modes(session_id TEXT PRIMARY KEY,kind TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS customer_sequences(customer_id TEXT PRIMARY KEY,next_seq INTEGER DEFAULT 0,processed_seq INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS memory_jobs(turn_id TEXT PRIMARY KEY,customer_id TEXT,seq INTEGER,payload TEXT,status TEXT DEFAULT 'pending',lease_until REAL DEFAULT 0,error TEXT,UNIQUE(customer_id,seq));
 CREATE TABLE IF NOT EXISTS journey_events(id TEXT PRIMARY KEY,customer_id TEXT,type TEXT,payload TEXT);

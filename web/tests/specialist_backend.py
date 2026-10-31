@@ -15,21 +15,41 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 def provider(request):
     body = json.loads(request.content)
     instruction = body["messages"][0]["content"]
-    data = json.loads(body["messages"][1]["content"])
     if "INPUT_SECURITY_CLASSIFIER" in instruction:
         value = {"category": "safe"}
+    elif "BACKEND_CONTEXT_JSON:\n" in instruction:
+        # Test the actual agent envelope without making a real provider request.
+        # Identity is established explicitly by this integration fixture, not by this stub.
+        context = json.loads(instruction.split("BACKEND_CONTEXT_JSON:\n", 1)[1])
+        amount = next((f for f in context.get("facts", {}).values() if f.get("key") == "amount"), None)
+        text = next(message["content"] for message in reversed(body["messages"]) if message["role"] == "user")
+        if any(word in text.casefold() for word in ("người thật", "nhân viên thật")):
+            value = {"draft": "Em sẽ chuyển hồ sơ cho nhân viên tiếp nhận.", "handoff": True}
+        elif context.get("specialist_welcome"):
+            value = {"draft": "Em đã tiếp nhận nội dung trao đổi" + (
+                " về khoản vay {fact:" + amount["id"] + "}" if amount else " của anh/chị"
+            ) + ". Anh/chị muốn làm rõ điểm nào?"}
+        else:
+            value = {"draft": (
+                "Em đã ghi nhận khoản vay {fact:" + amount["id"] + "}. Anh/chị muốn làm rõ điểm nào?"
+                if amount else "Em tiếp tục hỗ trợ nhu cầu của anh/chị."
+            )}
     elif "Trích xuất memory" in instruction:
+        data = json.loads(body["messages"][1]["content"])
         value = {"facts": []}
         if data["text"] == "Tôi vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ":
             value = {"facts": [
                 {"key": key, "value": item, "unit": unit, "operation": "replace", "source_text": data["text"]}
-                for key, item, unit in [("product", "home_loan", ""), ("amount", "2000000000", "đồng"),
-                                        ("term", "240", "tháng"), ("income", "45000000", "đồng"),
-                                        ("debt", "0", "đồng"), ("property_value", "3000000000", "đồng")]
+                for key, item, unit in [
+                    ("product", "home_loan", ""), ("amount", "2000000000", "đồng"),
+                    ("term", "240", "tháng"), ("income", "45000000", "đồng"),
+                    ("debt", "0", "đồng"), ("property_value", "3000000000", "đồng"),
+                ]
             ]}
     elif "Phân loại hội thoại" in instruction:
         value = {"stage": "quote", "intent": "advice", "objection": None}
     else:
+        data = json.loads(body["messages"][1]["content"])
         value = {"draft": data["rules_draft"]}
     if body.get("stream"):
         chunks = [
@@ -44,7 +64,10 @@ def provider(request):
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="bankwise-specialist-e2e-") as folder:
         os.environ.update(HARNESS_DB=str(Path(folder) / "test.sqlite3"), LLM_BACKEND="rules",
-                          AI_SPECIALIST_ENABLED="false", APP_ENV="development")
+                          AI_SPECIALIST_ENABLED="false", APP_ENV="development",
+                          OPENAI_API_KEY="", OPENAI_MODEL="", OPENAI_BACKUP_MODEL="",
+                          TELEGRAM_BOT_TOKEN="", TELEGRAM_WEBHOOK_SECRET="", HARNESS_RELEASE_GATE="",
+                          IDENTITY_HISTORY_ENABLED="false")
         from harness.api import create_app
         from harness.config import Settings
 

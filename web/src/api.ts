@@ -91,9 +91,10 @@ export type SpecialistSession = {
   specialist_available?: boolean;
 };
 export type ChatSession = SpecialistSession & {
+  opening?: Turn;
   telegram_url?: string;
   session_id: string;
-  user_id?: string;
+  user_id?: string | null;
   session_token: string;
   identity_status: string;
   brief?: Record<string, unknown>;
@@ -101,6 +102,12 @@ export type ChatSession = SpecialistSession & {
   status?: string;
   demo_profile?: string;
 };
+export function createChatSession(): Promise<ChatSession> {
+  return request<ChatSession>("/sessions", {
+    method: "POST",
+    body: { mode: "harness" },
+  });
+}
 export type Turn = {
   responder?: Responder;
   turn_id?: string;
@@ -113,7 +120,7 @@ export type Reply = SpecialistSession & {
   status?: string;
   reply: string;
   identity_status?: string;
-  user_id?: string;
+  user_id?: string | null;
   brief?: Record<string, unknown>;
   used_fact_ids: string[];
   guard_events: unknown[];

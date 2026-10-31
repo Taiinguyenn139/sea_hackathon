@@ -4,7 +4,7 @@ import sqlite3
 import threading
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
@@ -41,10 +41,11 @@ class TurnState(TypedDict, total=False):
     completion: dict
     confirmations: list
     memory_result: dict
+    extraction_context: dict
     cards: list
     action_notes: list
+    handoff_only: bool
     llm_unavailable: bool
-
     profile_context: dict
 
 
@@ -185,6 +186,7 @@ class Engine:
         self.settings = settings
         self.memory = shared.memory if shared else Memory(db, settings)
         self.bank = shared.bank if shared else BankTools(db)
+        self.identity_handler: Any = shared.identity_handler if shared else None
         self.locks = shared.locks if shared else {}
         self.locks_lock = shared.locks_lock if shared else threading.Lock()
         cp_path = ":memory:" if db.path == ":memory:" else db.path + ".checkpoints"
@@ -203,7 +205,7 @@ class Engine:
             "wait_human",
         ]:
             graph.add_node(name, getattr(self, name))
-        graph.set_entry_point("load_context")
+        graph.set_conditional_entry_point(lambda s: "handoff_prepare" if s.get("handoff_only") else "load_context")
         graph.add_edge("load_context", "plan")
         graph.add_conditional_edges("plan", lambda s: "handoff_prepare" if s["plan"].get("handoff") else "select_cards")
         graph.add_edge("select_cards", "call_tools")
@@ -250,7 +252,16 @@ class Engine:
     def llm_purpose(self, purpose):
         return purpose if self.responder == "assistant" else "specialist_" + purpose
 
-    def run(self, session, text, turn_id):
+    def agent_definitions(self, session):
+        from harness.agent.tool_loop import definitions
+
+        return definitions(self, session)
+
+    def run(self, session, text, turn_id, *, source="web"):
+        if self.settings.llm_backend == "openai":
+            from harness.agent.tool_loop import AgentLoop
+
+            return AgentLoop(self).run(session, text, turn_id, source)
         with self.lock(session["customer_id"]):
             config = {"configurable": {"thread_id": self.thread_id(session)}}
             try:
@@ -278,6 +289,7 @@ class Engine:
                         "plan": {},
                         "draft": "",
                         "reply": "",
+                        "handoff_only": False,
                         "llm_unavailable": False,
                     },
                     config,
@@ -290,6 +302,15 @@ class Engine:
                     state = {}
                 state.update(reply=DEFAULT_REPLY, used_fact_ids=[], source_spans=[], disclosures=[], llm_unavailable=True)
                 return state
+
+    def context_turns(self, session):
+        # A Telegram guest may identify a fixture later in the same transcript.
+        # Its earlier owned facts remain attached to the guest, not the fixture.
+        return self.db.all(
+            "SELECT t.id,t.text,t.reply FROM turns t WHERE t.session_id=? AND NOT EXISTS "
+            "(SELECT 1 FROM memory_jobs j WHERE j.turn_id=t.id AND j.customer_id<>?) ORDER BY t.created_at,t.id",
+            (session["id"], session["customer_id"]),
+        )
 
     def load_context(self, s):
         emit("status", stage="preparing")
@@ -316,9 +337,7 @@ class Engine:
             if target is not None and self.settings.llm_backend != "openai":
                 target -= 1
             self.memory.flush(customer, target)
-        current = self.db.all(
-            "SELECT id,text,reply FROM turns WHERE session_id=? ORDER BY created_at,id", (session["id"],)
-        )
+        current = self.context_turns(session)
         if self.settings.llm_backend == "openai":
             return self.llm_context(s, current, profile, profile_facts, profile_parts)
         known = {}
@@ -340,11 +359,13 @@ class Engine:
             parts.append({"type": "call_brief", "fact_ids": list(facts)})
         elif self.memory_access(session) and session["mode"] == "full_history":
             for f in self.memory.facts(customer):
-                if f["source_type"] == "demo_history":
+                if (f["source_type"] == "demo_history" or f.get("source_origin") == "dataset_history") and f["status"] == "active":
                     known[f["key"]] = f["value"]
                     facts[f["id"]] = f
             old = self.db.all(
-                "SELECT t.id,t.text,t.reply FROM turns t JOIN sessions s ON s.id=t.session_id WHERE s.customer_id=? AND s.id<>? ORDER BY t.created_at,t.id",
+                "SELECT t.id,t.text,t.reply FROM turns t JOIN sessions s ON s.id=t.session_id "
+                "WHERE s.customer_id=? AND s.id<>? AND NOT EXISTS "
+                "(SELECT 1 FROM memory_jobs j WHERE j.turn_id=t.id AND j.customer_id<>s.customer_id) ORDER BY t.created_at,t.id",
                 (customer, session["id"]),
             )
             for t in old:
@@ -405,7 +426,7 @@ class Engine:
             }
         if previous_product and known.get("product") != previous_product:
             for fid, fact in list(facts.items()):
-                if fact["source_type"] == "demo_history" and fact["key"] in (
+                if (fact["source_type"] == "demo_history" or fact.get("source_origin") == "dataset_history") and fact["key"] in (
                     "amount", "term", "property_value", "loan_status",
                 ):
                     facts.pop(fid)
@@ -422,10 +443,14 @@ class Engine:
         authorized = self.memory_access(session)
         extraction = self.memory.turn_extraction(s["turn_id"]) if authorized else None
         saved = extraction is not None
+        context_key = {"turn_id": s["turn_id"], "customer_id": session["customer_id"]}
         if extraction is None:
-            extraction = {"facts": []} if session.get("specialist_welcome") or conversation_intent(s["text"]) == "needs_recall" else self.memory.interpret(
-                s["text"], session["id"], s["turn_id"]
-            )
+            if s.get("extraction_context") == context_key:
+                extraction = {"facts": s["memory_result"]["facts"]}
+            else:
+                extraction = {"facts": []} if session.get("specialist_welcome") or conversation_intent(s["text"]) == "needs_recall" else self.memory.interpret(
+                    s["text"], session["id"], s["turn_id"], session["customer_id"] if authorized else None,
+                )
         facts, known, conflicts = dict(profile_facts), {}, set()
         parts = list(profile_parts)
         if authorized and session["mode"] == "harness":
@@ -442,12 +467,13 @@ class Engine:
             history = []
             if authorized and session["mode"] == "full_history":
                 for fact in self.memory.facts(session["customer_id"]):
-                    if fact["source_type"] == "demo_history" and fact["status"] == "active":
+                    if (fact["source_type"] == "demo_history" or fact.get("source_origin") == "dataset_history") and fact["status"] == "active":
                         facts[fact["id"]] = fact
                         known[fact["key"]] = fact["value"]
                 history = self.db.all(
                     "SELECT t.id,t.text,t.reply FROM turns t JOIN sessions s ON s.id=t.session_id "
-                    "WHERE s.customer_id=? AND s.id<>? ORDER BY t.created_at,t.id",
+                    "WHERE s.customer_id=? AND s.id<>? AND NOT EXISTS "
+                    "(SELECT 1 FROM memory_jobs j WHERE j.turn_id=t.id AND j.customer_id<>s.customer_id) ORDER BY t.created_at,t.id",
                     (session["customer_id"], session["id"]),
                 )
                 parts.append({"type": "old_transcript", "turns": history})
@@ -467,6 +493,27 @@ class Engine:
                         "id": fid, "key": key, "value": update["value"], "unit": update["unit"],
                         "source_type": "customer", "source_ref": turn["id"], "status": "active", "valid_until": None,
                     }
+        if not saved and authorized and session["mode"] == "harness":
+            previous_product = known.get("product")
+            for update in extraction["facts"]:
+                key = update["key"]
+                facts = {fid: fact for fid, fact in facts.items() if fact["key"] != key}
+                if update["operation"] == "conflict":
+                    known.pop(key, None)
+                    conflicts.add(key)
+                    continue
+                conflicts.discard(key)
+                known[key] = update["value"]
+                fid = ident("cf_", [s["turn_id"], key, update["value"]])
+                facts[fid] = {"id": fid, "key": key, "value": update["value"], "unit": update["unit"],
+                              "source_type": "customer", "source_ref": s["turn_id"], "status": "active", "valid_until": None}
+            if previous_product and known.get("product") != previous_product:
+                for fid, fact in list(facts.items()):
+                    if (fact["source_type"] == "demo_history" or fact.get("source_origin") == "dataset_history") and fact["key"] in (
+                        "amount", "term", "property_value", "loan_status",
+                    ):
+                        facts.pop(fid)
+                        known.pop(fact["key"], None)
         if authorized and session["mode"] != "no_memory":
             baseline_history = self.memory.demo_history(session["customer_id"])
             if baseline_history:
@@ -476,6 +523,7 @@ class Engine:
             "known": known, "facts": facts, "context_parts": parts,
             "confirmations": sorted(conflicts), "profile_context": profile,
             "memory_result": {"saved": saved, **extraction},
+            "extraction_context": context_key,
         }
 
     def plan(self, s):
@@ -554,14 +602,19 @@ class Engine:
             })
         return result
 
+    def agent_playbook(self, session):
+        """Pinned sales advice is data for the agent, never tool authority."""
+        from harness.sales import book as load_book
+
+        pinned = self.db.one("SELECT version FROM session_playbooks WHERE session_id=?", (session["id"],))
+        version = pinned["version"] if pinned else "v1"
+        content = load_book(self.db, version)
+        return {"version": version, "stages": content.get("stages", {}), "cards": content.get("cards", {})}
+
     def select_cards(self, s):
         if s["plan"].get("intent") in ("profile_name", "memory_recall", "needs_recall"):
             return {"cards": []}
-        from harness.sales import book as load_book
-
-        pinned = self.db.one("SELECT version FROM session_playbooks WHERE session_id=?", (s["session"]["id"],))
-        version = pinned["version"] if pinned else "v1"
-        book = load_book(self.db, version)
+        book = self.agent_playbook(s["session"])
         candidates = book.get("cards", {}).get(s["plan"].get("objection"), {}).get("retail", [])
         if not candidates:
             candidates = book.get("stages", {}).get(s["plan"].get("stage"), {}).get("retail", [])
@@ -583,7 +636,8 @@ class Engine:
         def call(name, args):
             nonlocal error
             args = {**args, "as_of": as_of}
-            result = self.bank.call(name, args, session["customer_id"], session["id"], idempotency_key=s["turn_id"])
+            result = self.bank.call(name, args, session["customer_id"], session["id"],
+                                    idempotency_key=ident("op_", [s["turn_id"], name, args]))
             calls.append({"id": result["tool_call_id"], "tool": name, "args": args, "result": result})
             error = error or bool(result["error"])
             for fact in result["facts"]:
@@ -731,7 +785,9 @@ class Engine:
         facts = {f["key"]: f for f in s["facts"].values() if f["key"] in labels}
         if not facts:
             return "Em chưa có thông tin nhu cầu vay đã ghi nhận. Anh/chị chia sẻ nhu cầu để em lưu lại nhé."
-        source = " (có dữ liệu lịch sử demo)" if any(f["source_type"] == "demo_history" for f in facts.values()) else ""
+        source = " (có dữ liệu lịch sử demo)" if any(
+            f["source_type"] == "demo_history" or f.get("source_origin") == "dataset_history" for f in facts.values()
+        ) else ""
         details = [label + ": {fact:" + facts[key]["id"] + "}." for key, label in labels.items() if key in facts]
         return "Nhu cầu đã ghi nhận" + source + ": " + " ".join(details)
 
@@ -965,8 +1021,9 @@ class Engine:
         brief = self.memory.brief(cid)
         turns = []
         for row in self.db.all(
-            "SELECT id,reply,result FROM turns WHERE session_id=? AND reply IS NOT NULL ORDER BY created_at",
-            (session["id"],),
+            "SELECT t.id,t.reply,t.result FROM turns t WHERE t.session_id=? AND t.reply IS NOT NULL AND NOT EXISTS "
+            "(SELECT 1 FROM memory_jobs j WHERE j.turn_id=t.id AND j.customer_id<>?) ORDER BY t.created_at",
+            (session["id"], cid),
         ):
             saved = json.loads(row["result"] or "{}")
             trace_row = self.db.one("SELECT data FROM traces WHERE turn_id=?", (row["id"],))

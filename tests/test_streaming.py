@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from harness.api import create_app
 from harness.config import Settings
-from harness.llm import DEFAULT_REPLY, DraftSuggestion, LLMUnavailable, json_completion
+from harness.llm import DEFAULT_REPLY, DraftSuggestion, LLMUnavailable, current_deadline, json_completion
 
 
 def frame(content="", finish=None):
@@ -138,9 +138,10 @@ def test_sse_auth_guard_receipt_and_retry(tmp_path, monkeypatch, draft, blocked)
     def handler(request):
         payload = json.loads(request.content)
         calls.append(payload)
-        if payload.get("stream"):
-            return httpx.Response(200, stream=ProviderStream(draft))
-        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else ({"stage": "discover", "objection": None} if "Phân loại" in payload["messages"][0]["content"] else {"facts": []})
+        if payload.get("tools"):
+            assert not payload.get("stream")
+            return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({"draft": draft})}, "finish_reason": "stop"}]})
+        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else {"facts": []}
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}}]})
 
     mock_provider(monkeypatch, handler)
@@ -158,8 +159,9 @@ def test_sse_auth_guard_receipt_and_retry(tmp_path, monkeypatch, draft, blocked)
         received = events(response)
         assert received[0][0] == "status" and received[-1][0] == "result"
         texts = [data["text"] for kind, data in received if kind == "text"]
+        assert texts == [received[-1][1]["reply"]]
         if blocked:
-            assert not texts
+            assert all(draft not in text for text in texts)
             assert draft not in received[-1][1]["reply"]
             if "999" in draft:
                 assert "999" not in received[-1][1]["reply"]
@@ -198,19 +200,24 @@ def test_socket_progress_disconnect_persists_without_replay(tmp_path, monkeypatc
     config = settings(db_path=str(tmp_path / "disconnect.sqlite3"))
     app = create_app(config)
     drafts = []
+    stages = []
 
-    class PausedStream(ProviderStream):
-        async def __aiter__(self):
-            async for part in super().__aiter__():
-                yield part
-                await asyncio.sleep(0.02)
-
-    def handler(request):
+    async def handler(request):
         payload = json.loads(request.content)
-        if payload.get("stream"):
+        if payload.get("tools"):
+            stages.append(len(stages))
+            if len(stages) < 3:
+                name, arguments = (
+                    ("verify_identity", {"phone": "0900000002"}) if len(stages) == 1 else
+                    ("schedule_callback", {"time": "2026-11-02T09:00:00+07:00"})
+                )
+                return httpx.Response(200, json={"choices": [{"finish_reason": "tool_calls", "message": {"tool_calls": [
+                    {"id": name, "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}
+                ]}}]})
             drafts.append(True)
-            return httpx.Response(200, stream=PausedStream("Xin chào. Tôi có thể giúp bạn."))
-        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else ({"stage": "discover"} if "Phân loại" in payload["messages"][0]["content"] else {"facts": []})
+            await asyncio.sleep(0.15)
+            return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({"draft": "Đã ghi nhận lịch gọi mô phỏng."})}, "finish_reason": "stop"}]})
+        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else {"facts": []}
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}}]})
 
     mock_provider(monkeypatch, handler)
@@ -228,37 +235,80 @@ def test_socket_progress_disconnect_persists_without_replay(tmp_path, monkeypatc
             session = client.post("/sessions", json={"demo_profile": "hoa", "mode": "harness"}).json()
             path = f"/sessions/{session['session_id']}/messages"
             auth = {"Authorization": "Bearer " + session["session_token"]}
-            body = {"text": "Xin chào", "client_message_id": "disconnected"}
+            body = {"text": "Số điện thoại của tôi là 0900000002. Hẹn gọi lại sau 2 ngày lúc 09:00.", "client_message_id": "disconnected"}
             with client.stream("POST", path + "/stream", headers=auth, json=body) as response:
                 lines = response.iter_lines()
                 assert next(lines) == "event: status"
-                for line in lines:
-                    assert line != "event: result"
-                    if line == "event: text":
-                        assert "Xin chào." in next(lines)
-                        break
-                else:
-                    pytest.fail("No partial text received")
+                assert '"stage":"preparing"' in next(lines)
+                # Disconnect while the agent is still generating, before any
+                # guarded text/result; its durable turn continues server-side.
             if shutdown_early:
                 server.should_exit = True
                 thread.join(5)
                 assert not thread.is_alive()
             deadline = time.monotonic() + 3
             while time.monotonic() < deadline:
-                receipt = app.state.harness.db.one("SELECT result FROM turns WHERE result IS NOT NULL")
+                receipt = app.state.harness.db.one(
+                    "SELECT result FROM turns WHERE client_id='disconnected' AND result IS NOT NULL"
+                )
                 if receipt:
                     break
                 time.sleep(0.01)
             assert receipt
+            assert len(app.state.harness.db.all("SELECT * FROM callbacks")) == 1
+            assert len(app.state.harness.db.all("SELECT * FROM tool_calls WHERE tool='verify_identity'")) == 1
             if not shutdown_early:
                 retry = client.post(path, headers=auth, json=body)
-                assert retry.json()["reply"] == "Xin chào. Tôi có thể giúp bạn."
+                assert retry.json() == json.loads(receipt["result"])
+                assert retry.json()["reply"].startswith("Đã ghi nhận lịch gọi mô phỏng.")
+                assert len(app.state.harness.db.all("SELECT * FROM callbacks")) == 1
             assert len(drafts) == 1
+            assert len(stages) == 3
     finally:
         server.should_exit = True
         thread.join(5)
         sock.close()
         assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("otp", [False, True])
+def test_owned_brief_is_persisted_inside_turn_budget_and_not_recomputed_on_retry(tmp_path, monkeypatch, stream, otp):
+    with TestClient(create_app(Settings(db_path=str(tmp_path / "owned-brief.sqlite3")))) as client:
+        harness = client.app.state.harness
+        customer = harness.telegram_customer("111", "Khách ban đầu")
+        if otp:
+            harness.phone_identity.bind(customer, "Khách ban đầu", "111", {"user_id": 111, "phone_number": "0901234567"}, 111)
+            session = harness._create_session(customer, phone_authenticated=True)
+        else:
+            session = harness.new_session(customer, channel="telegram", external_id="111")
+        original = harness.engine.memory.brief
+        calls = []
+
+        def brief(customer_id, *, flush=True):
+            assert flush is False and current_deadline() is not None
+            calls.append(customer_id)
+            return original(customer_id, flush=False)
+
+        monkeypatch.setattr(harness.engine.memory, "brief", brief)
+        monkeypatch.setattr(harness.engine, "run", lambda *args, **kwargs: {"reply": "Đã tiếp nhận."})
+        path = f"/sessions/{session['session_id']}/messages" + ("/stream" if stream else "")
+        auth = {"Authorization": "Bearer " + session["session_token"]}
+        body = {"text": "Tôi muốn được tư vấn", "client_message_id": "same-receipt"}
+
+        def submit():
+            response = client.post(path, headers=auth, json=body)
+            assert response.status_code == 200
+            return events(response)[-1][1] if stream else response.json()
+
+        first = submit()
+        assert first["brief"]["name"] == "Khách ban đầu"
+        stored = json.loads(harness.db.one("SELECT result FROM turns WHERE client_id='same-receipt'")["result"])
+        assert first == stored
+        harness.db.execute("UPDATE guest_customers SET name='Tên đã đổi' WHERE id=?", (customer,))
+        harness.db.execute("UPDATE customer_profiles SET name='Tên đã đổi' WHERE id=?", (customer,))
+        assert submit() == first
+        assert calls == [customer]
 
 
 @pytest.mark.parametrize("end", [b"", frame(finish="length") + b"data: [DONE]\n\n"])

@@ -4,6 +4,7 @@ import json
 import logging
 import sqlite3
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -225,14 +226,27 @@ def test_openai_input_guard_still_runs_for_direct_profile_questions(client, monk
     session = enter(client)
     settings = client.app.state.harness.settings
     settings.llm_backend = "openai"
+    settings.openai_key, settings.openai_model, settings.openai_backup_model = "test-only", "primary", "backup"
     calls = []
 
     def classify(settings, instruction, data, *, purpose, **kwargs):
         calls.append(purpose)
         return {"category": category}
 
-    # The semantic guard is intentionally retained even when planning/drafting is deterministic.
+    async def answer_profile(_client, url, **kwargs):
+        calls.append("agent_tools")
+        instruction = kwargs["json"]["messages"][0]["content"]
+        context = json.loads(instruction.split("BACKEND_CONTEXT_JSON:\n", 1)[1])
+        fact = next(fact for fact in context["facts"].values() if fact["key"] == "profile_name")
+        assert fact["value"] == "Trần Minh An"
+        assert all(part["type"] == "customer_profile" for part in context["context_parts"])
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {
+            "content": json.dumps({"draft": f"Tên trong hồ sơ của anh/chị là {{fact:{fact['id']}}}."}),
+        }}]}, request=httpx.Request("POST", url))
+
+    # Input screening precedes the model's answer, even for authorized profile facts.
     monkeypatch.setattr("harness.input_guard.json_completion", classify)
+    monkeypatch.setattr(httpx.AsyncClient, "post", answer_profile)
     result = send(client, session)
     assert ("Trần Minh An" in result["reply"]) is (category == "safe")
-    assert calls == ["input_guard"]
+    assert calls == (["input_guard", "agent_tools"] if category == "safe" else ["input_guard"])

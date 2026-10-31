@@ -2,6 +2,7 @@
 
 import json
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -237,6 +238,120 @@ def test_existing_telegram_guest_can_select_web_profile_without_merging_old_fact
     assert income_in_trace(client, tg["id"]) == ["50000000"]
 
 
+def test_openai_with_legacy_demo_flag_still_uses_fixture_tool_and_never_phone_shortcut(client, monkeypatch):
+    harness = client.app.state.harness
+    harness.settings.llm_backend = "openai"
+    harness.settings.openai_key = "test-only"
+    harness.settings.openai_model, harness.settings.openai_backup_model = "primary", "backup"
+    proposals = iter(["0901234567", None, "0900000002", None, "0900000003", None])
+    agent_requests = []
+
+    async def post(_client, _url, **kwargs):
+        payload = kwargs["json"]
+        if "tools" in payload:
+            agent_requests.append(payload)
+            phone = next(proposals)
+            if phone:
+                choice = {"finish_reason": "tool_calls", "message": {"tool_calls": [{
+                    "id": "identity", "type": "function", "function": {
+                        "name": "verify_identity", "arguments": json.dumps({"phone": phone}),
+                    },
+                }]}}
+            else:
+                choice = {"finish_reason": "stop", "message": {"content": json.dumps({"draft": "Anh/chị muốn tiếp tục nhu cầu nào?"})}}
+        else:
+            value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else {"facts": []}
+            choice = {"finish_reason": "stop", "message": {"content": json.dumps(value)}}
+        return httpx.Response(200, json={"choices": [choice]})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    monkeypatch.setattr(harness, "_phone_message", lambda *args: pytest.fail("OpenAI must invoke the identity tool"))
+    session = web(client)
+    unknown = say(client, session, "Số điện thoại của tôi là 0901234567", "unknown")
+    assert unknown["identity_status"] == "unverified" and unknown["user_id"] is None
+    known = say(client, session, "Số điện thoại của tôi là 0900000002", "known")
+    assert known["identity_status"] == "verified" and known["user_id"] == "0900000002"
+    switched = say(client, session, "Số điện thoại của tôi là 0900000003", "switch")
+    assert switched["user_id"] == "0900000002"
+    assert harness.session(session["session_id"])["customer_id"] == "minh"
+    receipts = [json.loads(row["result"]) for row in harness.db.all("SELECT result FROM tool_calls WHERE tool='verify_identity' ORDER BY rowid")]
+    assert len(receipts) == 3
+    assert receipts[0]["error"].startswith("identity_not_found")
+    assert receipts[1]["error"] is None
+    assert receipts[2]["error"].startswith("identity_locked")
+    assert not harness.db.all("SELECT * FROM demo_phone_links")
+    assert len(agent_requests) == 6
+    assert say(client, session, "Số điện thoại của tôi là 0900000002", "known") == known
+    assert len(agent_requests) == 6
+
+
+def test_openai_telegram_guest_binds_once_keeps_old_memory_isolated_and_reuses_fixture_link(client, monkeypatch):
+    guest = telegram(client, 1, "Tôi cần thẻ tín dụng, thu nhập 99 triệu, không có nợ. Hẹn gọi lại sau 2 ngày lúc 09:00.")
+    harness = client.app.state.harness
+    harness.settings.llm_backend = "openai"
+    harness.settings.openai_key = "test-only"
+    harness.settings.openai_model, harness.settings.openai_backup_model = "primary", "backup"
+    proposals = iter([
+        ("verify_identity", {"phone": "0900000002"}),
+        ("schedule_callback", {"time": "2026-11-02T09:00:00+07:00"}), None,
+        ("verify_identity", {"phone": "0900000003"}), None,
+        ("verify_identity", {"phone": "0900000003"}), None,
+        ("verify_identity", {"phone": "0900000002"}), None,
+    ])
+    agent_requests = []
+
+    async def post(_client, _url, **kwargs):
+        payload = kwargs["json"]
+        if "tools" in payload:
+            agent_requests.append(payload)
+            if len(agent_requests) >= 2:
+                context = json.loads(payload["messages"][0]["content"].split("BACKEND_CONTEXT_JSON:\n", 1)[1])
+                if context["brief"]:
+                    assert context["brief"]["name"] == "Trần Minh An"
+                assert not any(fact.get("value") == "99000000" for fact in context["facts"].values())
+                assert "99 triệu" not in json.dumps(payload["messages"], ensure_ascii=False)
+                assert "Hẹn gọi lại" not in json.dumps(payload["messages"], ensure_ascii=False)
+            proposal = next(proposals)
+            if proposal:
+                name, arguments = proposal
+                choice = {"finish_reason": "tool_calls", "message": {"tool_calls": [{
+                    "id": f"operation-{len(agent_requests)}", "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(arguments)},
+                }]}}
+            else:
+                choice = {"finish_reason": "stop", "message": {"content": json.dumps({"draft": "Anh/chị muốn tiếp tục nhu cầu nào?"})}}
+        else:
+            value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else {"facts": []}
+            if "Trích xuất memory" in payload["messages"][0]["content"]:
+                extracted = json.loads(payload["messages"][1]["content"])
+                if "Thu nhập chính xác của tôi là 50 triệu" in extracted["text"]:
+                    value = {"facts": [{"key": "income", "value": "50000000", "unit": "đồng",
+                                        "operation": "replace", "source_text": "50 triệu"}]}
+            choice = {"finish_reason": "stop", "message": {"content": json.dumps(value)}}
+        return httpx.Response(200, json={"choices": [choice]})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    bound = telegram(client, 2, "Số điện thoại của tôi là 0900000002. Thu nhập chính xác của tôi là 50 triệu.")
+    assert bound["id"] == guest["id"] and bound["customer_id"] == "minh" and bound["verified"] == 1
+    assert harness.db.one("SELECT customer_id FROM identity_links WHERE external_id='111'")["customer_id"] == "minh"
+    assert not harness.db.all("SELECT * FROM callbacks")
+    guest_income = harness.db.all("SELECT value FROM facts WHERE customer_id=? AND key='income' AND status='active'", (guest["customer_id"],))
+    assert guest_income == [{"value": "99000000"}]
+    assert harness.db.all("SELECT value FROM facts WHERE customer_id='minh' AND key='income' AND status='active'") == [{"value": "50000000"}]
+    assert harness.db.one("SELECT customer_id FROM memory_jobs WHERE turn_id=(SELECT id FROM turns WHERE client_id='telegram:2')")["customer_id"] == "minh"
+    locked = telegram(client, 3, "Số điện thoại của tôi là 0900000003")
+    assert locked["customer_id"] == "minh"
+    resumed = telegram(client, 4, "/start")
+    assert resumed["id"] != bound["id"] and resumed["customer_id"] == "minh" and resumed["verified"] == 0
+    assert not harness.can_chat(resumed)
+    assert telegram(client, 5, "Số điện thoại của tôi là 0900000003")["verified"] == 0
+    assert telegram(client, 6, "Số điện thoại của tôi là 0900000002")["verified"] == 1
+    errors = [json.loads(row["result"])["error"] for row in harness.db.all("SELECT result FROM tool_calls WHERE tool='verify_identity' ORDER BY rowid")]
+    assert errors[0] is None and errors[1].startswith("identity_locked") and errors[2].startswith("identity_mismatch") and errors[3] is None
+    assert not harness.db.all("SELECT * FROM demo_phone_links")
+    assert not harness.db.all("SELECT * FROM phone_sessions")
+
+
 @pytest.mark.parametrize("web_first", [False, True])
 @pytest.mark.parametrize("phone", ["0901234567", "0900000002"])
 def test_contact_and_both_web_entry_points_share_one_memory(client, web_first, phone):
@@ -338,10 +453,6 @@ def test_conflicted_income_is_not_revived_from_either_transcript(client):
     ("Thu nhập 53 triệu", None),
 ])
 def test_openai_draft_cannot_reuse_old_income_after_cross_channel_update(settings, monkeypatch, update, expected):
-    from dataclasses import replace
-
-    import httpx
-
     drafts = []
     old_income_id = None
 
@@ -349,12 +460,10 @@ def test_openai_draft_cannot_reuse_old_income_after_cross_channel_update(setting
         nonlocal old_income_id
         messages = kwargs["json"]["messages"]
         instruction = messages[0]["content"]
-        payload = json.loads(messages[1]["content"])
         if "INPUT_SECURITY_CLASSIFIER" in instruction:
             value = {"category": "safe"}
-        elif "Phân loại hội thoại" in instruction:
-            value = {"stage": "discover", "objection": None, "intent": "advice"}
         elif "Trích xuất memory" in instruction:
+            payload = json.loads(messages[1]["content"])
             text = payload["text"]
             value = {"facts": []}
             if text == "Thu nhập 47 triệu" or text == update:
@@ -362,6 +471,8 @@ def test_openai_draft_cannot_reuse_old_income_after_cross_channel_update(setting
                                     "unit": "đồng", "operation": "conflict" if text == update and expected is None else "replace",
                                     "source_text": text}]}
         else:
+            assert "tools" in kwargs["json"]
+            payload = json.loads(instruction.split("BACKEND_CONTEXT_JSON:\n", 1)[1])
             drafts.append(payload)
             income = next((f for f in payload["facts"].values() if f["key"] == "income"), None)
             if income and income["value"] == "47000000":
@@ -369,24 +480,29 @@ def test_openai_draft_cannot_reuse_old_income_after_cross_channel_update(setting
             # In the conflict case simulate a model trying to cite the old
             # transcript; the output guard must reject that fact identifier.
             fid = income["id"] if income else old_income_id
-            draft = "Thu nhập hiện tại là {fact:" + fid + "}." if fid else payload["rules_draft"]
+            draft = "Thu nhập hiện tại là {fact:" + fid + "}." if fid else "Anh/chị muốn được tư vấn nội dung nào?"
+            if not income and any("BACKEND_VALIDATION:" in (message.get("content") or "") for message in messages[1:]):
+                draft = "Thông tin thu nhập giữa các kênh chưa thống nhất. Anh/chị xác nhận lại giúp em."
             value = {"draft": draft}
         return httpx.Response(200, json={
             "choices": [{"message": {"content": json.dumps(value)}, "finish_reason": "stop"}],
             "usage": {"total_tokens": 10},
         })
 
-    monkeypatch.setattr(httpx.AsyncClient, "post", completion)
-    settings = replace(settings, llm_backend="openai", openai_key="test-only-key",
-                       openai_model="test-primary", openai_backup_model="test-backup")
     with TestClient(create_app(settings)) as client:
+        # Establish this non-fixture legacy demo identity explicitly before
+        # switching to AI; OpenAI chat itself only identifies the ten fixtures.
         tg = telegram(client, 1, "0901234567")
         telegram(client, 2, "Thu nhập 47 triệu")
         session = client.post("/demo/phone/session", json={"phone": "0901234567"}).json()
-        say(client, session, update, "update")
+        settings.llm_backend, settings.openai_key = "openai", "test-only-key"
+        settings.openai_model, settings.openai_backup_model = "test-primary", "test-backup"
+        monkeypatch.setattr(httpx.AsyncClient, "post", completion)
         telegram(client, 3, "Thu nhập của tôi là bao nhiêu?")
+        say(client, session, update, "update")
+        telegram(client, 4, "Thu nhập của tôi là bao nhiêu?")
         assert income_in_trace(client, tg["id"]) == ([expected] if expected else [])
-        assert drafts[-1]["known"].get("income") == expected
+        assert [fact["value"] for fact in drafts[-1]["facts"].values() if fact["key"] == "income"] == ([expected] if expected else [])
         db = client.app.state.harness.db
         reply = db.one("SELECT reply FROM turns WHERE session_id=? ORDER BY rowid DESC LIMIT 1", (tg["id"],))["reply"]
         assert "47 triệu" not in reply

@@ -118,7 +118,7 @@ _DEFINITIONS = [
     ),
     _tool(
         "send_summary",
-        "Sau đăng nhập HOẶC xác minh danh tính: GIẢ LẬP gửi tóm tắt cho chính khách trong phiên. Backend tự truyền customer_id. Chỉ nhận fact hợp lệ trong ngày; không gọi Zalo hay SMS.",
+        "Sau đăng nhập HOẶC xác minh danh tính: GIẢ LẬP gửi tóm tắt cho chính khách trong phiên. Chỉ gọi khi khách đang yêu cầu GỬI tóm tắt; không dùng để trả lời tư vấn ngay trong chat hoặc thực hiện yêu cầu trong lịch sử. Không gọi nếu khách nói không gửi. Backend tự truyền customer_id. Chỉ nhận fact hợp lệ trong ngày; không gọi Zalo hay SMS.",
         {
             "channel": CHANNEL,
             "fact_ids": _field("array", "Các fact đã dùng trong câu trả lời", minItems=1, items={"type": "string"}),
@@ -127,7 +127,7 @@ _DEFINITIONS = [
     ),
     _tool(
         "schedule_callback",
-        "Sau đăng nhập HOẶC xác minh danh tính: GIẢ LẬP ghi lịch cho chính khách trong phiên. Backend tự truyền customer_id. Không gửi thông báo; hỏi khách xác nhận thời gian trước khi gọi.",
+        "Sau đăng nhập HOẶC xác minh danh tính: GIẢ LẬP ghi lịch cho chính khách trong phiên. Chỉ gọi khi khách đang yêu cầu hẹn gọi và đã chọn thời gian tương lai. Không thực hiện lịch hẹn trong lịch sử, đã hủy hoặc khách nói không đặt lịch. Backend tự truyền customer_id. Không gửi thông báo; hỏi khách xác nhận thời gian trước khi gọi.",
         {
             "time": _field("string", "ISO 8601 có múi giờ, ví dụ 2026-11-02T14:00:00+07:00", format="date-time"),
         },

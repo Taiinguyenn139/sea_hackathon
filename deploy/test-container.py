@@ -1,12 +1,12 @@
 """Exercise the production container with ephemeral credentials and data only."""
 import json
-from pathlib import Path
 import secrets
 import subprocess
 import tempfile
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 
 def docker(*args):
@@ -64,9 +64,12 @@ def main(demo_phone=False):
             except urllib.error.HTTPError as error:
                 assert error.code == 503
             (gate / "ready").touch()
-            session = request("/sessions", {"mode": "harness", "demo_profile": "hoa"})
+            session = request("/sessions", {"mode": "harness"})
             sid, token = session["session_id"], session["session_token"]
-            verified = request(f"/sessions/{sid}/verify", {"phone": session["user_id"]}, token)
+            assert session["user_id"] is None and session["identity_status"] == "unverified"
+            # Offline infrastructure smoke: establish the fixture explicitly;
+            # model-directed verification is tested separately with tool envelopes.
+            verified = request(f"/sessions/{sid}/verify", {"phone": "0900000001"}, token)
             assert verified["identity_status"] == "verified"
             reply = request(f"/sessions/{sid}/messages", {"text": "Tôi muốn vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ", "client_message_id": "smoke-1"}, token)
             assert "2 tỷ" in reply["reply"] and "7,1" in reply["reply"] and reply["used_fact_ids"]
@@ -159,7 +162,7 @@ print(json.dumps({'customer': customer, 'reply': reply, 'markup': json.loads(mar
                 assert "<html" in response.read().decode().lower(), "Frontend missing"
             print(f"PASS (DEMO_PHONE_IDENTITY={demo_phone}): production read-only container, bank quote, contact-first Telegram onboarding, persistent restart, phone-only web login, bidirectional memory, web-first linking, static frontend")
         finally:
-            subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["docker", "rm", "-f", name], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":

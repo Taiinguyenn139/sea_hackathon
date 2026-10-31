@@ -12,10 +12,12 @@ class Input(BaseModel):
 
 class SessionInput(Input):
     mode: Mode = "harness"
-    demo_profile: str = "hoa"
+    # Accepted for older clients; the public endpoint starts anonymous.
+    demo_profile: str | None = None
 
 
 class AdminSessionInput(SessionInput):
+    demo_profile: str = "hoa"
     channel: Channel = "web"
 
 

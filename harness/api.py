@@ -24,7 +24,7 @@ from harness.config import Settings
 from harness.db import Database
 from harness.identity import get_profile
 from harness.improvements import build_plan, compare_runs
-from harness.llm import DEFAULT_REPLY, LLMUnavailable
+from harness.llm import DEFAULT_REPLY, LLMUnavailable, completion_budget
 from harness.llm import logger as llm_logger
 from harness.schemas import (
     AdminSessionInput,
@@ -265,7 +265,7 @@ def create_app(settings=None):
 
     @app.post("/sessions")
     def create(body: SessionInput):
-        return harness.welcome(harness.new_session(body.demo_profile, body.mode))
+        return harness.welcome(harness.new_session(mode=body.mode))
 
     @app.post("/demo/phone/session")
     def demo_phone_session(body: PhoneLoginInput):
@@ -273,7 +273,8 @@ def create_app(settings=None):
 
     @app.get("/sessions/{sid}")
     def get_session(sid: str, request: Request):
-        s = owner_or_staff(sid, request)
+        owner_or_staff(sid, request)
+        s = harness.prepare_public_session(sid)
         h = db.one("SELECT id FROM handoffs WHERE session_id=? AND status IN ('pending','completing')", (sid,))
         return {
             "session_id": sid,
@@ -296,8 +297,9 @@ def create_app(settings=None):
 
     @app.post("/sessions/{sid}/new")
     def new_conversation(sid: str, request: Request):
-        # A session capability can create a sibling for the same identity only.
-        return harness.welcome(harness.new_conversation(owner(sid, request)))
+        # Ownership is checked before any legacy migration or sibling creation.
+        owner(sid, request)
+        return harness.welcome(harness.new_conversation(harness.prepare_public_session(sid)))
 
     @app.post("/auth/phone/start")
     def phone_start(body: PhoneLoginInput, request: Request, tasks: BackgroundTasks):
@@ -324,24 +326,16 @@ def create_app(settings=None):
 
     @app.get("/sessions/{sid}/tools")
     def tool_definitions(sid: str, request: Request):
-        session = owner(sid, request)
-        return {"tools": harness.engine.bank.definitions(session["customer_id"], sid)}
+        owner(sid, request)
+        session = harness.prepare_public_session(sid)
+        return {"tools": harness.engine.agent_definitions(session)}
 
     @app.post("/sessions/{sid}/verify")
     def verify(sid: str, body: VerifyInput, request: Request):
         return harness.verify(owner(sid, request), body.phone, request.client.host if request.client else "unknown")
 
     def message_result(sid, body, source):
-        response = harness.message(
-            sid, body.text, body.client_message_id, source
-        )
-        if (not input_blocked(response) and conversation_intent(body.text) != "profile_name"
-                and harness.identity_status(harness.session(sid)) == "identified"):
-            try:
-                response = {**response, "brief": harness.engine.memory.brief(harness.session(sid)["customer_id"])}
-            except LLMUnavailable:
-                response = {**response, "brief": {"redacted": True}}
-        return response
+        return harness.message(sid, body.text, body.client_message_id, source)
 
     def input_blocked(response):
         return any(e.get("stage") == "input" and e["action"] == "block" for e in response["guard_events"])
@@ -380,6 +374,9 @@ def create_app(settings=None):
                 with stream_to(send):
                     response = message_result(sid, body, source)
                 # message_result persists the idempotent receipt before this event.
+                # Function-calling drafts remain private until the complete
+                # response has passed guards and its receipt is durable.
+                send("text", {"text": response["reply"]})
                 send("result", response)
                 if not input_blocked(response) and conversation_intent(body.text) != "profile_name":
                     flush_memory(harness.session(sid)["customer_id"])
@@ -435,25 +432,28 @@ def create_app(settings=None):
     @app.post("/sessions/{sid}/specialist/start")
     def specialist_start(sid: str, body: SpecialistStartInput, request: Request):
         owner(sid, request)
-        return harness.specialist.start(sid, body.reason, body.idempotency_key)
+        with harness.engine.lock("session:" + sid), completion_budget(settings.agent_turn_budget_seconds):
+            return harness.specialist.start(sid, body.reason, body.idempotency_key)
 
     @app.post("/sessions/{sid}/specialist/complete")
     def specialist_complete(sid: str, body: SpecialistCompleteInput, request: Request):
         owner(sid, request)
-        return harness.specialist.complete(sid, body.handoff_id)
+        with harness.engine.lock("session:" + sid):
+            return harness.specialist.complete(sid, body.handoff_id)
 
     @app.post("/sessions/{sid}/end")
     def end(sid: str, request: Request):
-        s = owner(sid, request)
-        with harness.engine.lock(s["customer_id"]):
+        owner(sid, request)
+        with harness.engine.lock("session:" + sid):
             s = harness.session(sid)
-            harness.engine.memory.flush(s["customer_id"])
-            if s["status"] == "waiting_human":
-                raise HTTPException(409, "Complete handoff before ending session")
-            current = harness.specialist.current(sid)
-            if current:
-                harness.specialist.complete(sid, current["handoff_id"])
-            db.execute("UPDATE sessions SET status='ended' WHERE id=?", (sid,))
+            with harness.engine.lock(s["customer_id"]):
+                harness.engine.memory.flush(s["customer_id"])
+                if s["status"] == "waiting_human":
+                    raise HTTPException(409, "Complete handoff before ending session")
+                current = harness.specialist.current(sid)
+                if current:
+                    harness.specialist.complete(sid, current["handoff_id"])
+                db.execute("UPDATE sessions SET status='ended' WHERE id=?", (sid,))
         return {"session_id": sid, "status": "ended"}
 
     @app.post("/staff/login")
@@ -685,6 +685,14 @@ def create_app(settings=None):
                 "playbook": db.setting("playbook"),
                 "input_guard_version": VERSION,
                 "input_guard_semantic": settings.llm_backend == "openai",
+                "identity_history_enabled": settings.identity_history_enabled,
+                "agent_mode": "function_calling_v1" if settings.llm_backend == "openai" else "rules",
+                "backup_model": settings.openai_backup_model if settings.llm_backend == "openai" else None,
+                "agent_limits": {
+                    "max_rounds": settings.agent_max_rounds,
+                    "max_tool_calls": settings.agent_max_tool_calls,
+                    "turn_budget_seconds": settings.agent_turn_budget_seconds,
+                },
             },
             "faults": db.all("SELECT * FROM faults"),
             "memory_jobs": db.all("SELECT turn_id,status,error FROM memory_jobs WHERE status!='processed'"),

@@ -1,4 +1,4 @@
-import { expect, test, type Route } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 async function fulfillApi(
   route: Route,
@@ -18,16 +18,6 @@ async function fulfillApi(
   return route.fulfill(options);
 }
 
-const demoProfiles = Array.from({ length: 10 }, (_, index) => {
-  const phone = `09000000${String(index + 1).padStart(2, "0")}`;
-  return {
-    id: phone,
-    phone,
-    name: index === 0 ? "Nguyễn Thị Hoa" : `Khách hàng demo ${index + 1}`,
-    runtime_profile: index === 0 ? "hoa" : index === 1 ? "minh" : null,
-  };
-});
-
 test("chat shows partial text while the streamed reply is still in progress", async ({
   page,
 }) => {
@@ -37,7 +27,9 @@ test("chat shows partial text while the streamed reply is still in progress", as
       JSON.stringify({
         session_id: "stream-session",
         session_token: "stream-capability",
-        identity_status: "identified",
+        identity_status: "unverified",
+        user_id: null,
+        status: "active",
       }),
     );
     const original = window.fetch.bind(window);
@@ -75,9 +67,7 @@ test("chat shows partial text while the streamed reply is still in progress", as
   });
   await page.route("**/api/**", (route) =>
     route.fulfill({
-      json: route.request().url().includes("/demo/profiles")
-        ? { profiles: demoProfiles }
-        : { items: [] },
+      json: { items: [] },
     }),
   );
   await page.goto("/chat#conversation");
@@ -94,223 +84,140 @@ test("chat shows partial text while the streamed reply is still in progress", as
   await expect(
     page.getByText("Đoạn đầu đã kiểm tra. Đoạn tiếp theo.", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("log").getByText("Tư vấn giúp tôi", { exact: true })).toHaveCount(
-    1,
-  );
+  await expect(
+    page.getByRole("log").getByText("Tư vấn giúp tôi", { exact: true }),
+  ).toHaveCount(1);
   await expect(composer).toBeEnabled();
 });
 
-test("phone-only demo login restores Telegram context without an OTP", async ({
-  page,
-}, testInfo) => {
+async function mockAgentChat(page: Page, failFirstMessage = false) {
+  const state = {
+    starts: 0,
+    claimed: null as string | null,
+    messageIds: [] as string[],
+    turns: [] as { id: string; text: string; reply: string }[],
+  };
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api", "");
     const body = route.request().postDataJSON();
-    if (path === "/demo/profiles")
-      return fulfillApi(route, { json: { profiles: demoProfiles } });
-    if (path === "/auth/phone/login") {
-      expect(body.phone).toBe("0901234567");
-      return fulfillApi(route, {
-        json: {
-          session_id: "phone-session",
-          session_token: "phone-capability",
-          identity_status: "identified",
-          brief: {
-            customer_id: "customer-test",
-            name: "Khách từ Telegram",
-            phone: "+84901234567",
-            needs: [
-              {
-                id: "income",
-                key: "income",
-                value: "40000000",
-                unit: "đồng",
-                source_type: "customer",
-                channel: "telegram",
-              },
-            ],
-          },
-        },
-      });
-    }
-    if (path.endsWith("/turns"))
-      return fulfillApi(route, { json: { items: [] } });
-    if (path.endsWith("/messages") || path.endsWith("/messages/stream")) {
-      expect(route.request().headers().authorization).toBe(
-        "Bearer phone-capability",
-      );
-      return fulfillApi(route, {
-        json: {
-          session_id: "phone-session",
-          reply:
-            "Dựa trên nhu cầu đã trao đổi qua Telegram, hạn mức thẻ tham khảo đến 100 triệu đồng.",
-          used_fact_ids: [],
-          guard_events: [],
-        },
-      });
-    }
-    return fulfillApi(route, { status: 404, json: { detail: "Not found" } });
-  });
-  await page.goto("/chat");
-  await page
-    .getByRole("button", { name: "Tiếp tục bằng số điện thoại" })
-    .click();
-  await page.getByLabel("Số điện thoại", { exact: true }).fill("0901234567");
-  const composer = page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" });
-  await expect(composer).toBeDisabled();
-  await page.getByRole("button", { name: "Bắt đầu trò chuyện" }).click();
-  await expect(page.getByLabel("Mã xác nhận", { exact: true })).toHaveCount(0);
-  await expect(composer).toBeEnabled();
-  await expect(page.locator("#dob")).toHaveCount(0);
-  await page.getByRole("button", { name: "Hiện thông tin hỗ trợ" }).click();
-  await page
-    .getByText("Thông tin đã ghi nhớ giữa các kênh", { exact: true })
-    .click();
-  await expect(page.locator(".phone-context")).toContainText("40.000.000");
-  await composer.fill("Tiếp tục tư vấn thẻ tín dụng");
-  await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
-  await expect(page.getByRole("log")).toContainText("100 triệu đồng");
-  await page.screenshot({
-    path: testInfo.outputPath("phone-context-desktop.png"),
-    fullPage: true,
-  });
-});
-
-test("phone onboarding fits a narrow screen", async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 375, height: 812 });
-  await page.route("**/api/**", (route) =>
-    fulfillApi(route, { json: { profiles: [] } }),
-  );
-  await page.goto("/chat");
-  await page
-    .getByRole("button", { name: "Tiếp tục bằng số điện thoại" })
-    .click();
-  await expect(page.getByLabel("Số điện thoại", { exact: true })).toBeVisible();
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth),
-  ).toBeLessThanOrEqual(375);
-  await page.screenshot({
-    path: testInfo.outputPath("phone-login-mobile.png"),
-    fullPage: true,
-  });
-});
-
-test("demo phone in chat verifies the session; public questions and retry work", async ({
-  page,
-}, testInfo) => {
-  let verified = false;
-  let publicQuestions = 0;
-  const messageIds: string[] = [];
-  await page.route("**/api/**", async (route) => {
-    const path = new URL(route.request().url()).pathname.replace("/api", "");
-    const body = route.request().postDataJSON();
-    if (path === "/demo/profiles")
-      return fulfillApi(route, { json: { profiles: demoProfiles } });
     if (path === "/sessions") {
-      expect(body.demo_profile).toBe("0900000001");
+      expect(body).toEqual({ mode: "harness" });
+      state.starts += 1;
       return fulfillApi(route, {
         json: {
-          session_id: "test-session",
-          session_token: "test-capability",
-          user_id: "0900000001",
+          session_id: "anonymous-session",
+          session_token: "anonymous-capability",
+          user_id: null,
           identity_status: "unverified",
           brief: { redacted: true },
         },
       });
     }
     if (path.endsWith("/turns"))
-      return fulfillApi(route, { json: { items: [] } });
-    if (path.endsWith("/messages") || path.endsWith("/messages/stream")) {
+      return fulfillApi(route, { json: { items: state.turns } });
+    if (path.endsWith("/messages/stream")) {
       expect(route.request().headers().authorization).toBe(
-        "Bearer test-capability",
+        "Bearer anonymous-capability",
       );
-      if (body.text === "Tôi muốn tìm hiểu vay mua nhà.") {
-        expect(verified).toBe(false);
-        publicQuestions += 1;
-        return fulfillApi(route, {
-          json: {
-            session_id: "test-session",
-            identity_status: "unverified",
-            user_id: "0900000001",
-            reply:
-              "Tôi có thể giải thích thông tin vay mua nhà công khai trước xác minh.",
-            used_fact_ids: [],
-            guard_events: [],
-          },
-        });
-      }
-      if (body.text === "0900000001") {
-        verified = true;
-        return fulfillApi(route, {
-          json: {
-            session_id: "test-session",
-            identity_status: "verified",
-            user_id: "0900000001",
-            brief: { customer_id: "hoa", name: "Nguyễn Thị Hoa", needs: [] },
-            reply: "Đã xác minh hồ sơ demo cho phiên này.",
-            used_fact_ids: [],
-            guard_events: [],
-          },
-        });
-      }
-      expect(verified).toBe(true);
-      messageIds.push(body.client_message_id);
-      if (messageIds.length === 1)
+      state.messageIds.push(body.client_message_id);
+      if (failFirstMessage && state.messageIds.length === 1)
         return fulfillApi(route, {
           status: 503,
           json: { detail: "Dịch vụ tạm thời chưa sẵn sàng." },
         });
+      let reply =
+        "Tôi có thể giải thích thông tin vay mua nhà công khai trước xác minh.";
+      if (body.text === "0900000002") {
+        state.claimed = "0900000002";
+        reply =
+          "Đã xác minh hồ sơ Trần Minh An từ kết quả verify_identity cho phiên này.";
+      } else if (body.text === "0999999999") {
+        reply =
+          "Chưa tìm thấy hồ sơ phù hợp với số điện thoại này. Bạn vẫn có thể hỏi thông tin công khai.";
+      }
+      state.turns.push({ id: body.client_message_id, text: body.text, reply });
       return fulfillApi(route, {
         json: {
-          session_id: "test-session",
-          identity_status: "verified",
-          user_id: "0900000001",
-          reply: "Mình đã ghi nhận nhu cầu vay mua nhà của bạn.",
+          session_id: "anonymous-session",
+          user_id: state.claimed,
+          identity_status: state.claimed ? "verified" : "unverified",
+          brief: state.claimed
+            ? { customer_id: "minh", name: "Trần Minh An", needs: [] }
+            : { redacted: true },
+          reply,
           used_fact_ids: [],
           guard_events: [],
         },
       });
     }
-    return fulfillApi(route, { status: 404, json: { detail: "Not found" } });
+    return fulfillApi(route, {
+      status: 404,
+      json: { detail: "Unexpected request" },
+    });
   });
+  return state;
+}
+
+test("the first chat message opens an anonymous session and uses the phone-2 verification result", async ({
+  page,
+}, testInfo) => {
+  const state = await mockAgentChat(page);
   await page.goto("/chat");
   const composer = page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" });
-  await expect(composer).toBeDisabled();
-  await expect(page.locator("#demo-profile option")).toHaveCount(10);
-  await page.getByRole("button", { name: /Vay mua nhà/ }).click();
-  await expect(
-    page.getByRole("button", { name: /Vay mua nhà/ }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await expect(composer).toHaveValue("Tôi muốn tìm hiểu vay mua nhà.");
-  await page.getByRole("button", { name: "Bắt đầu", exact: true }).click();
-  await expect(
-    page.getByText("Tiếp nối hồ sơ và đặt lịch", { exact: true }),
-  ).toBeVisible();
   await expect(composer).toBeEnabled();
-  await expect(page.locator('input[type="date"], #dob')).toHaveCount(0);
-  await expect(page.getByText(/Ngày sinh/i)).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Gặp chuyên viên", exact: true }),
-  ).toBeDisabled();
-  await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
-  await expect(page.getByRole("log")).toContainText("công khai trước xác minh");
-  expect(publicQuestions).toBe(1);
+    page.locator(
+      'select, input[type="date"], #dob, .identity-help, .support-session, .phone-context',
+    ),
+  ).toHaveCount(0);
   await expect(
-    page.getByText("Tiếp nối hồ sơ và đặt lịch", { exact: true }),
-  ).toBeVisible();
-  await page.getByText("Tiếp nối hồ sơ và đặt lịch", { exact: true }).click();
-  await expect(
-    page.getByText("Số điện thoại demo đã chọn: 0900000001", { exact: true }),
-  ).toBeVisible();
-  await composer.fill("0900000001");
-  await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
-  await expect(page.getByRole("log")).toContainText("Đã xác minh hồ sơ demo");
-  await expect(
-    page.getByText("Tiếp nối hồ sơ và đặt lịch", { exact: true }),
+    page.getByRole("button", { name: "Tiếp tục bằng số điện thoại" }),
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Gặp chuyên viên", exact: true }),
+  ).toBeDisabled();
+  expect(state.starts).toBe(0);
+  await composer.fill("0900000002");
+  await composer.evaluate((element) => {
+    const form = element.closest("form");
+    if (!form) throw new Error("Missing chat composer form");
+    form.requestSubmit();
+    form.requestSubmit();
+  });
+  await expect(page).toHaveURL(/#conversation$/);
+  await expect(page.getByRole("log")).toContainText("Trần Minh An");
+  await expect(page.getByRole("log")).not.toContainText("Nguyễn Thị Hoa");
+  expect(state.starts).toBe(1);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          JSON.parse(sessionStorage.getItem("bankwise-chat-session") ?? "null")
+            ?.user_id,
+      ),
+    )
+    .toBe("0900000002");
+  await expect(
+    page.getByRole("button", { name: "Gặp chuyên viên", exact: true }),
   ).toBeEnabled();
+  await page.screenshot({
+    path: testInfo.outputPath("chat-phone-2.png"),
+    fullPage: true,
+  });
+});
+
+test("an unknown phone keeps the anonymous session and public chat available", async ({
+  page,
+}) => {
+  const state = await mockAgentChat(page);
+  await page.goto("/chat");
+  const composer = page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" });
+  await composer.fill("0999999999");
+  await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
+  await expect(page.getByRole("log")).toContainText("Chưa tìm thấy hồ sơ");
+  await expect(
+    page.getByRole("button", { name: "Gặp chuyên viên", exact: true }),
+  ).toBeDisabled();
   await expect
     .poll(() =>
       page.evaluate(
@@ -319,16 +226,40 @@ test("demo phone in chat verifies the session; public questions and retry work",
             ?.identity_status,
       ),
     )
-    .toBe("verified");
-  await composer.fill("Tôi muốn vay mua nhà");
+    .toBe("unverified");
+  await composer.fill("Tôi muốn tìm hiểu vay mua nhà.");
   await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
+  await expect(page.getByRole("log")).toContainText("công khai trước xác minh");
+  expect(state.starts).toBe(1);
+  expect(state.claimed).toBeNull();
+});
+
+test("a suggestion sends directly; retry preserves the anonymous session and message id", async ({
+  page,
+}, testInfo) => {
+  const state = await mockAgentChat(page, true);
+  await page.goto("/chat");
+  await page.getByRole("button", { name: /Vay mua nhà/ }).click();
+  await expect(page).toHaveURL(/#conversation$/);
   await expect(page.getByRole("alert")).toContainText("Dịch vụ tạm thời");
+  expect(state.starts).toBe(1);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          JSON.parse(sessionStorage.getItem("bankwise-chat-session") ?? "null")
+            ?.session_id,
+      ),
+    )
+    .toBe("anonymous-session");
   await page.getByRole("button", { name: "Thử lại", exact: true }).click();
-  await expect(page.getByRole("log")).toContainText("Mình đã ghi nhận");
-  expect(messageIds[0]).toBe(messageIds[1]);
-  await page.evaluate(() => document.fonts.ready);
+  await expect(page.getByRole("log")).toContainText("công khai trước xác minh");
+  expect(state.messageIds).toHaveLength(2);
+  expect(state.messageIds[0]).toBe(state.messageIds[1]);
+  expect(state.starts).toBe(1);
+  expect(state.claimed).toBeNull();
   await page.screenshot({
-    path: testInfo.outputPath("chat-conversation.png"),
+    path: testInfo.outputPath("chat-anonymous-retry.png"),
     fullPage: true,
     animations: "disabled",
   });
@@ -395,13 +326,6 @@ for (const [width, height] of [
     page,
   }, testInfo) => {
     await page.setViewportSize({ width, height });
-    await page.route("**/api/demo/profiles", (route) =>
-      fulfillApi(route, {
-        json: {
-          profiles: demoProfiles,
-        },
-      }),
-    );
     await page.goto("/chat");
     await expect(
       page.getByRole("heading", {
@@ -525,9 +449,6 @@ test("staff login preview and reduced motion preference", async ({
     fullPage: true,
     animations: "disabled",
   });
-  await page.route("**/api/demo/profiles", (route) =>
-    fulfillApi(route, { json: { profiles: [] } }),
-  );
   await page.goto("/chat");
   await expect(page.locator(".illustrated-card")).toHaveCSS(
     "animation-name",
