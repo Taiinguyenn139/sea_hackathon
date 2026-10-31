@@ -141,7 +141,7 @@ for (const [width, height] of [
     await page.goto("/chat");
     await expect(
       page.getByRole("heading", {
-        name: "Mỗi kế hoạch lớn bắt đầu từ một cuộc trò chuyện.",
+        name: "Chúng tôi có thể hỗ trợ gì cho bạn?",
       }),
     ).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
