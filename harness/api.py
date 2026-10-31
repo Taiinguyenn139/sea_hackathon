@@ -19,6 +19,8 @@ from pydantic import Field
 from bank_tools.service import FIXTURES
 from harness.config import Settings
 from harness.db import Database
+from harness.llm import DEFAULT_REPLY, LLMUnavailable
+from harness.llm import logger as llm_logger
 from harness.schemas import (
     AdminSessionInput,
     CompleteInput,
@@ -129,6 +131,16 @@ def create_app(settings=None):
 
     app = FastAPI(title="Memory Harness", version="0.1.0", lifespan=lifespan)
     app.state.harness = harness
+
+    @app.exception_handler(LLMUnavailable)
+    async def llm_unavailable(request: Request, exc: LLMUnavailable):
+        return JSONResponse({"detail": DEFAULT_REPLY}, status_code=503)
+
+    def flush_memory(customer):
+        try:
+            harness.engine.memory.flush(customer)
+        except LLMUnavailable:
+            llm_logger.info('llm_memory {"status":"deferred"}')
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -247,8 +259,11 @@ def create_app(settings=None):
         owner(sid, request)
         response = harness.message(sid, body.text, body.client_message_id)
         if harness.identity_status(harness.session(sid)) == "identified":
-            response = {**response, "brief": harness.engine.memory.brief(harness.session(sid)["customer_id"])}
-        tasks.add_task(harness.engine.memory.flush, harness.session(sid)["customer_id"])
+            try:
+                response = {**response, "brief": harness.engine.memory.brief(harness.session(sid)["customer_id"])}
+            except LLMUnavailable:
+                response = {**response, "brief": {"redacted": True}}
+        tasks.add_task(flush_memory, harness.session(sid)["customer_id"])
         if hasattr(app.state, "dispatcher"):
             tasks.add_task(app.state.dispatcher.send_pending)
         return response
