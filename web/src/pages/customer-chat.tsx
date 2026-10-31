@@ -68,6 +68,7 @@ export function CustomerChat() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const historyDialog = useRef<HTMLDialogElement>(null);
   const historyTrigger = useRef<HTMLButtonElement>(null);
+  const focusConversation = useRef(false);
   const [storageError, setStorageError] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [historyRetry, setHistoryRetry] = useState(0);
@@ -105,7 +106,12 @@ export function CustomerChat() {
   useEffect(() => { setHistoryHost(document.getElementById("customer-history")); }, []);
   useEffect(() => {
     if (historyOpen) historyDialog.current?.showModal();
-    else if (historyDialog.current?.open) { historyDialog.current.close(); historyTrigger.current?.focus(); }
+    else if (historyDialog.current?.open) {
+      historyDialog.current.close();
+      if (focusConversation.current) input.current?.focus({ preventScroll: true });
+      else historyTrigger.current?.focus();
+      focusConversation.current = false;
+    }
   }, [historyOpen]);
   useEffect(() => {
     try {
@@ -131,7 +137,7 @@ export function CustomerChat() {
   useEffect(() => {
     if (isHome) document.getElementById("chat-home-title")?.focus({ preventScroll: true });
     else if (!pending && !loading && !waiting && !ended && !historyOpen && !historyError) input.current?.focus({ preventScroll: true });
-  }, [isHome, pending, loading, waiting, ended, historyOpen, historyError]);
+  }, [isHome, pending, loading, waiting, ended, historyError]);
   useEffect(() => {
     if (!input.current) return;
     input.current.style.height = "auto";
@@ -167,6 +173,7 @@ export function CustomerChat() {
       if (next.demo_profile) setProfile(next.demo_profile);
       save(next);
     }
+    focusConversation.current = true;
     setHistoryOpen(false);
     navigate("conversation");
   }
