@@ -2,23 +2,37 @@
 
 ## Chat web chính và các tích hợp nhận diện riêng
 
-Chat web chính cho nhập tin nhắn ngay. Lần gửi đầu gọi `POST /sessions` với
-`{mode: "harness"}` để tạo phiên ẩn danh. Khách gửi số của mình trong chat; AI
-quyết định gọi `verify_identity` và dùng kết quả tool để kết nối hồ sơ, call brief
-và memory. Không có form số điện thoại, chọn hồ sơ hoặc OTP trên màn hình này,
-kể cả khi bật `DEMO_PHONE_IDENTITY=true`.
+Chat web chính có ô **Số điện thoại của bạn** và nút **Bắt đầu chat** ở đầu màn
+hình. Form gọi `POST /auth/phone/login`, tạo phiên đã kết nối và nhận lời mở đầu
+của bot; số nhập ở form không phải một tin nhắn khách. Dùng cùng số với Telegram
+để đọc nhu cầu đã ghi nhớ. Khi `DEMO_PHONE_IDENTITY=true`, khách cần nhập số trước
+khi chat; khi tắt, vẫn có thể chat ẩn danh và để AI gọi `verify_identity` từ tin
+nhắn. Không cần chọn hồ sơ, ngày sinh hoặc OTP.
 
-Mỗi phiên giữ transcript, bản nháp, checkpoint và handoff riêng. Phiên web demo
-mới bắt đầu ẩn danh để nhận diện người khác; lịch sử phiên cũ vẫn còn. Những
-phiên đã kết nối cùng hồ sơ đọc và đóng góp memory chung theo quyền backend.
-Nhận diện demo không thay thế đăng nhập khách hàng để dùng CRM.
+Mỗi phiên giữ transcript, bản nháp, checkpoint và handoff riêng. Với phiên mở
+bằng số hoặc chế độ demo, **Cuộc trò chuyện mới** quay về form trống để nhập lại
+số, giữ lịch sử cũ. Các phiên cùng hồ sơ đọc và đóng góp memory chung theo quyền
+backend. Nhận diện demo không thay thế đăng nhập khách hàng để dùng CRM.
+
+Bot chủ động hỏi nhu cầu ngay sau **Start** hoặc khi kết nối số điện thoại.
+Khách đã nhận diện quay lại được nhắc nhu cầu còn hiệu lực và hỏi muốn tiếp tục
+hay cập nhật. Không dùng giá cũ làm báo giá hiện tại; thông tin mâu thuẫn cần xác
+nhận. Khách Telegram đã kết nối không cần chia sẻ lại số khi `/start`.
+Web có lời chào chung trước khi nhận diện; sau khi nhập số vào form, phiên mới
+có lời mở đầu kèm nhu cầu cũ. Luồng chat ẩn danh vẫn dùng tool nhận diện và brief
+để tiếp nối nhu cầu. Lời mở đầu được lưu như tin của trợ lý, không tạo
+memory của khách; tải lại web hoặc gửi lại cùng update không nhân đôi lời chào.
+
+Theo [giới hạn Telegram](https://core.telegram.org/bots), bot không thể nhắn riêng
+cho người chưa từng bấm Start/gửi tin. Hiện không gửi nhắc theo lịch hoặc khi
+khách chỉ mở lại cửa sổ Telegram.
 
 Các đường tích hợp backend vẫn được giữ:
 
 - `POST /auth/phone/login` nhận `{phone}`, trả session/brief ngay, không OTP.
-  `PhoneLogin` là component riêng cho hợp đồng này; chat chính không sử dụng.
+  Form số điện thoại trên chat chính dùng hợp đồng này.
 - Khi `DEMO_PHONE_IDENTITY=true`, `/auth/phone/login` và API legacy
-  `POST /demo/phone/session` mở hồ sơ demo theo số, transcript trống. Số nhập qua
+  `POST /demo/phone/session` mở hồ sơ demo theo số, transcript có lời mở đầu của bot. Số nhập qua
   API không tạo một tin nhắn; số trong bộ mẫu dùng hồ sơ có sẵn, số mới có hồ sơ
   demo riêng. Telegram demo nhận contact hoặc số bằng văn bản theo cùng liên kết.
 - Khi tắt flag, `/auth/phone/login` mở hồ sơ hội thoại cá nhân. Telegram yêu cầu
@@ -108,8 +122,8 @@ python3 scripts/setup_telegram.py \
 ## Luồng khi `DEMO_PHONE_IDENTITY=false`
 
 - Telegram: mở bot, bấm Start → bấm **Chia sẻ số điện thoại** → chat ngay.
-- Client tích hợp riêng: gọi `POST /auth/phone/login` với số để lấy phiên.
-  Chat web chính vẫn tạo phiên ẩn danh và nhận số trong tin nhắn qua AI/tool.
+- Web: nhập số ở form đầu màn hình để gọi `POST /auth/phone/login` và mở phiên.
+  Cũng có thể chat ẩn danh rồi nhận diện bằng số trong tin nhắn qua AI/tool.
 - Dùng cùng số điện thoại ở hai kênh để tiếp tục cùng memory. Khách có thể bắt
   đầu từ API web riêng hoặc Telegram; backend tạo hồ sơ nếu chưa có, không cần
   OTP, chọn Hoa/Minh hay quản trị viên tạo identity link.

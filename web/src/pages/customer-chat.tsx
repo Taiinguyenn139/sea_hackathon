@@ -35,6 +35,7 @@ import {
 } from "../api";
 import { BrandMark, ErrorBanner, Spinner } from "../ui";
 import { BankingScene, ServiceArt } from "../banking-art";
+import "../styles/phone-login.css";
 import {
   ChatHistory,
   CHAT_HISTORY,
@@ -90,7 +91,13 @@ export function CustomerChat() {
     window.location.hash === "#conversation" ? "conversation" : "home",
   );
   const [session, setSession] = useState<ChatSession | null>(initial.current);
-  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [entryPhone, setEntryPhone] = useState("");
+  const [demoPhoneIdentity, setDemoPhoneIdentity] = useState(false);
+  const [turns, setTurns] = useState<ChatTurn[]>(() => initial.current ? [] : [{
+    id: "anonymous-opening", role: "assistant", responder: "assistant",
+    text: "Chào anh/chị! Em là trợ lý Bankwise. Em có thể hỗ trợ về vay mua nhà, vay tiêu dùng và thẻ tín dụng. "
+      + "Hôm nay anh/chị muốn tìm hiểu sản phẩm nào, hay đang có nhu cầu khác cần em hỗ trợ?",
+  }]);
   const [draft, setDraft] = useState(() => {
     const saved = readDraft(initial.current?.session_id);
     try {
@@ -141,6 +148,14 @@ export function CustomerChat() {
     (entry) => entry.session.session_id === session?.session_id,
   );
   const isHome = view === "home";
+  const needsPhone = demoPhoneIdentity && !verified;
+  useEffect(() => {
+    let live = true;
+    request<{ demo_phone_identity?: boolean }>("/demo/profiles")
+      .then((data) => { if (live) setDemoPhoneIdentity(data.demo_phone_identity === true); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
   useEffect(() => {
     setHistoryHost(document.getElementById("customer-history"));
   }, []);
@@ -190,7 +205,7 @@ export function CustomerChat() {
   useEffect(() => {
     if (isHome)
       document
-        .getElementById("chat-home-title")
+        .getElementById(!session || needsPhone ? "entry-phone" : "chat-home-title")
         ?.focus({ preventScroll: true });
     else if (
       !pending &&
@@ -201,7 +216,7 @@ export function CustomerChat() {
       !historyError
     )
       input.current?.focus({ preventScroll: true });
-  }, [isHome, pending, loading, waiting, ended, historyError]);
+  }, [isHome, pending, loading, waiting, ended, historyError, session?.session_id, needsPhone]);
   useEffect(() => {
     if (!input.current) return;
     input.current.style.height = "auto";
@@ -367,7 +382,39 @@ export function CustomerChat() {
       clearInterval(timer);
     };
   }, [session?.session_id, session?.handoff_id, session?.specialist_id, ended]);
+  async function startWithPhone() {
+    if (pending || activeStream.current || !entryPhone.trim()) return;
+    setPending(true);
+    setError("");
+    try {
+      const next = await request<ChatSession>("/auth/phone/login", {
+        method: "POST", body: { phone: entryPhone.trim() },
+      });
+      rememberView();
+      // Older servers can omit opening; in that case fetch the persisted turns.
+      freshSession.current = next.opening ? next.session_id : null;
+      save(next);
+      setTurns(next.opening ? [next.opening] : []);
+      setLoading(!next.opening);
+      if (session) setDraft("");
+      setEntryPhone("");
+      setLastFailed(null);
+      setHistoryError("");
+      setHint("");
+      setHistoryOpen(false);
+      navigate("conversation");
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setPending(false);
+    }
+  }
   async function send(text = draft, id: string = crypto.randomUUID()) {
+    if (needsPhone) {
+      setDraft(text);
+      document.getElementById("entry-phone")?.focus();
+      return;
+    }
     if (
       !text.trim() ||
       pending ||
@@ -420,6 +467,10 @@ export function CustomerChat() {
         activeSession = await createChatSession();
         freshSession.current = activeSession.session_id;
         save(activeSession);
+        if (activeSession.opening) {
+          const opening = activeSession.opening;
+          setTurns((prev) => [opening, ...prev.filter((turn) => turn.id !== "anonymous-opening")]);
+        }
       }
       const data = await streamReply(
         activeSession,
@@ -616,6 +667,22 @@ export function CustomerChat() {
   }
   async function newChat() {
     if (pending || activeStream.current) return;
+    if (demoPhoneIdentity || session?.telegram_url) {
+      rememberView();
+      save(null);
+      freshSession.current = null;
+      setEntryPhone("");
+      setTurns([]);
+      setDraft("");
+      setLastFailed(null);
+      setHint("");
+      setLoading(false);
+      setError("");
+      setHistoryError("");
+      setHistoryOpen(false);
+      navigate("home");
+      return;
+    }
     setPending(true);
     setError("");
     try {
@@ -635,7 +702,7 @@ export function CustomerChat() {
       } else next = await createChatSession();
       freshSession.current = next.session_id;
       save(next);
-      setTurns([]);
+      setTurns(next.opening ? [next.opening] : []);
       setDraft("");
       setLastFailed(null);
       setHint("");
@@ -790,6 +857,23 @@ export function CustomerChat() {
           </div>
         )}
         <div className="conversation-scroll">
+          {(!session || !verified) && (
+            <form className="demo-phone-entry" onSubmit={(e) => { e.preventDefault(); void startWithPhone(); }}>
+              <span className="mini-label">BẮT ĐẦU HỘI THOẠI</span>
+              <label htmlFor="entry-phone">Số điện thoại của bạn</label>
+              <p>Dùng cùng số với Telegram để kết nối hồ sơ và thông tin đã ghi nhớ.</p>
+              <div className="demo-phone-entry-row">
+                <input id="entry-phone" type="tel" inputMode="tel" autoComplete="tel"
+                  placeholder="Ví dụ: 0901234567" value={entryPhone}
+                  onChange={(e) => setEntryPhone(e.target.value)} disabled={pending} required maxLength={32}
+                  aria-describedby="entry-phone-note" />
+                <button className="button primary" type="submit" disabled={pending || !entryPhone.trim()}>
+                  {pending ? <Spinner label="Đang kết nối…" /> : <>Bắt đầu chat <ArrowRight size={16} /></>}
+                </button>
+              </div>
+              <small id="entry-phone-note">Bản demo không yêu cầu mã xác nhận. Mỗi phiên có hội thoại riêng, cùng đóng góp vào bộ nhớ hồ sơ.</small>
+            </form>
+          )}
           {isHome && (
             <section className="welcome">
               <div className="welcome-hero">
@@ -886,12 +970,12 @@ export function CustomerChat() {
               <span className="resume-icon">
                 <MessageCircle size={26} />
               </span>
-              <h2>Bạn muốn trao đổi điều gì?</h2>
-              <p>Gửi câu hỏi để bắt đầu. Trợ lý đã sẵn sàng hỗ trợ bạn.</p>
+              <h2>Trợ lý Bankwise sẵn sàng hỗ trợ</h2>
+              <p>Anh/chị muốn tìm hiểu vay mua nhà, vay tiêu dùng hay thẻ tín dụng?</p>
             </div>
           )}
           {!isHome && loading && <Spinner label="Đang khôi phục hội thoại…" />}
-          {!isHome && !!turns.length && (
+          {(!isHome || !session) && !!turns.length && (
             <div className="messages" role="log" aria-label="Lịch sử hội thoại">
               {turns
                 .filter((turn) => turn.text)
@@ -1034,7 +1118,7 @@ export function CustomerChat() {
           )}
           <div ref={end} />
         </div>
-        {(!isHome || !session) && (
+        {(!isHome || !session) && !needsPhone && (
           <div className="composer-area">
             {isHome && (
               <div className="conversation-intro">
@@ -1045,7 +1129,7 @@ export function CustomerChat() {
                 </span>
               </div>
             )}
-            {verified && !waiting && !pending && turns.length > 0 && (
+            {verified && !waiting && !pending && turns.some((turn) => turn.role === "user") && (
               <div
                 className="quick-prompts"
                 aria-label="Gợi ý tiếp tục hội thoại"

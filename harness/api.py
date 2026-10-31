@@ -265,11 +265,11 @@ def create_app(settings=None):
 
     @app.post("/sessions")
     def create(body: SessionInput):
-        return harness.new_session(mode=body.mode)
+        return harness.welcome(harness.new_session(mode=body.mode))
 
     @app.post("/demo/phone/session")
     def demo_phone_session(body: PhoneLoginInput):
-        return harness.demo_phone_session(body.phone)
+        return harness.welcome(harness.demo_phone_session(body.phone))
 
     @app.get("/sessions/{sid}")
     def get_session(sid: str, request: Request):
@@ -289,17 +289,17 @@ def create_app(settings=None):
     @app.post("/auth/phone/login")
     def phone_demo_login(body: PhoneLoginInput):
         if settings.demo_phone_identity:
-            return harness.demo_phone_session(body.phone)
+            return harness.welcome(harness.demo_phone_session(body.phone))
         customer = harness.phone_identity.demo_customer(body.phone)
         result = harness._create_session(customer, phone_authenticated=True)
         result["telegram_url"] = "https://t.me/" + settings.telegram_bot_username
-        return result
+        return harness.welcome(result)
 
     @app.post("/sessions/{sid}/new")
     def new_conversation(sid: str, request: Request):
         # Ownership is checked before any legacy migration or sibling creation.
         owner(sid, request)
-        return harness.new_conversation(harness.prepare_public_session(sid))
+        return harness.welcome(harness.new_conversation(harness.prepare_public_session(sid)))
 
     @app.post("/auth/phone/start")
     def phone_start(body: PhoneLoginInput, request: Request, tasks: BackgroundTasks):
@@ -310,7 +310,7 @@ def create_app(settings=None):
 
     @app.post("/auth/phone/confirm")
     def phone_confirm(body: PhoneConfirmInput):
-        return harness.phone_session(body.challenge_id, body.code)
+        return harness.welcome(harness.phone_session(body.challenge_id, body.code))
 
     @app.get("/sessions/{sid}/turns")
     def turns(sid: str, request: Request, offset: int = 0, limit: int = 100):

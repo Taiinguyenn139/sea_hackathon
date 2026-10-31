@@ -9,7 +9,7 @@ import time
 from fastapi import HTTPException
 
 from bank_tools.service import canonical, ident, now
-from harness.agent.engine import Engine, conversation_intent, event
+from harness.agent.engine import Engine, conversation_intent, event, format_fact
 from harness.agent.specialist import PROMPT_VERSION
 from harness.customer_profile import can_access_memory
 from harness.identity import extract_phone_claims, get_profile, normalize_phone, validate_own_phone_claim
@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     logger.addHandler(logging.StreamHandler())
+
+CONVERSATION_OPENING = (
+    "Chào anh/chị! Em là trợ lý Bankwise. Em có thể hỗ trợ về vay mua nhà, vay tiêu dùng và thẻ tín dụng. "
+    "Hôm nay anh/chị muốn tìm hiểu sản phẩm nào, hay đang có nhu cầu khác cần em hỗ trợ?"
+)
 
 
 def token_hash(value):
@@ -196,6 +201,58 @@ class Harness:
         if not session:
             raise HTTPException(404, "Session not found")
         return session
+
+    def record_assistant_message(self, sid, key, reply, fact_ids=()):
+        """Persist a bot-initiated turn without inventing customer text or memory."""
+        session = self.session(sid)
+        with self.engine.lock(session["customer_id"]):
+            self.db.execute(
+                "INSERT OR IGNORE INTO turns VALUES(?,?,?,?,?,?,?)",
+                (ident("opening_", [sid, key]), sid, key, "", reply,
+                 canonical({"session_id": sid, "reply": reply, "responder": "assistant",
+                            "used_fact_ids": list(fact_ids)}), now()),
+            )
+
+    def welcome(self, created):
+        """Public web entry points greet once; evaluation sessions keep their scripted input."""
+        sid = created["session_id"]
+        if not self.db.one("SELECT id FROM turns WHERE session_id=?", (sid,)):
+            reply, fact_ids = self.opening(sid)
+            self.record_assistant_message(sid, "conversation-opening", reply, fact_ids)
+        saved = self.db.one(
+            "SELECT id,reply FROM turns WHERE session_id=? AND client_id='conversation-opening'", (sid,),
+        )
+        if saved:
+            created = {**created, "opening": {"id": saved["id"] + "-assistant", "role": "assistant",
+                                              "responder": "assistant", "text": saved["reply"]}}
+        return created
+
+    def opening(self, sid):
+        """Recall customer needs, never old bank quotes, after checking session access."""
+        session = self.session(sid)
+        if not self.can_chat(session) or session["mode"] == "no_memory":
+            return CONVERSATION_OPENING, []
+        self.engine.memory.flush(session["customer_id"])
+        facts = self.engine.memory.facts(session["customer_id"])
+        labels = {"product": "sản phẩm", "amount": "số tiền vay", "term": "kỳ hạn",
+                  "income": "thu nhập mỗi tháng", "debt": "trả nợ mỗi tháng", "loan_status": "trạng thái"}
+        conflicts = {f["key"] for f in facts if f["status"] == "conflicted" and f["key"] in labels
+                     and f["source_type"] in ("customer", "demo_history")}
+        needs = {f["key"]: f for f in facts if f["key"] in labels and f["key"] not in conflicts
+                 and f["status"] == "active" and f["source_type"] in ("customer", "demo_history")}
+        if not needs and not conflicts:
+            return CONVERSATION_OPENING, []
+        source = " (có dữ liệu lịch sử demo)" if any(
+            f["source_type"] == "demo_history" or f.get("source_origin") == "dataset_history" for f in needs.values()
+        ) else ""
+        details = "; ".join(label + ": " + format_fact(needs[key]) for key, label in labels.items() if key in needs)
+        recall = "Em đã ghi nhận" + source + " " + details + ". " if details else ""
+        clarification = "Một số thông tin trước đó chưa thống nhất, em cần anh/chị xác nhận lại. " if conflicts else ""
+        reply = (
+            "Chào mừng anh/chị quay lại Bankwise! " + recall + clarification
+            + "Anh/chị muốn tiếp tục nội dung này hay có thông tin hoặc nhu cầu mới cần cập nhật?"
+        )
+        return reply, [f["id"] for f in needs.values()]
 
     def new_conversation(self, previous):
         """Create a sibling transcript without ending the previous conversation.
@@ -395,9 +452,18 @@ class Harness:
                 "SELECT id FROM customer_profiles WHERE id=?", (old_customer, old_customer),
             ).fetchone()
             if customer != old_customer and already_linked and c.execute(
-                "SELECT 1 FROM turns WHERE session_id=? LIMIT 1", (session["id"],)
+                "SELECT 1 FROM turns WHERE session_id=? AND NOT (text='' AND "
+                "(client_id='conversation-opening' OR client_id LIKE 'telegram-opening:%')) LIMIT 1",
+                (session["id"],),
             ).fetchone():
                 raise HTTPException(409, "Vui lòng mở phiên chat mới rồi nhập số điện thoại khác.")
+            if customer != old_customer:
+                # An opening alone must not lock an otherwise unused session to
+                # a number; remove its old identity context before switching.
+                c.execute(
+                    "DELETE FROM turns WHERE session_id=? AND text='' AND "
+                    "(client_id='conversation-opening' OR client_id LIKE 'telegram-opening:%')", (session["id"],),
+                )
             c.execute("INSERT OR IGNORE INTO demo_phone_links VALUES(?,?)", (phone, customer))
             c.execute(
                 "UPDATE sessions SET customer_id=?,verified=? WHERE id=?",
@@ -416,12 +482,14 @@ class Harness:
     def _phone_message(self, session, text, client_id, existing, phones, source):
         """Handle screened fixture claims before financial extraction or the agent."""
         tool_calls = []
+        opening_fact_ids = []
         if self.settings.demo_phone_identity and len(phones) == 1:
             session = self._demo_phone_customer(session, phones[0])
             state = self.identity_status(session)
+            opening, opening_fact_ids = self.opening(session["id"])
             reply = (
                 "Đã kết nối hồ sơ demo theo số điện thoại. Nhập cùng số này trong chat web hoặc Telegram "
-                "để dùng chung thông tin đã ghi nhớ. Anh/chị muốn tiếp tục nhu cầu nào?"
+                "để dùng chung thông tin đã ghi nhớ.\n\n" + opening
             )
         elif session["verified"]:
             reply = "Phiên này đã nhận diện hồ sơ demo. Số điện thoại trong tin nhắn không thay đổi hồ sơ đang gắn."
@@ -460,7 +528,7 @@ class Harness:
             "reply": reply,
             "identity_status": state,
             "user_id": self.user_id(session["customer_id"]) if state in ("verified", "identified") else None,
-            "used_fact_ids": [],
+            "used_fact_ids": opening_fact_ids,
             "guard_events": [event(
                 "G7", "demo_phone_identified" if state in ("verified", "identified") else "identity_unverified", "identify"
             )],

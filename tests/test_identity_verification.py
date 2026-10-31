@@ -99,7 +99,8 @@ def test_dataset_session_flags_and_dialogue_do_not_seed_live_state(client):
     assert row["verified"] == 0
     assert tools(client, session, auth) == PUBLIC_TOOLS
     for table in ("turns", "facts", "tool_calls", "memory_jobs", "journey_events"):
-        assert db.one(f"SELECT count(*) AS n FROM {table}")["n"] == 0
+        where = " WHERE client_id!='conversation-opening'" if table == "turns" else ""
+        assert db.one(f"SELECT count(*) AS n FROM {table}" + where)["n"] == 0
 
 
 def test_verification_is_specific_to_session_and_channel_and_never_customer_login(client):

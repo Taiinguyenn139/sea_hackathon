@@ -8,11 +8,14 @@ frontend React/Vite. Chạy một backend process để giữ hợp đồng SQLi
 
 ## Các cuộc trò chuyện trên web
 
+- Màn đầu có ô **Số điện thoại của bạn** và nút **Bắt đầu chat**. Form gọi `/auth/phone/login`, mở hồ sơ theo số và hiển thị lời mở đầu của bot ngay, không gửi số như một tin nhắn khách. `DEMO_PHONE_IDENTITY=true` yêu cầu kết nối số trước khi chat; khi tắt, vẫn có thể hỏi thông tin công khai bằng phiên ẩn danh. Lời mở đầu được lưu trong transcript, tải lại không nhân đôi.
+- Khách đã nhận diện quay lại được nhắc nhu cầu đang ghi nhớ: sản phẩm, số tiền vay, kỳ hạn, thu nhập, trả nợ và trạng thái; bot hỏi muốn tiếp tục hay cập nhật. Dữ liệu lịch sử demo có nhãn riêng. Không nhắc số liệu đã hết hạn, đang mâu thuẫn hoặc báo giá cũ; phiên chưa nhận diện và chế độ `no_memory` dùng lời chào chung.
+- Telegram dùng cùng nội dung mở đầu sau **Start** hoặc chia sẻ số điện thoại. Khách đã kết nối không phải chia sẻ lại số khi `/start`. Telegram yêu cầu người dùng bấm Start lần đầu để cho phép bot nhắn ([giới hạn của nền tảng](https://core.telegram.org/bots)); mở đường dẫn bot đơn thuần chưa phát sinh tin nhắn.
 - Sidebar liệt kê các phiên, đặt tên theo câu hỏi đầu tiên được chấp nhận; có tìm kiếm và đổi tên. Trên điện thoại dùng nút mở danh sách phiên trong header.
-- **Cuộc trò chuyện mới** tạo transcript và capability riêng, giữ cùng danh tính đã kết nối. Không kết thúc phiên cũ hay hủy handoff đang chờ. Memory của cùng khách hàng tiếp tục tuân theo quyền truy cập hiện có.
+- Với chế độ demo hoặc phiên mở bằng số điện thoại, **Cuộc trò chuyện mới** quay về form trống để nhập cùng số hoặc số khác. Hội thoại, bản nháp và handoff cũ vẫn được giữ trong lịch sử; cùng số tiếp tục đọc memory chung. Luồng chat ẩn danh ngoài chế độ demo giữ API tạo phiên riêng.
 - Chuyển phiên giữ bản nháp, lỗi gửi lại và nội dung từng phiên trong bộ nhớ UI. Trong lúc đang gửi, thao tác tạo/chuyển phiên tạm khóa để không gắn phản hồi vào sai hội thoại.
 - Danh sách/tên/capability lưu trong `sessionStorage` của tab hiện tại; tải lại tab lấy transcript từ backend. Chưa có tài khoản hoặc API liệt kê toàn bộ phiên khách hàng, nên không đồng bộ danh sách sang thiết bị/tab khác. Bản nháp chưa gửi không được lưu lâu dài; không lấy lại được danh sách khi đóng tab/xóa storage.
-- `POST /sessions/{sid}/new` yêu cầu capability của chính phiên nguồn, chỉ tạo phiên cho cùng khách hàng. API không cung cấp danh sách phiên công khai hoặc cho phép token một phiên đọc transcript phiên khác.
+- `POST /sessions/{sid}/new` yêu cầu capability của chính phiên nguồn, tạo phiên ẩn danh hoặc giữ danh tính contact/OTP theo loại phiên. API không cung cấp danh sách phiên công khai hoặc cho phép token một phiên đọc transcript phiên khác.
 
 ## Chạy local
 
@@ -33,17 +36,18 @@ uv run uvicorn harness.api:app --host 127.0.0.1 --port 8000
 Backend `rules` chạy không cần API key. Telegram và backend LLM cần credential thật
 qua kho secret, không đưa giá trị vào Git hoặc chat.
 
-[Luồng agent chat](docs/AGENT_CHAT.md) bắt đầu trực tiếp từ tin nhắn đầu tiên,
-tự tạo phiên ẩn danh và để AI chọn gọi `verify_identity` khi khách cung cấp số
-điện thoại của mình. Không còn chọn hồ sơ hoặc nhập mã OTP trên màn chat chính.
+[Luồng agent chat](docs/AGENT_CHAT.md) cho kết nối hồ sơ bằng ô số điện thoại trước
+khi chat và hiển thị lời mở đầu kèm nhu cầu cũ. Ngoài chế độ demo, khách cũng có
+thể chat ẩn danh rồi để AI gọi `verify_identity` khi cung cấp số trong tin nhắn.
+Không cần chọn hồ sơ hoặc nhập OTP.
 Để chạy luồng AI, cấu hình `LLM_BACKEND=openai`, `OPENAI_API_KEY`,
 `OPENAI_MODEL`, `OPENAI_BACKUP_MODEL` và `IDENTITY_HISTORY_ENABLED=true`
 trong `.env`; hai model phải khác nhau. `rules` dành cho kiểm tra offline, không chứng minh AI đã chọn tool.
 
 [Cấu hình Telegram](docs/telegram.md): tạo bot, nạp credential và đăng ký webhook.
-Telegram có luồng chia sẻ contact riêng. Chat web chính nhận số ngay trong
-tin nhắn rồi để AI gọi tool nhận diện; các API đăng nhập bằng số vẫn được giữ
-cho tích hợp demo riêng. Đây là nhận diện demo, không thay thế đăng nhập ngân hàng.
+Telegram có luồng chia sẻ contact riêng. Trên web, dùng ô số điện thoại trước
+khi chat để kết nối cùng memory; luồng chat ẩn danh ngoài chế độ demo vẫn cho
+AI gọi tool nhận diện khi nhận số trong tin nhắn. Đây là nhận diện demo, không thay thế đăng nhập ngân hàng.
 Script kiểm tra kết nối và đăng ký webhook không in credential.
 
 ## Chuyên viên tư vấn trong demo

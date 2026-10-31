@@ -173,7 +173,7 @@ def test_sse_auth_guard_receipt_and_retry(tmp_path, monkeypatch, draft, blocked)
         retry = events(client.post(path, headers=auth, json=body))
         assert retry[-1] == received[-1]
         assert len(calls) == count
-        assert app.state.harness.db.one("SELECT count(*) AS n FROM turns")["n"] == 1
+        assert app.state.harness.db.one("SELECT count(*) AS n FROM turns WHERE text!=''")["n"] == 1
         conflict = events(client.post(path, headers=auth, json={**body, "text": "Khác"}))
         assert conflict[-1][0] == "error" and conflict[-1][1]["status"] == 409
 
@@ -248,7 +248,9 @@ def test_socket_progress_disconnect_persists_without_replay(tmp_path, monkeypatc
                 assert not thread.is_alive()
             deadline = time.monotonic() + 3
             while time.monotonic() < deadline:
-                receipt = app.state.harness.db.one("SELECT result FROM turns WHERE result IS NOT NULL")
+                receipt = app.state.harness.db.one(
+                    "SELECT result FROM turns WHERE client_id='disconnected' AND result IS NOT NULL"
+                )
                 if receipt:
                     break
                 time.sleep(0.01)
