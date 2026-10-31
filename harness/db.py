@@ -8,6 +8,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,customer_id TEXT,channel TEXT,external_id TEXT,mode TEXT,token_hash TEXT UNIQUE,verified INTEGER DEFAULT 0,status TEXT DEFAULT 'active',created_at TEXT);
 CREATE TABLE IF NOT EXISTS identity_links(channel TEXT,external_id TEXT,customer_id TEXT,PRIMARY KEY(channel,external_id));
+CREATE TABLE IF NOT EXISTS guest_customers(id TEXT PRIMARY KEY,channel TEXT NOT NULL,external_id TEXT NOT NULL,name TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(channel,external_id));
 CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY,session_id TEXT,client_id TEXT,text TEXT,reply TEXT,result TEXT,created_at TEXT,UNIQUE(session_id,client_id));
 CREATE TABLE IF NOT EXISTS facts(id TEXT,customer_id TEXT,key TEXT,value TEXT,unit TEXT,source_type TEXT,source_ref TEXT,channel TEXT,observed_at TEXT,valid_until TEXT,status TEXT,confidence REAL,PRIMARY KEY(id,customer_id));
 CREATE TABLE IF NOT EXISTS tool_calls(id TEXT PRIMARY KEY,session_id TEXT,tool TEXT,args TEXT,result TEXT,created_at TEXT);
@@ -42,7 +43,7 @@ class Database:
                 "BEGIN IMMEDIATE; ALTER TABLE handoffs RENAME TO handoffs_v1; CREATE TABLE handoffs(id TEXT PRIMARY KEY,session_id TEXT,status TEXT,summary TEXT,receipt TEXT,created_at TEXT); INSERT INTO handoffs SELECT * FROM handoffs_v1; DROP TABLE handoffs_v1; COMMIT;"
             )
         self.conn.executescript(SCHEMA)
-        self.conn.execute("INSERT OR REPLACE INTO settings VALUES('schema_version','2')")
+        self.conn.execute("INSERT OR REPLACE INTO settings VALUES('schema_version','3')")
         self.conn.execute("INSERT OR IGNORE INTO settings VALUES('clock','\"2026-10-31\"')")
         self.conn.execute("INSERT OR IGNORE INTO settings VALUES('playbook','\"v1\"')")
 

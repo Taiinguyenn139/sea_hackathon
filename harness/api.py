@@ -211,8 +211,8 @@ def create_app(settings=None):
         return {
             "session_id": sid,
             "status": s["status"],
-            "identity_status": "verified" if s["verified"] else "unverified",
-            "customer_id": s["customer_id"] if s["verified"] else None,
+            "identity_status": "verified" if s["verified"] else "guest" if harness.can_chat(s) else "unverified",
+            "customer_id": s["customer_id"] if harness.can_chat(s) else None,
             "handoff_id": h["id"] if h else None,
         }
 
@@ -291,7 +291,7 @@ def create_app(settings=None):
 
     @app.get("/customers/{customer}/brief", dependencies=[Depends(staff)])
     def brief(customer: str):
-        if customer not in {p["id"] for p in FIXTURES["customers"]}:
+        if not harness.engine.memory.profile(customer):
             raise HTTPException(404, "Customer not found")
         return harness.engine.memory.brief(customer)
 
