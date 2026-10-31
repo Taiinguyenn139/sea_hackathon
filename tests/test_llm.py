@@ -8,6 +8,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from harness.agent.engine import Engine
 from harness.api import create_app
 from harness.config import Settings
 from harness.db import Database
@@ -207,6 +208,18 @@ def test_memory_wait_for_active_claim_has_deadline(tmp_path):
     assert time.monotonic() - started < 0.5
     assert db.one("SELECT processed_seq FROM customer_sequences")["processed_seq"] == 0
     assert db.one("SELECT status FROM memory_jobs")["status"] == "processing"
+
+
+def test_model_classification_cannot_authorize_handoff(tmp_path, monkeypatch):
+    engine = Engine(Database(str(tmp_path / "intent.sqlite3")), configured())
+    monkeypatch.setattr(
+        "harness.agent.engine.json_completion", lambda *args, **kwargs: {"stage": "apply", "objection": None}
+    )
+    known = {"amount": "2000000000", "term": "240", "income": "45000000"}
+    normal = engine.plan({"text": "Tôi muốn vay mua nhà", "known": known})["plan"]
+    assert normal["handoff"] is False and normal["stage"] == "quote"
+    explicit = engine.plan({"text": "Tôi muốn gặp chuyên viên để nộp hồ sơ", "known": known})["plan"]
+    assert explicit["handoff"] is True
 
 
 def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
