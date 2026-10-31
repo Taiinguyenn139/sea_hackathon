@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import Field
 
 from bank_tools.service import FIXTURES
+from harness.agent.engine import conversation_intent
 from harness.config import Settings
 from harness.db import Database
 from harness.identity import get_profile
@@ -327,7 +328,8 @@ def create_app(settings=None):
         response = harness.message(
             sid, body.text, body.client_message_id, source
         )
-        if not input_blocked(response) and harness.identity_status(harness.session(sid)) == "identified":
+        if (not input_blocked(response) and conversation_intent(body.text) != "profile_name"
+                and harness.identity_status(harness.session(sid)) == "identified"):
             try:
                 response = {**response, "brief": harness.engine.memory.brief(harness.session(sid)["customer_id"])}
             except LLMUnavailable:
@@ -341,7 +343,7 @@ def create_app(settings=None):
     def message(sid: str, body: MessageInput, request: Request, tasks: BackgroundTasks):
         owner(sid, request)
         response = message_result(sid, body, request.client.host if request.client else "unknown")
-        if not input_blocked(response):
+        if not input_blocked(response) and conversation_intent(body.text) != "profile_name":
             tasks.add_task(flush_memory, harness.session(sid)["customer_id"])
         if hasattr(app.state, "dispatcher"):
             tasks.add_task(app.state.dispatcher.send_pending)
@@ -372,7 +374,7 @@ def create_app(settings=None):
                     response = message_result(sid, body, source)
                 # message_result persists the idempotent receipt before this event.
                 send("result", response)
-                if not input_blocked(response):
+                if not input_blocked(response) and conversation_intent(body.text) != "profile_name":
                     flush_memory(harness.session(sid)["customer_id"])
                 if hasattr(app.state, "dispatcher"):
                     app.state.dispatcher.send_pending()
