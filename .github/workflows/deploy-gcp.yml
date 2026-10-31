@@ -31,7 +31,7 @@ jobs:
       - run: npm --prefix web ci
       - run: npm --prefix web run lint && npm --prefix web run test && npm --prefix web run build
       - name: Validate deployment scripts
-        run: bash -n deploy/release.sh deploy/startup.sh deploy/configure-proxy.sh deploy/provision-gcp.sh deploy/configure-github.sh
+        run: bash -n deploy/release.sh deploy/startup.sh deploy/configure-proxy.sh deploy/provision-gcp.sh deploy/configure-github.sh deploy/initialize-secrets.sh
       - name: Build production container
         run: docker build -t memory-harness:deploy-check .
       - name: Verify container readiness and persistent restart
@@ -42,9 +42,9 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.GCP_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    environment: production
+    environment: demo
     concurrency:
-      group: production-gcp
+      group: demo-gcp
       cancel-in-progress: false
     permissions:
       contents: read

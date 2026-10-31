@@ -10,7 +10,7 @@ NAME=memory-harness
 gc() { gcloud "$@" --project="$PROJECT" --account="$ACCOUNT" --quiet; }
 test "$(gc billing projects describe "$PROJECT" --format='value(billingEnabled)')" = True
 gc services enable compute.googleapis.com artifactregistry.googleapis.com iam.googleapis.com \
-  iamcredentials.googleapis.com sts.googleapis.com iap.googleapis.com oslogin.googleapis.com
+  iamcredentials.googleapis.com sts.googleapis.com iap.googleapis.com oslogin.googleapis.com secretmanager.googleapis.com
 NUMBER=$(gc projects describe "$PROJECT" --format='value(projectNumber)')
 RUNTIME="harness-runtime@$PROJECT.iam.gserviceaccount.com"
 DEPLOY="harness-deploy@$PROJECT.iam.gserviceaccount.com"
@@ -18,6 +18,10 @@ for sa in harness-runtime harness-deploy; do
   gc iam service-accounts describe "$sa@$PROJECT.iam.gserviceaccount.com" >/dev/null 2>&1 || \
     gc iam service-accounts create "$sa" --display-name="$sa"
 done
+gc secrets describe memory-harness-runtime >/dev/null 2>&1 || \
+  gc secrets create memory-harness-runtime --replication-policy=user-managed --locations="$REGION"
+gc secrets add-iam-policy-binding memory-harness-runtime \
+  --member="serviceAccount:$RUNTIME" --role=roles/secretmanager.secretAccessor >/dev/null
 gc artifacts repositories describe "$NAME" --location="$REGION" >/dev/null 2>&1 || \
   gc artifacts repositories create "$NAME" --location="$REGION" --repository-format=docker
 gc artifacts repositories add-iam-policy-binding "$NAME" --location="$REGION" \
