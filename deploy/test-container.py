@@ -135,7 +135,7 @@ print(json.dumps({'customer': customer, 'reply': reply, 'markup': json.loads(mar
                                 phone_session["session_token"])
             assert "100 triệu" in continued["reply"]
             request(f"/sessions/{phone_session['session_id']}/messages",
-                    {"text": "Thu nhập chính xác 53 triệu", "client_message_id": "phone-update"},
+                    {"text": "Lương mới được tăng lên 53 triệu rồi", "client_message_id": "phone-update"},
                     phone_session["session_token"])
             telegram(105, "Tiếp tục tư vấn thẻ tín dụng")
             assert guest_state()["income"] == "53000000"

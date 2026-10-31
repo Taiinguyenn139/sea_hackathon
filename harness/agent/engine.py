@@ -240,8 +240,13 @@ class Engine:
         facts = {}
         parts = []
         confirmations = []
+        remembered_keys = set()
         if self.memory_access(session) and session["mode"] == "harness":
             for f in self.memory.facts(customer):
+                if f["source_type"] == "customer":
+                    # Memory owns the field even when it is conflicted/stale.
+                    # Re-reading a transcript must not revive a rejected value.
+                    remembered_keys.add(f["key"])
                 if f["status"] == "conflicted" and f["key"] not in extract(s["text"]):
                     confirmations.append(f["key"])
                 if f["source_type"] == "customer" and f["status"] == "active":
@@ -268,7 +273,6 @@ class Engine:
                         "valid_until": None,
                     }
             parts.append({"type": "old_transcript", "turns": old})
-        remembered_keys = set(known) if session["mode"] == "harness" else set()
         for t in current:
             for k, (v, u) in extract(t["text"]).items():
                 # Shared memory includes newer updates from other channels.

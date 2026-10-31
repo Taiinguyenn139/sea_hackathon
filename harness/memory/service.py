@@ -44,6 +44,27 @@ def extract(text):
     return slots
 
 
+def corrects(text, key):
+    """Recognize an explicit current-value update for this field, not another clause."""
+    clauses = re.split(r"[;\n]|\.(?!\d)|,(?!\d)|\s+(?:và|nhưng)\s+", text.lower())
+    for clause in clauses:
+        if key not in extract(clause):
+            continue
+        # A proposed or negated change must not resolve conflicting statements.
+        intent = re.sub(r"không (?:có |còn )?nợ", "", clause)
+        if "?" in clause or re.search(
+            r"\b(?:nếu|giả sử|giả định|ước gì|mong muốn|dự kiến|sẽ|chưa|không)\b", intent,
+        ):
+            continue
+        if re.search(
+            r"\b(?:xác nhận|đính chính|sửa lại|chính xác|cập nhật|"
+            r"tăng (?:lên|thành)|giảm (?:xuống|còn)|đổi (?:sang|thành)|"
+            r"hiện tại|bây giờ|hiện nay|mới là)\b", clause,
+        ):
+            return True
+    return False
+
+
 class Memory:
     def __init__(self, db, settings=None):
         self.db = db
@@ -151,7 +172,6 @@ class Memory:
         c.execute("UPDATE customer_sequences SET processed_seq=? WHERE customer_id=?", (job["seq"], customer))
 
     def _write(self, c, turn, customer, payload, suggestion=None):
-        correction = any(x in payload["text"].lower() for x in ["xác nhận", "đính chính", "sửa lại", "chính xác"])
         extracted = extract(payload["text"])
         if suggestion and isinstance(suggestion.get("spans"), list):
             for span in suggestion["spans"][:20]:
@@ -159,6 +179,7 @@ class Memory:
                     for key, value in extract(span).items():
                         extracted.setdefault(key, value)
         for key, (value, unit) in extracted.items():
+            correction = corrects(payload["text"], key)
             fid = ident("cf_", [turn, key, value])
             old = c.execute(
                 "SELECT * FROM facts WHERE customer_id=? AND key=? AND source_type='customer' AND status IN ('active','conflicted')",

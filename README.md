@@ -241,3 +241,10 @@ Tạo phiên mới không sao chép hội thoại hoặc handoff của phiên tr
 khi đã kết nối, mở phiên mới rồi nhập số khác. Chi tiết ở [Telegram](docs/telegram.md).
 Ngoài deployment demo, cấu hình mặc định tắt: Telegram yêu cầu chia sẻ contact;
 web dùng **Tiếp tục bằng số điện thoại**, không cần OTP.
+
+Cập nhật rõ ràng như “Lương mới được tăng lên 53 triệu rồi” hoặc “Thu nhập hiện tại
+của tôi là 53 triệu” thay thế mức thu nhập cũ giữa các kênh. Nếu hai giá trị vẫn
+mâu thuẫn và chưa có xác nhận/cập nhật rõ ràng, trợ lý hỏi lại; không lấy số cũ từ
+transcript làm thông tin hiện hành. Câu giả định hoặc dự kiến không tự giải quyết
+xung đột. Những xung đột đã lưu trước bản sửa vẫn cần khách cập nhật/xác nhận lại;
+không tự thay đổi dữ liệu lịch sử khi triển khai.
