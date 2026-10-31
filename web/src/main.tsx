@@ -10,6 +10,7 @@ import {
   Headset,
   MessageCircle,
   ShieldCheck,
+  Landmark,
 } from "lucide-react";
 import { CustomerChat } from "./pages/customer-chat";
 import { StaffConsole } from "./pages/staff-console";
@@ -25,22 +26,24 @@ const page = pathname.startsWith("/staff")
     : "chat";
 function App() {
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${page === "chat" ? "customer-shell" : ""}`}>
       <a className="skip-link" href="#main-content">
         Đến nội dung chính
       </a>
       <aside className="sidebar">
-        <a href="/chat" className="brand" aria-label="Mạch — trang trò chuyện">
+        <a
+          href="/chat"
+          className="brand"
+          aria-label="Ngân hàng Tài Khoa Tuấn — hỗ trợ khách hàng"
+        >
           <BrandMark />
           <div>
-            <strong>
-              mạch<span>.</span>
-            </strong>
-            <small>FINANCIAL COMPANION</small>
+            <strong>TÀI KHOA TUẤN</strong>
+            <small>NGÂN HÀNG</small>
           </div>
         </a>
         <div className="sidebar-content">
-          <div className="nav-label">KHÔNG GIAN CỦA BẠN</div>
+          <div className="nav-label">DỊCH VỤ KHÁCH HÀNG</div>
           <nav aria-label="Điều hướng chính">
             <a
               className={page === "chat" ? "nav-item active" : "nav-item"}
@@ -48,74 +51,76 @@ function App() {
               aria-current={page === "chat" ? "page" : undefined}
             >
               <MessageCircle size={20} />
-              <span>Trò chuyện</span>
+              <span>Hỗ trợ trực tuyến</span>
               {page === "chat" && <span className="nav-current" />}
             </a>
           </nav>
           <div className="sidebar-note">
-            <span className="note-line" />
+            <Landmark size={22} />
             <p>
-              Nhớ điều quan trọng.
+              Trung tâm hỗ trợ
               <br />
-              Tiếp nối điều bạn cần.
+              khách hàng cá nhân
             </p>
           </div>
-          <div className="nav-label team-label">DÀNH CHO ĐỘI NGŨ</div>
-          <nav aria-label="Không gian chuyên viên">
-            <a
-              className={page === "staff" ? "nav-item active" : "nav-item"}
-              href="/staff"
-              aria-current={page === "staff" ? "page" : undefined}
-            >
-              <Headset size={20} />
-              <span>Chuyên viên</span>
-            </a>
-            <a
-              className={page === "benchmark" ? "nav-item active" : "nav-item"}
-              href="/benchmark"
-              aria-current={page === "benchmark" ? "page" : undefined}
-            >
-              <BarChart3 size={20} />
-              <span>Đánh giá hệ thống</span>
-            </a>
-          </nav>
+          {page !== "chat" && (
+            <>
+              <div className="nav-label team-label">DÀNH CHO ĐỘI NGŨ</div>
+              <nav aria-label="Không gian chuyên viên">
+                <a
+                  className={page === "staff" ? "nav-item active" : "nav-item"}
+                  href="/staff"
+                  aria-current={page === "staff" ? "page" : undefined}
+                >
+                  <Headset size={20} />
+                  <span>Chuyên viên</span>
+                </a>
+                <a
+                  className={
+                    page === "benchmark" ? "nav-item active" : "nav-item"
+                  }
+                  href="/benchmark"
+                  aria-current={page === "benchmark" ? "page" : undefined}
+                >
+                  <BarChart3 size={20} />
+                  <span>Đánh giá hệ thống</span>
+                </a>
+              </nav>
+            </>
+          )}
         </div>
         <div className="sidebar-bottom">
-          <div className="connected-mark">
-            <span />
-            <span />
-            <span />
+          <div className="sidebar-security">
+            <ShieldCheck size={20} />
+            <span>Bảo mật thông tin khách hàng</span>
           </div>
-          <p>
-            Một hồ sơ.
-            <br />
-            Mọi cuộc trò chuyện.
-          </p>
           <div className="demo-badge">
             <ShieldCheck size={14} />
-            <span>Ngân hàng hư cấu · Demo</span>
+            <span>Ngân hàng giả định</span>
           </div>
         </div>
       </aside>
       <div className="main-column">
         <header className="topbar">
           <div className="breadcrumb">
-            Mạch <span>/</span>{" "}
+            Tài Khoa Tuấn <span>/</span>{" "}
             <strong>
               {page === "chat"
-                ? "Trò chuyện"
+                ? "Hỗ trợ khách hàng"
                 : page === "staff"
                   ? "Chuyên viên"
                   : "Đánh giá hệ thống"}
             </strong>
           </div>
           <div className="topbar-right">
-            <span className="demo-top-label">Ngân hàng hư cấu · Demo</span>
+            <span className="demo-top-label">
+              <ShieldCheck size={14} /> Kênh hỗ trợ trực tuyến
+            </span>
             <a
               href={page === "chat" ? "/staff" : "/chat"}
               className="topbar-link"
             >
-              {page === "chat" ? "Không gian chuyên viên" : "Về trò chuyện"}
+              {page === "chat" ? "Dành cho chuyên viên" : "Hỗ trợ khách hàng"}
               <ArrowUpRight size={15} />
             </a>
           </div>

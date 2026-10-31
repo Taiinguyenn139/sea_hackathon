@@ -65,14 +65,10 @@ export function StaffBoundary({ children }: { children: ReactNode }) {
       <div className="staff-entry">
         <section className="staff-entry-copy">
           <div className="eyebrow">KHÔNG GIAN CHUYÊN VIÊN</div>
-          <h1>
-            Tiếp nối câu chuyện.
-            <br />
-            <span>Hiểu trọn nhu cầu.</span>
-          </h1>
+          <h1>Cổng nghiệp vụ ngân hàng</h1>
           <p>
-            Một bản tóm tắt rõ ràng, nguồn thông tin có thể kiểm tra và những
-            việc cần làm tiếp theo.
+            Đăng nhập để tiếp nhận và xử lý yêu cầu hỗ trợ khách hàng Ngân hàng
+            Tài Khoa Tuấn.
           </p>
           <div className="entry-detail">
             <ShieldCheck size={22} />
@@ -82,7 +78,7 @@ export function StaffBoundary({ children }: { children: ReactNode }) {
         <form className="login-panel" onSubmit={login}>
           <BrandMark />
           <h2>Chào mừng trở lại</h2>
-          <p>Đăng nhập để tiếp nhận yêu cầu và xem kết quả đánh giá.</p>
+          <p>Vui lòng nhập thông tin đăng nhập được cấp.</p>
           <label htmlFor="staff-password">Mật khẩu chuyên viên</label>
           <div className="password-field">
             <LockKeyhole size={18} />
@@ -106,7 +102,7 @@ export function StaffBoundary({ children }: { children: ReactNode }) {
               </>
             )}
           </button>
-          <small>Mật khẩu do người quản trị demo cấu hình.</small>
+          <small>Liên hệ quản trị viên nếu bạn cần hỗ trợ truy cập.</small>
         </form>
       </div>
     );
