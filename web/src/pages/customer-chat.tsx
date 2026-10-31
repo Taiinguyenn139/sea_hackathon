@@ -5,6 +5,8 @@ import {
   ArrowUp,
   Check,
   CheckCheck,
+  Clock3,
+  RotateCcw,
   CircleHelp,
   CreditCard,
   Home,
@@ -33,6 +35,10 @@ import { PhoneLogin } from "../phone-login";
 import { BriefView } from "../brief-view";
 const STORAGE = "bankwise-chat-session";
 const LEGACY_STORAGE = "mach-chat-session";
+type ChatTurn = Turn & {
+  clientId?: string;
+  delivery?: "sending" | "sent" | "failed";
+};
 function savedSession(): ChatSession | null {
   try {
     return JSON.parse(
@@ -72,7 +78,7 @@ export function CustomerChat() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profile, setProfile] = useState(savedSession()?.demo_profile ?? "hoa");
   const [phoneLogin, setPhoneLogin] = useState(false);
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -86,6 +92,7 @@ export function CustomerChat() {
   const [promptNotice, setPromptNotice] = useState("");
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const sending = useRef(false);
   const verified = ["verified", "identified"].includes(
     session?.identity_status ?? "",
   );
@@ -105,9 +112,9 @@ export function CustomerChat() {
     return () => window.removeEventListener("hashchange", syncView);
   }, []);
   useEffect(() => {
-    if (isHome) document.getElementById("chat-home-title")?.focus();
-    else input.current?.focus();
-  }, [isHome]);
+    if (isHome) document.getElementById("chat-home-title")?.focus({ preventScroll: true });
+    else if (!pending && !loading && !waiting) input.current?.focus({ preventScroll: true });
+  }, [isHome, pending, loading, waiting]);
   useEffect(() => {
     if (!input.current) return;
     input.current.style.height = "auto";
@@ -194,6 +201,7 @@ export function CustomerChat() {
         method: "POST",
         body: { mode: "harness", demo_profile: profile },
       });
+      setLoading(true);
       save({ ...next, demo_profile: profile });
       setTurns([]);
       navigate("conversation");
@@ -204,26 +212,33 @@ export function CustomerChat() {
     }
   }
   async function send(text = draft, id: string = crypto.randomUUID()) {
-    if (!session || !text.trim() || pending || waiting) return;
+    if (!session || !text.trim() || pending || loading || waiting || sending.current) return;
+    // Lock synchronously: repeated Enter events must share one in-flight request.
+    sending.current = true;
     setPending(true);
     setError("");
     setLastFailed(null);
+    const message = text.trim();
+    const retrying = turns.some((turn) => turn.clientId === id);
+    setTurns((prev) => retrying
+      ? prev.map((turn) => turn.clientId === id ? { ...turn, delivery: "sending" } : turn)
+      : [...prev, { id: `local-${id}`, clientId: id, role: "user", text: message, delivery: "sending" }]);
+    // Keep a different, unsent draft when retrying an older failed message.
+    if (!retrying) setDraft("");
+    setPromptNotice("");
     try {
       const data = await request<Reply>(
         `/sessions/${session.session_id}/messages`,
         {
           method: "POST",
-          body: { text: text.trim(), client_message_id: id },
+          body: { text: message, client_message_id: id },
           token: session.session_token,
         },
       );
       setTurns((prev) => [
-        ...prev,
-        { role: "user", text: text.trim() },
-        { role: "assistant", text: data.reply },
+        ...prev.map((turn): ChatTurn => turn.clientId === id ? { ...turn, delivery: "sent" } : turn),
+        { id: `reply-${id}`, role: "assistant", text: data.reply },
       ]);
-      setDraft("");
-      setPromptNotice("");
       if (data.identity_status || data.user_id || data.handoff_id || data.brief)
         save({
           ...session,
@@ -234,9 +249,11 @@ export function CustomerChat() {
           status: data.handoff_id ? "waiting_human" : session.status,
         });
     } catch (e) {
+      setTurns((prev) => prev.map((turn) => turn.clientId === id ? { ...turn, delivery: "failed" } : turn));
       setError(errorMessage(e));
-      setLastFailed({ text, id });
+      setLastFailed({ text: message, id });
     } finally {
+      sending.current = false;
       setPending(false);
     }
   }
@@ -283,6 +300,7 @@ export function CustomerChat() {
       }
     }
     save(null);
+    setLoading(false);
     setTurns([]);
     setDraft("");
     setPromptNotice("");
@@ -478,8 +496,15 @@ export function CustomerChat() {
                     </div>
                     <div className="message-bubble">{turn.text}</div>
                     {turn.role === "user" && (
-                      <span className="delivered">
-                        <CheckCheck size={13} /> Đã gửi
+                      <span className={`delivered ${turn.delivery === "failed" ? "delivery-failed" : ""}`}>
+                        {turn.delivery === "sending" ? <><Clock3 size={13} /> Đang gửi…</>
+                          : turn.delivery === "failed" ? <>
+                            Chưa gửi được
+                            <button type="button" disabled={pending || loading || waiting}
+                              onClick={() => void send(turn.text, turn.clientId)}>
+                              <RotateCcw size={12} /> Gửi lại
+                            </button>
+                          </> : <><CheckCheck size={13} /> Đã gửi</>}
                       </span>
                     )}
                   </div>
@@ -487,7 +512,7 @@ export function CustomerChat() {
               ))}
             </div>
           )}
-          {!isHome && pending && session && (
+          {!isHome && turns.some((turn) => turn.delivery === "sending") && (
             <div className="typing" role="status">
               <BrandMark small />
               <span className="typing-dots" aria-hidden="true">
@@ -558,6 +583,7 @@ export function CustomerChat() {
             <PhoneLogin
               onCancel={() => setPhoneLogin(false)}
               onSuccess={(next) => {
+                setLoading(true);
                 save(next);
                 setTurns([]);
                 setPhoneLogin(false);
@@ -653,12 +679,14 @@ export function CustomerChat() {
               }}
               rows={2}
               maxLength={4000}
-              disabled={!session || waiting || pending}
+              disabled={!session || loading || waiting || pending}
               aria-label="Tin nhắn cho trợ lý"
               placeholder={
                 !session
                   ? "Bắt đầu phiên hỗ trợ để gửi tin nhắn…"
-                  : waiting
+                  : loading
+                    ? "Đang khôi phục hội thoại…"
+                    : waiting
                       ? "Chuyên viên sẽ tiếp nhận yêu cầu của bạn…"
                       : "Nhập câu hỏi cần hỗ trợ…"
               }
@@ -672,7 +700,7 @@ export function CustomerChat() {
               </span>
               <button
                 className="send-button"
-                disabled={!session || !draft.trim() || pending || waiting}
+                disabled={!session || !draft.trim() || loading || pending || waiting}
                 aria-label="Gửi tin nhắn"
               >
                 <ArrowUp size={21} />
