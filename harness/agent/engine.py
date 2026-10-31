@@ -47,6 +47,22 @@ def event(guard, reason, action="fallback", attempt=0):
     return {"guard_id": guard, "reason": reason, "action": action, "stage": "guard", "attempt": attempt, "fact_ids": []}
 
 
+def conversation_intent(text):
+    low = " ".join(text.casefold().strip(" .!?,…").split())
+    if re.fullmatch(r"(?:hello|hi|hey|xin chào|chào)(?:\s+(?:bạn|em|anh|chị|bot|ad|shop))?", low):
+        return "greeting"
+    if re.fullmatch(r"(?:cảm ơn|cám ơn|thanks|thank you)(?:\s+(?:bạn|em|anh|chị|nhé|nhiều))*", low):
+        return "acknowledgement"
+    catalog = any(word in low for word in ["sản phẩm", "dịch vụ", "loại vay", "gói vay", "khoản vay"])
+    listing = any(word in low for word in ["những", "các", "nào", "danh sách", "giới thiệu", "có gì"])
+    if (catalog and listing) or re.search(r"\bvay (?:gì|nào)\b", low):
+        # A question naming a specific product should retain its detailed advice flow.
+        specific = any(word in low for word in ["mua nhà", "tiêu dùng", "thẻ tín dụng"])
+        if not specific:
+            return "loan_catalog" if "vay" in low else "product_catalog"
+    return "advice"
+
+
 def draft_problem(draft, facts, as_of):
     ids = re.findall(r"\{fact:([^}]+)\}", draft)
     stripped = re.sub(r"\{fact:[^}]+\}", "", draft)
@@ -261,9 +277,14 @@ class Engine:
         known = s["known"]
         product = known.get("product", "home_loan")
         handoff = any(t in low for t in ["chuyên viên", "gặp người", "khiếu nại", "nộp hồ sơ", "ký hợp đồng"])
+        intent = conversation_intent(s["text"])
         suggestion = json_completion(
             self.settings,
-            "Phân loại hội thoại tư vấn. Trả JSON {stage:discover|quote|objection|followup|apply, objection:rate_high|need_spouse|null}. Không trả số liệu hoặc tool arguments.",
+            "Phân loại hội thoại tư vấn. Trả JSON {stage:discover|quote|objection|followup|apply, "
+            "objection:rate_high|need_spouse|null, intent:advice|greeting|loan_catalog|product_catalog|acknowledgement}. "
+            "greeting: chào hỏi; loan_catalog: hỏi có những loại vay nào; product_catalog: hỏi các sản phẩm/dịch vụ "
+            "được tư vấn; acknowledgement: cảm ơn. Không biến câu hỏi tổng quan thành yêu cầu báo giá. "
+            "Không trả số liệu hoặc tool arguments.",
             {"text": s["text"], "known": known},
             schema=PlanSuggestion,
             purpose="plan",
@@ -271,11 +292,15 @@ class Engine:
         stage = "apply" if handoff else "discover"
         objection = known.get("objection")
         if suggestion:
+            if intent == "advice":
+                intent = suggestion.get("intent", "advice")
             if suggestion.get("stage") in ("discover", "quote", "objection", "followup", "apply"):
                 stage = suggestion["stage"]
             if suggestion.get("objection") in ("rate_high", "need_spouse"):
                 objection = suggestion["objection"]
         handoff = handoff and self.memory_access(s["session"])
+        if handoff or any(x in low for x in ["gọi lại", "hẹn", "liên hệ lại", "gửi tóm tắt", "gửi tổng kết"]):
+            intent = "advice"
         slots = ["income", "debt"] if product == "credit_card" else ["amount", "term", "income", "debt"]
         if product == "home_loan":
             slots.append("property_value")
@@ -286,7 +311,8 @@ class Engine:
         return {
             "plan": {
                 "product": product,
-                "public_info": not known.get("amount")
+                "intent": intent,
+                "public_info": intent == "advice" and not known.get("amount")
                 and any(x in low for x in ["lãi suất", "ưu đãi", "điều kiện", "phí"]),
                 "private_request": not self.memory_access(s["session"])
                 and any(x in low for x in ["lần trước", "lịch sử", "hồ sơ của tôi", "gặp chuyên viên", "crm"]),
@@ -360,7 +386,7 @@ class Engine:
                     receipt = call("schedule_callback", {"time": time})
                     if not receipt["error"]:
                         notes.append("Đã tạo lịch gọi lại mô phỏng theo thời gian anh/chị yêu cầu.")
-        quote = not p["missing"] and not s.get("confirmations")
+        quote = p.get("intent", "advice") == "advice" and not p["missing"] and not s.get("confirmations")
         if quote or p["public_info"]:
             if quote:
                 args = {
@@ -446,6 +472,24 @@ class Engine:
             return "Hồ sơ hiện chưa phù hợp điều kiện sản phẩm. Em có thể chuyển chuyên viên để trao đổi phương án phù hợp hơn."
         if s.get("action_notes"):
             return " ".join(s["action_notes"])
+        intent = s["plan"].get("intent", "advice")
+        if intent == "greeting":
+            return (
+                "Chào anh/chị! Em là trợ lý ngân hàng, có thể tư vấn vay mua nhà, vay tiêu dùng và thẻ tín dụng. "
+                "Anh/chị muốn tìm hiểu sản phẩm nào?"
+            )
+        if intent == "loan_catalog":
+            return (
+                "Em có thể tư vấn vay mua nhà và vay tiêu dùng. "
+                "Anh/chị muốn tìm hiểu loại nào, hoặc chia sẻ mục đích vay để em hỗ trợ phù hợp?"
+            )
+        if intent == "product_catalog":
+            return (
+                "Em có thể tư vấn vay mua nhà, vay tiêu dùng và thẻ tín dụng. "
+                "Anh/chị đang quan tâm sản phẩm nào?"
+            )
+        if intent == "acknowledgement":
+            return "Rất vui được hỗ trợ anh/chị. Khi cần tìm hiểu thêm về sản phẩm ngân hàng, anh/chị cứ nhắn em nhé!"
         if s.get("confirmations"):
             labels = {
                 "income": "thu nhập",
@@ -525,8 +569,12 @@ class Engine:
             last_prefix = prefix
         candidate = json_completion(
             self.settings,
-            "Viết câu tư vấn ngân hàng tiếng Việt. Mọi số phải dùng {fact:id} từ facts. Không tạo fact. Giữ ý nghĩa rules_draft. Trả JSON {draft:string}.",
-            {"rules_draft": draft, "known": s["known"], "facts": s["facts"], "context_parts": s["context_parts"]},
+            "Trả lời trực tiếp tin nhắn khách hàng bằng tiếng Việt, theo intent và ý chính của rules_draft. "
+            "Chào hỏi hoặc hỏi danh sách sản phẩm thì giới thiệu đúng phạm vi tư vấn, không ép khách cung cấp "
+            "số tiền vay hay thu nhập để xem danh sách. Chỉ báo giá khi có facts. "
+            "Mọi số phải dùng {fact:id} từ facts; không tạo fact, không đánh số danh sách. Trả JSON {draft:string}.",
+            {"text": s["text"], "intent": s["plan"].get("intent", "advice"), "rules_draft": draft,
+             "known": s["known"], "facts": s["facts"], "context_parts": s["context_parts"]},
             schema=DraftSuggestion,
             purpose="draft",
             on_delta=preview if stream_sink.get() else None,
@@ -567,7 +615,10 @@ class Engine:
             if session.get("verified", False)
             else None
         )
-        if session.get("verified", False) and old and not s["tool_error"] and not s["plan"]["missing"]:
+        if (
+            session.get("verified", False) and old and not s["tool_error"] and not s["plan"]["missing"]
+            and s["plan"].get("intent", "advice") == "advice"
+        ):
             draft = "Ưu đãi trước đã hết hạn; em cập nhật thông tin hiện tại. " + draft
             events.append(event("G3", "previous_quote_expired", "refresh"))
         if s["disclosures"]:
