@@ -1,15 +1,44 @@
+"""SQLite adapter for the canonical tuannv tools; authentication remains server-owned."""
+
 import hashlib
 import json
-import re
-from datetime import UTC, datetime, timedelta
-from datetime import date as calendar_date
-from decimal import ROUND_HALF_UP, Decimal
+import threading
+from datetime import UTC, date, datetime
+from inspect import signature
 from pathlib import Path
 
 import yaml
 
+from bank_tools.auth import TOOL_ACCESS, AccessDenied, AuthContext, require_access
+from bank_tools.catalog import TOOL_NAMES, get_tool_definitions
+from bank_tools.core import BankTools as ToolClient
+from harness.identity import IDENTITY_PATH, get_profile, profiles, verify_identity
+
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "bank.yaml"
-FIXTURES = yaml.safe_load(FIXTURE_PATH.read_text())
+
+
+def _customer_profiles():
+    customers = yaml.safe_load((FIXTURE_PATH.parent / "customers.yaml").read_text())["customers"]
+    by_id = {}
+    cifs = set()
+    for customer in customers:
+        key, cif = customer["customer_id"], customer["cif"]
+        if key in by_id or cif in cifs:
+            raise ValueError("Duplicate customer_id or CIF in bank fixtures")
+        by_id[key] = customer
+        cifs.add(cif)
+    joined = []
+    for profile in profiles():
+        customer = by_id.get(profile["bank_customer_id"])
+        if not customer or (customer["full_name"], customer["segment"]) != (profile["name"], profile["segment"]):
+            raise ValueError("Identity mapping does not match the bank customer fixture")
+        joined.append({**profile, "cif": customer["cif"]})
+    return joined
+
+
+# Preserve the adapter export used by the engine and staff brief. Phone and
+# customer mapping have one source: the validated ten-identity registry.
+FIXTURES = {"schema_version": 2, "customers": _customer_profiles()}
 
 
 def canonical(value):
@@ -24,229 +53,175 @@ def now():
     return datetime.now(UTC).isoformat()
 
 
+def fixture_hash():
+    digest = hashlib.sha256()
+    for path in sorted(FIXTURE_PATH.parent.glob("*.yaml")):
+        digest.update(path.name.encode() + b"\0" + path.read_bytes())
+    digest.update(b"identity_v1/identities.json\0" + IDENTITY_PATH.read_bytes())
+    return digest.hexdigest()
+
+
 class BankTools:
     def __init__(self, db):
         self.db = db
-        self.fixtures = FIXTURES
+        self.clients = {}
+        self.lock = threading.RLock()
 
-    def call(self, tool, args, customer_id, session_id):
-        fault = self.db.one("SELECT * FROM faults WHERE tool=? AND count>0", (tool,))
-        tc = ident("tc_", [session_id, tool, args, self.db.setting("clock"), now()])
-        if fault:
-            with self.db.transaction() as c:
-                fault = c.execute("SELECT * FROM faults WHERE tool=? AND count>0", (tool,)).fetchone()
+    def auth_context(self, customer_id, session_id):
+        session = self.db.one("SELECT * FROM sessions WHERE id=?", (session_id,))
+        if not session or session["customer_id"] != customer_id or session["status"] == "ended":
+            return None
+        # A customer capability or a staff login is NOT a customer login.
+        return AuthContext(customer_id=customer_id, identity_verified=bool(session["verified"]))
+
+    @staticmethod
+    def bank_id(customer_id):
+        profile = get_profile(customer_id)
+        return profile["bank_customer_id"] if profile else customer_id
+
+    def definitions(self, customer_id, session_id):
+        return get_tool_definitions(context=self.auth_context(customer_id, session_id))
+
+    def _owns_memory(self, customer_id, session_id):
+        # Channel/OTP ownership permits storing public advisory facts under a
+        # prospect's own key. It grants no canonical private tool permission.
+        return self.db.one(
+            "SELECT s.id FROM sessions s LEFT JOIN guest_customers g ON g.id=s.customer_id "
+            "AND g.channel=s.channel AND g.external_id=s.external_id "
+            "LEFT JOIN phone_sessions p ON p.session_id=s.id AND p.customer_id=s.customer_id "
+            "WHERE s.id=? AND s.customer_id=? AND s.status!='ended' "
+            "AND (s.verified=1 OR g.id IS NOT NULL OR p.session_id IS NOT NULL)",
+            (session_id, customer_id),
+        ) is not None
+
+    def call(self, tool, args, customer_id, session_id, *, context=None, idempotency_key=None):
+        with self.lock:
+            tc = ident("tc_", [session_id, tool, args, now()])
+            result = {"tool_call_id": tc, "tool": tool, "as_of": None, "data": {}, "facts": [], "error": None}
+            try:
+                if tool == "verify_identity":
+                    # Only the server-bound fixture can be identified by a demo
+                    # phone claim. This does not create a customer login.
+                    session = self.db.one("SELECT * FROM sessions WHERE id=?", (session_id,))
+                    if not session or session["customer_id"] != customer_id or session["status"] == "ended":
+                        raise AccessDenied("forbidden: invalid verification session")
+                    result["as_of"] = date.fromisoformat(args["as_of"]).isoformat()
+                    result["data"] = {"verified": verify_identity(customer_id, args["phone"])}
+                    self._save_call(session_id, tool, args, result, customer_id)
+                    return result
+                if tool not in TOOL_NAMES:
+                    raise ValueError("unknown tool")
+                if not isinstance(args, dict) or "as_of" not in args:
+                    raise ValueError("as_of is required for every tool")
+                as_of = date.fromisoformat(args["as_of"]).isoformat()
+                if as_of != args["as_of"]:
+                    raise ValueError("as_of must use YYYY-MM-DD")
+                result["as_of"] = as_of
+                session = self.db.one("SELECT * FROM sessions WHERE id=?", (session_id,))
+                if session and (session["customer_id"] != customer_id or session["status"] == "ended"):
+                    raise AccessDenied("forbidden: session does not belong to the current customer")
+                context = context if context is not None else self.auth_context(customer_id, session_id)
+                if context is not None and (not isinstance(context, AuthContext) or context.customer_id != customer_id):
+                    raise AccessDenied("forbidden: customer_id does not match backend context")
+                native_context = (
+                    AuthContext(self.bank_id(customer_id), context.logged_in, context.identity_verified)
+                    if context is not None
+                    else None
+                )
+                if TOOL_ACCESS[tool] != "public":
+                    require_access(tool, native_context, self.bank_id(customer_id))
+                    if "customer_id" in args or "context" in args:
+                        raise AccessDenied("forbidden: customer identity is supplied only by the backend")
+                client = self.clients.setdefault((session_id, customer_id), None)
+                if client is None:
+                    client = self.clients[(session_id, customer_id)] = ToolClient()
+                # Validate required arguments/date before consuming a counted injected fault.
+                bound_args = dict(args)
+                if TOOL_ACCESS[tool] != "public":
+                    bound_args.update(customer_id=self.bank_id(customer_id), context=native_context)
+                signature(getattr(client, tool)).bind(**bound_args)
+                with self.db.transaction() as connection:
+                    fault = connection.execute("SELECT * FROM faults WHERE tool=? AND count>0", (tool,)).fetchone()
+                    if fault:
+                        connection.execute("UPDATE faults SET count=count-1 WHERE tool=?", (tool,))
                 if fault:
-                    c.execute("UPDATE faults SET count=count-1 WHERE tool=?", (tool,))
-            if fault:
-                result = {"facts": [], "data": {}, "error": fault["mode"]}
-                self._save_call(tc, session_id, tool, args, result)
-                return result
-        try:
-            data, values = self._invoke(tool, args, customer_id, session_id)
-            facts = []
-            date = self.db.setting("clock")
-            for key, value, unit, expiry, label in values:
-                fid = ident("f_", [1, tool, key, label, args, date])
-                fact = {
-                    "fact_id": fid,
-                    "key": key,
-                    "value": str(value),
-                    "unit": unit,
-                    "source_type": "bank_tool",
-                    "source_ref": tc,
-                    "channel": args.get("channel", "web"),
-                    "observed_at": date,
-                    "valid_until": expiry,
-                    "status": "active",
-                    "confidence": 1.0,
-                    "label": label,
-                }
-                facts.append(fact)
-            result = {"data": data, "facts": facts, "error": None, "tool_call_id": tc}
-            with self.db.transaction() as c:
-                c.execute(
-                    "INSERT INTO tool_calls VALUES(?,?,?,?,?,?)",
-                    (
-                        tc,
-                        session_id,
-                        tool,
-                        canonical({k: ("[redacted]" if k == "dob" else v) for k, v in args.items()}),
-                        canonical(result),
-                        now(),
-                    ),
-                )
-                for f in facts:
-                    c.execute(
-                        "INSERT OR IGNORE INTO facts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (
-                            f["fact_id"],
-                            customer_id,
-                            f["key"],
-                            f["value"],
-                            f["unit"],
-                            "bank_tool",
-                            tc,
-                            f["channel"],
-                            date,
-                            f["valid_until"],
-                            "active",
-                            1.0,
-                        ),
-                    )
-            return result
-        except (ValueError, KeyError, ArithmeticError) as e:
-            result = {"data": {}, "facts": [], "error": "invalid: " + str(e)}
-            self._save_call(tc, session_id, tool, args, result)
+                    client.inject_fault(tool, fault["mode"], 1)
+                result = client.call(tool, args, context=native_context)
+                if not result["error"]:
+                    for fact in result["facts"]:
+                        fact["channel"] = fact["metadata"].get("channel", session["channel"] if session else "web")
+                    if tool == "crm_lookup" and result["data"].get("found"):
+                        result["data"]["customer_id"] = customer_id
+                    if tool in ("schedule_callback", "send_summary"):
+                        self._save_action(tool, args, result, customer_id, session_id, idempotency_key)
+            except AccessDenied as exc:
+                result.update(data={}, facts=[], error=str(exc))
+            except (ValueError, TypeError, KeyError) as exc:
+                result.update(data={}, facts=[], error="invalid: " + str(exc))
+            has_identity = isinstance(context, AuthContext) and (context.logged_in or context.identity_verified)
+            storage_customer = customer_id if has_identity or self._owns_memory(customer_id, session_id) else "guest:" + session_id
+            self._save_call(session_id, tool, args, result, storage_customer)
             return result
 
-    def _save_call(self, tc, session, tool, args, result):
-        self.db.execute(
-            "INSERT INTO tool_calls VALUES(?,?,?,?,?,?)",
-            (
-                tc,
-                session,
-                tool,
-                canonical({k: ("[redacted]" if k == "dob" else v) for k, v in args.items()}),
-                canonical(result),
-                now(),
-            ),
-        )
-
-    def _invoke(self, tool, a, customer, session):
-        date = self.db.setting("clock")
-        product = a.get("product", "home_loan")
-        p = self.fixtures["products"].get(product)
-        if tool == "crm_lookup":
-            match = next((x for x in self.fixtures["customers"] if a["identifier"] in (x["id"], x["cif"])), None)
-            return ({"customer": match}, [])
-        if tool == "verify_identity":
-            match = next((x for x in self.fixtures["customers"] if x["id"] == customer), None)
-            import secrets
-
-            return ({"verified": bool(match and secrets.compare_digest(match["dob"], a["dob"]))}, [])
-        if not p:
-            raise ValueError("unknown product")
-        expiry = self.fixtures["rate_valid_until"]
-        if tool == "get_rate":
-            if date > expiry:
-                raise ValueError("rate table expired")
-            return {}, [(k, p[k], "%/năm", expiry, product) for k in ("standard_rate", "floating_margin") if k in p]
-        if tool == "get_active_promotions":
-            promos = [
-                x
-                for x in self.fixtures["promotions"]
-                if x["product"] == product
-                and x["valid_from"] <= date <= x["valid_until"]
-                and a.get("channel", "web") in x["channels"]
-            ]
-            if not promos:
-                return {"promotions": []}, []
-            promo = promos[-1]
-            values = [("promo_months", promo["months"], "tháng", promo["valid_until"], promo["promo_id"])]
-            for key, output, unit in [("rate", "promo_rate", "%/năm"), ("fee_waiver", "promo_fee_waiver", "đồng")]:
-                if key in promo:
-                    values.append((output, promo[key], unit, promo["valid_until"], promo["promo_id"]))
-            return {"promo_id": promo["promo_id"]}, values
-        if tool == "get_card_offer":
-            p = self.fixtures["products"]["credit_card"]
-            return {}, [
-                (k, p[k], "đồng", expiry, product)
-                for k in ("card_limit_min", "card_limit_max", "annual_fee", "fee_waiver_spend")
-            ]
-        if tool == "get_disclosures":
-            return {"disclosures": p["disclosures"]}, []
-        if tool == "check_suitability":
-            income = Decimal(str(a.get("income", 0)))
-            debt = Decimal(str(a.get("debt", 0)))
-            amount = Decimal(str(a.get("amount", 0)))
-            property_value = Decimal(str(a.get("property_value", 0)))
-            reasons = []
-            if income < Decimal(str(p["min_income"])):
-                reasons.append("income_below_min")
-            if income and debt / income > Decimal(p["max_dti"]):
-                reasons.append("dti_too_high")
-            if product == "home_loan" and property_value and amount / property_value > Decimal(p["max_ltv"]):
-                reasons.append("ltv_too_high")
-            return {"ok": not reasons, "reasons": reasons}, []
-        if tool == "calc_installment":
-            rf = self.db.one("SELECT * FROM facts WHERE id=? AND customer_id=?", (a["rate_fact_id"], customer))
-            if (
-                not rf
-                or rf["source_type"] != "bank_tool"
-                or rf["valid_until"] < date
-                or Decimal(rf["value"]) != Decimal(str(a["rate"]))
-            ):
-                raise ValueError("invalid rate provenance")
-            amount, term = Decimal(str(a["amount"])), int(a["term"])
-            months = min(int(a.get("promo_months", 0)), term)
-            if amount <= 0 or term <= 0 or term > 600:
-                raise ValueError("invalid amount/term")
-            rate = Decimal(str(a["rate"])) / 1200
-            after = Decimal(str(a.get("after_rate", a["rate"]))) / 1200
-
-            def payment(principal, n, r):
-                return principal / n if not r else principal * r / (1 - (1 + r) ** (-n))
-
-            first = payment(amount, term, rate)
-            balance = (
-                amount
-                if not months
-                else (
-                    amount * (1 + rate) ** months - first * (((1 + rate) ** months - 1) / rate)
-                    if rate
-                    else amount - first * months
-                )
-            )
-            later = payment(balance, term - months, after) if months < term else first
-            total = first * months + later * (term - months)
-            rounded = lambda v: (v / 1000).quantize(Decimal(1), rounding=ROUND_HALF_UP) * 1000
-            return {}, [
-                (k, rounded(v), "đồng", rf["valid_until"], product)
-                for k, v in [("installment_promo", first), ("installment_after", later), ("total_payment", total)]
-            ]
+    def _save_action(self, tool, args, result, customer, session, action_key):
+        data = result["data"]
+        key = ident("cb_" if tool == "schedule_callback" else "out_", [session, tool, action_key or data])
         if tool == "schedule_callback":
-            reason = a.get("reason", "").lower()
-            offset = 1 if "ngày mai" in reason else 2 if "hai ngày" in reason else 0
-            match = re.search(r"sau\s+(\d+)\s+ngày", reason)
-            if match:
-                offset = min(int(match[1]), 365)
-            due = (
-                a.get("time")
-                or (calendar_date.fromisoformat(date) + timedelta(days=offset)).isoformat() + "T09:00:00+07:00"
-            )
-            key = ident("cb_", [customer, session, a.get("action_key", due)])
+            previous = self.db.one("SELECT payload FROM callbacks WHERE id=?", (key,))
+            if previous and json.loads(previous["payload"])["request"] != args:
+                raise ValueError("idempotency key was used for a different callback")
+            data["task_id"] = key
             self.db.execute(
                 "INSERT OR IGNORE INTO callbacks VALUES(?,?,?,?,?,?)",
-                (key, customer, session, due, "open", canonical({"reason": a.get("reason", "Liên hệ lại")})),
+                (key, customer, session, data["time"], "open", canonical({"request": args, "mock": True})),
             )
-            return {"task_id": key, "time": due}, []
-        if tool == "send_summary":
-            channel = a["channel"]
-            link = self.db.one(
-                "SELECT * FROM identity_links WHERE customer_id=? AND channel=?", (customer, channel)
-            ) or self.db.one("SELECT external_id FROM guest_customers WHERE id=? AND channel=?", (customer, channel))
-            if not link:
-                raise ValueError("channel identity not linked")
-            verified = self.db.one(
-                "SELECT s.id FROM sessions s LEFT JOIN guest_customers g ON g.id=s.customer_id "
-                "AND g.channel=s.channel AND g.external_id=s.external_id "
-                "WHERE s.id=? AND s.customer_id=? AND s.channel=? AND (s.verified=1 OR g.id IS NOT NULL)",
-                (session, customer, channel),
-            )
-            if not verified:
-                raise ValueError("channel not verified")
-            facts = [
-                self.db.one("SELECT * FROM facts WHERE customer_id=? AND id=?", (customer, x)) for x in a["fact_ids"]
-            ]
-            if not facts or any(
-                not f or f["status"] != "active" or (f["valid_until"] and f["valid_until"] < date) for f in facts
-            ):
-                raise ValueError("invalid summary facts")
-            key = ident("out_", [customer, a.get("action_key", a["fact_ids"]), channel])
-            body = "\n".join(f"{f['key']}: {f['value']} {f['unit']}" for f in facts)
+        else:
+            previous = self.db.one("SELECT receipt FROM outbox WHERE id=?", (key,))
+            if previous and json.loads(previous["receipt"])["request"] != args:
+                raise ValueError("idempotency key was used for a different summary")
+            data["message_id"] = key
+            # Canonical tool is a mock. Never silently enqueue a real provider send.
+            snapshot = self.clients[(session, customer)].get_mock_actions()["messages"][-1]["facts"]
             self.db.execute(
-                "INSERT OR IGNORE INTO outbox(id,channel,target,text,status) VALUES(?,?,?,?,?)",
-                (key, channel, link["external_id"], body, "pending"),
+                "INSERT OR IGNORE INTO outbox(id,channel,target,text,status,receipt) VALUES(?,?,?,?,?,?)",
+                (
+                    key,
+                    args["channel"],
+                    "demo:" + customer,
+                    canonical(snapshot),
+                    "mock_sent",
+                    canonical({"request": args, "mock": True}),
+                ),
             )
-            return {"message_id": key}, []
-        raise ValueError("unknown tool")
+
+    def _save_call(self, session, tool, args, result, customer):
+        with self.db.transaction() as connection:
+            connection.execute(
+                "INSERT INTO tool_calls VALUES(?,?,?,?,?,?)",
+                (
+                    result["tool_call_id"],
+                    session,
+                    tool,
+                    canonical({k: "[redacted]" if k in ("phone", "dob") else v for k, v in args.items()}),
+                    canonical(result),
+                    now(),
+                ),
+            )
+            for fact in result["facts"]:
+                connection.execute(
+                    "INSERT OR REPLACE INTO facts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        fact["fact_id"],
+                        customer,
+                        fact["key"],
+                        str(fact["value"]),
+                        fact["unit"],
+                        "bank_tool",
+                        fact["source_ref"],
+                        fact["channel"],
+                        fact["observed_at"],
+                        fact["valid_until"],
+                        fact["status"],
+                        fact["confidence"],
+                    ),
+                )

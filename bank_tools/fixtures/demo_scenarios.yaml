@@ -1,0 +1,31 @@
+# Dữ liệu hội thoại dành cho demo/tích hợp; không tự nạp vào hồ sơ ngân hàng.
+# KHÔNG dùng các ca đã công khai này làm tập held-out (tập đánh giá giữ kín).
+scenarios:
+  - scenario_id: expired_quote
+    customer_id: cus_001
+    events:
+      - {as_of: '2026-09-27', channel: hotline, customer_text: 'Tôi muốn vay mua nhà 2 tỷ trong 20 năm. Thu nhập 45 triệu/tháng, đang trả nợ 5 triệu/tháng. Nhà trị giá 3 tỷ.', quoted_promo: HL-Q3-2026, quoted_rate: 6.5}
+      - {as_of: '2026-10-31', channel: zalo, customer_text: 'Lãi 6,5% lần trước còn không?'}
+    expected: 'Tool trả HL-Q4-2026: 6.9%/năm, 12 tháng. Agent phải giải thích báo giá cũ hết hạn; không coi lãi này là duyệt vay. Hồ sơ 2 tỷ/240 tháng, thu nhập 45 triệu, trả nợ 5 triệu vượt DTI: phải xử lý suitability trước khi chào khoản vay cụ thể.'
+  - scenario_id: conflicting_income
+    customer_id: cus_001
+    events:
+      - {as_of: '2026-10-27', channel: hotline, customer_text: 'Thu nhập của tôi 45 triệu/tháng.'}
+      - {as_of: '2026-10-28', channel: zalo, customer_text: 'Thu nhập của tôi 40 triệu/tháng.'}
+    expected: 'Memory đánh dấu mâu thuẫn và hỏi xác nhận thu nhập; bank_tools không tự giải quyết memory.'
+  - scenario_id: high_debt
+    customer_id: cus_004
+    request: {product: personal_loan, amount: 100000000, term: 36, income: 30000000, debt: 18000000}
+    expected: 'check_suitability trả ok=false, reasons có dti_too_high.'
+  - scenario_id: low_income_card
+    customer_id: cus_010
+    request: {income: 6000000, segment: mass}
+    expected: 'get_card_offer trả eligible=false, facts rỗng.'
+  - scenario_id: different_channel
+    customer_id: cus_006
+    as_of: '2026-10-31'
+    expected: 'home_loan: hotline 6.9% trong 12 tháng; web 7.1% trong 6 tháng.'
+  - scenario_id: bank_timeout
+    customer_id: cus_002
+    fault: {tool: get_rate, mode: timeout, count: 1}
+    expected: 'Lần gọi kế tiếp error=timeout và không có fact; agent không tự bịa lãi suất.'

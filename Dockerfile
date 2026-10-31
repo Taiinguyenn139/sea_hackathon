@@ -12,6 +12,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --python /usr/local/bin/python
 COPY harness/ harness/
 COPY bank_tools/ bank_tools/
+COPY simulators/ simulators/
 COPY eval/results/ eval/results/
 COPY --from=frontend /build/web/dist/ web/dist/
 RUN useradd --uid 10001 --create-home app && mkdir /data && chown app:app /data

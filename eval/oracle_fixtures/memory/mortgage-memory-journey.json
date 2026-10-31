@@ -42,8 +42,8 @@
         {"key": "objection", "value": "need_spouse", "unit": "", "source_type": "customer", "status": "superseded", "channel": "web", "observed_at": "2026-09-27", "source_step": [1, 2]},
         {"key": "objection", "value": "rate_high", "unit": "", "source_type": "customer", "status": "active", "channel": "web", "observed_at": "2026-10-31", "source_step": [3, 1]},
         {"key": "promo_rate", "value": "6.5", "unit": "%/năm", "source_type": "bank_tool", "status": "expired", "channel": "web", "observed_at": "2026-09-27", "valid_until": "2026-09-30"},
-        {"key": "promo_rate", "value": "6.9", "unit": "%/năm", "source_type": "bank_tool", "status": "active", "channel": "web", "observed_at": "2026-10-31", "valid_until": "2026-12-31"},
-        {"key": "promo_months", "value": "12", "unit": "tháng", "source_type": "bank_tool", "status": "active", "channel": "web", "observed_at": "2026-10-31", "valid_until": "2026-12-31"}
+        {"key": "promo_rate", "value": "7.1", "unit": "%/năm", "source_type": "bank_tool", "status": "active", "channel": "web", "observed_at": "2026-10-31", "valid_until": "2026-12-31"},
+        {"key": "promo_months", "value": "6", "unit": "tháng", "source_type": "bank_tool", "status": "active", "channel": "web", "observed_at": "2026-10-31", "valid_until": "2026-12-31"}
       ]
     }
   ]

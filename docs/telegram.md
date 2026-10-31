@@ -130,7 +130,8 @@ Yêu cầu mã mới làm mã cũ mất hiệu lực. Mã đi qua outbox bền v
 
 Bản demo chưa tích hợp SMS OTP hoặc đăng nhập khách hàng ngân hàng, nên dùng
 Telegram để xác nhận quyền truy cập số đã chia sẻ. Luồng hồ sơ demo chọn
-Hoa/Minh và xác minh ngày sinh trên web vẫn hoạt động như trước. Public API
+hồ sơ demo và gửi số điện thoại khớp hồ sơ ngay trong khung chat để nhận diện.
+Luồng nhận diện demo không thay thế mã Telegram của hồ sơ đã liên kết thực. Public API
 `/sessions` không cho nhập ID hồ sơ Telegram để chiếm phiên khách khác.
 Nếu một số đã liên kết với hồ sơ khác, bot giữ nguyên các hồ sơ và yêu cầu
 hỗ trợ; không tự gộp lịch sử của hai người. Chưa có luồng tự đổi số điện thoại.
@@ -154,10 +155,11 @@ python3 scripts/setup_telegram.py \
 ```
 
 Lệnh này gọi endpoint quản trị `/admin/identity-links/telegram`. Hồ sơ ngân hàng
-demo đã liên kết vẫn yêu cầu xác minh ngày sinh trước khi tư vấn.
+demo đã liên kết cho phép hỏi dữ liệu công khai; gửi số điện thoại khớp hồ sơ
+để nhận diện demo trước khi dùng lịch sử ngân hàng hoặc hai tool yêu cầu định danh.
 
-Gửi `/start` lần nữa, sau đó ngày sinh demo `1988-05-12` cho hồ sơ `hoa`
-(hoặc `1992-08-20` cho `minh`). Khi bot xác nhận đã xác minh, thử nhắn
+Gửi `/start` lần nữa, sau đó gửi `0900000001` cho hồ sơ `hoa`
+(hoặc `0900000002` cho `minh`). Khi bot xác nhận đã nhận diện hồ sơ demo, thử nhắn
 `Tôi cần tư vấn thẻ tín dụng, thu nhập 40 triệu/tháng` và kiểm tra phản hồi.
 Đăng ký webhook thành công chưa thay thế việc thử luồng này trên Telegram thật.
 

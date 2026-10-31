@@ -215,10 +215,12 @@ def test_model_classification_cannot_authorize_handoff(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "harness.agent.engine.json_completion", lambda *args, **kwargs: {"stage": "apply", "objection": None}
     )
-    known = {"amount": "2000000000", "term": "240", "income": "45000000"}
-    normal = engine.plan({"text": "Tôi muốn vay mua nhà", "known": known})["plan"]
+    known = {"amount": "2000000000", "term": "240", "income": "45000000", "debt": "0", "property_value": "3000000000"}
+    normal = engine.plan({"text": "Tôi muốn vay mua nhà", "known": known, "session": {"verified": True}})["plan"]
     assert normal["handoff"] is False and normal["stage"] == "quote"
-    explicit = engine.plan({"text": "Tôi muốn gặp chuyên viên để nộp hồ sơ", "known": known})["plan"]
+    explicit = engine.plan({
+        "text": "Tôi muốn gặp chuyên viên để nộp hồ sơ", "known": known, "session": {"verified": True},
+    })["plan"]
     assert explicit["handoff"] is True
 
 
@@ -229,7 +231,7 @@ def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
         session = client.post("/sessions", json={"demo_profile": "hoa", "mode": "harness"}).json()
         sid = session["session_id"]
         auth = {"Authorization": "Bearer " + session["session_token"]}
-        assert client.post(f"/sessions/{sid}/verify", headers=auth, json={"dob": "1988-05-12"}).status_code == 200
+        assert client.post(f"/sessions/{sid}/verify", headers=auth, json={"phone": session["user_id"]}).status_code == 200
         settings.llm_backend = "openai"
         settings.openai_key = "test-only"
         settings.openai_model = "primary"
@@ -241,7 +243,10 @@ def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
             return httpx.Response(503)
 
         monkeypatch.setattr(httpx.AsyncClient, "post", post)
-        body = {"text": "Vay mua nhà 2 tỷ trong 20 năm. Thu nhập 45 triệu. Gọi lại giúp tôi", "client_message_id": "same"}
+        body = {
+            "text": "Vay mua nhà 2 tỷ trong 20 năm. Thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ. Hẹn gọi lại sau 2 ngày lúc 09:00",
+            "client_message_id": "same",
+        }
         first = client.post(f"/sessions/{sid}/messages", headers=auth, json=body)
         second = client.post(f"/sessions/{sid}/messages", headers=auth, json=body)
         assert first.status_code == second.status_code == 200

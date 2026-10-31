@@ -1,0 +1,3 @@
+card_products:
+  - {card_id: CARD-CLASSIC, segment: mass, min_income: 7000000, card_limit_min: 10000000, card_limit_max: 100000000, income_multiplier: 3, annual_fee: 300000, fee_waiver_spend: 30000000, valid_from: '2026-01-01', valid_until: '2026-12-31'}
+  - {card_id: CARD-PLATINUM, segment: priority, min_income: 30000000, card_limit_min: 50000000, card_limit_max: 500000000, income_multiplier: 5, annual_fee: 1200000, fee_waiver_spend: 120000000, valid_from: '2026-01-01', valid_until: '2026-12-31'}

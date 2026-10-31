@@ -19,6 +19,7 @@ from pydantic import Field
 from bank_tools.service import FIXTURES
 from harness.config import Settings
 from harness.db import Database
+from harness.identity import get_profile
 from harness.llm import DEFAULT_REPLY, LLMUnavailable
 from harness.llm import logger as llm_logger
 from harness.schemas import (
@@ -210,7 +211,15 @@ def create_app(settings=None):
     @app.get("/demo/profiles")
     def profiles():
         return {
-            "profiles": [{"id": p["id"], "name": p["name"], "dob": p["dob"]} for p in FIXTURES["customers"]],
+            "profiles": [
+                {
+                    "id": p["user_id"],
+                    "phone": p["phone"],
+                    "name": p["name"],
+                    "runtime_profile": p["runtime_profile"],
+                }
+                for p in FIXTURES["customers"]
+            ],
             "fictional": True,
         }
 
@@ -227,6 +236,7 @@ def create_app(settings=None):
             "status": s["status"],
             "identity_status": harness.identity_status(s),
             "customer_id": s["customer_id"] if harness.can_chat(s) else None,
+            "user_id": harness.user_id(s["customer_id"]) if harness.can_chat(s) else None,
             "handoff_id": h["id"] if h else None,
         }
 
@@ -250,14 +260,21 @@ def create_app(settings=None):
         )
         return {"items": rows}
 
+    @app.get("/sessions/{sid}/tools")
+    def tool_definitions(sid: str, request: Request):
+        session = owner(sid, request)
+        return {"tools": harness.engine.bank.definitions(session["customer_id"], sid)}
+
     @app.post("/sessions/{sid}/verify")
     def verify(sid: str, body: VerifyInput, request: Request):
-        return harness.verify(owner(sid, request), body.dob, request.client.host if request.client else "unknown")
+        return harness.verify(owner(sid, request), body.phone, request.client.host if request.client else "unknown")
 
     @app.post("/sessions/{sid}/messages")
     def message(sid: str, body: MessageInput, request: Request, tasks: BackgroundTasks):
         owner(sid, request)
-        response = harness.message(sid, body.text, body.client_message_id)
+        response = harness.message(
+            sid, body.text, body.client_message_id, request.client.host if request.client else "unknown"
+        )
         if harness.identity_status(harness.session(sid)) == "identified":
             try:
                 response = {**response, "brief": harness.engine.memory.brief(harness.session(sid)["customer_id"])}
@@ -321,6 +338,8 @@ def create_app(settings=None):
 
     @app.get("/customers/{customer}/brief", dependencies=[Depends(staff)])
     def brief(customer: str):
+        fixture = get_profile(customer)
+        customer = fixture["id"] if fixture else customer
         if not harness.engine.memory.profile(customer):
             raise HTTPException(404, "Customer not found")
         return harness.engine.memory.brief(customer)
@@ -421,10 +440,11 @@ def create_app(settings=None):
 
     @app.post("/admin/identity-links/telegram", dependencies=[Depends(admin)])
     def identity_link(body: LinkInput):
-        if body.customer_id not in {p["id"] for p in FIXTURES["customers"]}:
+        profile = get_profile(body.customer_id)
+        if not profile:
             raise HTTPException(400, "Unknown demo profile")
         db.execute(
-            "INSERT OR REPLACE INTO identity_links VALUES(?,?,?)", ("telegram", body.external_id, body.customer_id)
+            "INSERT OR REPLACE INTO identity_links VALUES(?,?,?)", ("telegram", body.external_id, profile["id"])
         )
         return {"status": "linked"}
 
@@ -453,16 +473,14 @@ def create_app(settings=None):
 
     @app.get("/admin/state", dependencies=[Depends(admin)])
     def state():
-        import hashlib
-
-        from bank_tools.service import FIXTURE_PATH
+        from bank_tools.service import fixture_hash
 
         return {
             "backend": settings.llm_backend,
             "model": settings.openai_model if settings.llm_backend != "rules" else None,
             "clock": db.setting("clock"),
             "playbook": db.setting("playbook"),
-            "fixture_hash": hashlib.sha256(FIXTURE_PATH.read_bytes()).hexdigest(),
+            "fixture_hash": fixture_hash(),
             "effective_config": {
                 "backend": settings.llm_backend,
                 "model": settings.openai_model,

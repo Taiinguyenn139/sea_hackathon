@@ -2,7 +2,7 @@
 
 Quy ước làm việc của team: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Memory Harness là chatbot fintech dùng dữ liệu ngân hàng hư cấu, gồm web chat,
+Bankwise là chatbot fintech dùng dữ liệu ngân hàng hư cấu, gồm web chat,
 console chuyên viên, benchmark và adapter Telegram. Backend FastAPI/SQLite;
 frontend React/Vite. Chạy một backend process để giữ hợp đồng SQLite/checkpoint.
 
@@ -52,6 +52,12 @@ expected memory và cách bật checkpoint checks trong eval runner bằng
 `--memory-oracles eval/oracle_fixtures/memory`. Dữ liệu dùng chung mock ngân hàng
 hiện có; expected memory chỉ dành cho evaluator.
 
+[Bộ identity đa phiên](docs/IDENTITY_DATASET.md) cung cấp 10 người dùng theo số
+điện thoại, 40 phiên trên 4 kênh, lời khách và đáp án riêng cho các tình huống
+hỏi người nhà, so ngân hàng và tiếp tục hội thoại sau khi đổi kênh. Backend dùng
+cùng nguồn identity để nhận diện số điện thoại gửi trong từng phiên chat demo;
+không yêu cầu ngày sinh và CRM vẫn cần đăng nhập riêng.
+
 ## Deploy
 
 [Hướng dẫn GCP](docs/deployment.md) sở hữu cách cấu hình variables, OIDC/Secret Manager,
@@ -59,3 +65,11 @@ kích hoạt workflow, xem log, kiểm tra URL và rollback. [Workflow](.github/
 kiểm tra PR; sau merge vào `main`, chỉ deploy khi `GCP_DEPLOY_ENABLED=true` và môi trường
 `demo` đã được cấu hình. URL demo nằm trong biến `APP_URL` của environment này;
 kiểm tra health và revision theo hướng dẫn vận hành để xác nhận phiên bản đang chạy.
+
+## Tools ngân hàng
+
+[Hướng dẫn tích hợp](docs/INTEGRATION.md) mô tả 9 tool từ nhánh tuannv, quyền truy cập,
+ngày gọi bắt buộc và adapter agent trên main. [Dữ liệu giả lập](docs/DATA.md) giải thích
+fixtures nghiệp vụ. Backend nhận diện phone demo dùng
+`simulators/datasets/identity_v1/identities.json` qua registry `harness/identity.py`;
+alias `hoa`/`minh` được giữ để dùng tiếp memory cũ.

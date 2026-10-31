@@ -7,6 +7,7 @@ independently; runtime IDs are resolved from public traces, not hardcoded.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -138,10 +139,18 @@ def score_memory(
         else:
             receipt = tool_receipts.get(actual.get("source_ref"), {})
             emitted = receipt.get("result", {}).get("facts", [])
-            fields_to_match = ("key", "value", "unit", "channel", "observed_at", "valid_until", "source_ref")
+            fields_to_match = ("key", "unit", "channel", "observed_at", "valid_until", "source_ref")
+
+            def same_value(emitted_fact, actual_fact=actual):
+                # ToolResult uses JSON numbers; SQLite memory keeps numeric strings.
+                try:
+                    left, right = Decimal(str(emitted_fact.get("value"))), Decimal(str(actual_fact.get("value")))
+                    return left.is_finite() and right.is_finite() and left == right
+                except InvalidOperation:
+                    return False
             if not any(
                 isinstance(f, dict) and f.get("fact_id") == actual.get("id")
-                and all(f.get(k) == actual.get(k) for k in fields_to_match)
+                and same_value(f) and all(f.get(k) == actual.get(k) for k in fields_to_match)
                 for f in emitted
             ):
                 issues.append(f"memory:bank_provenance:{label}")
