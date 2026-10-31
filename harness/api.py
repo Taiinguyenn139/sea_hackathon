@@ -26,6 +26,8 @@ from harness.schemas import (
     Input,
     LoginInput,
     MessageInput,
+    PhoneConfirmInput,
+    PhoneLoginInput,
     SessionInput,
     VerifyInput,
 )
@@ -211,10 +213,21 @@ def create_app(settings=None):
         return {
             "session_id": sid,
             "status": s["status"],
-            "identity_status": "verified" if s["verified"] else "guest" if harness.can_chat(s) else "unverified",
+            "identity_status": harness.identity_status(s),
             "customer_id": s["customer_id"] if harness.can_chat(s) else None,
             "handoff_id": h["id"] if h else None,
         }
+
+    @app.post("/auth/phone/start")
+    def phone_start(body: PhoneLoginInput, request: Request, tasks: BackgroundTasks):
+        result = harness.phone_identity.begin(body.phone, request.client.host if request.client else "unknown")
+        if hasattr(app.state, "dispatcher"):
+            tasks.add_task(app.state.dispatcher.send_pending)
+        return result
+
+    @app.post("/auth/phone/confirm")
+    def phone_confirm(body: PhoneConfirmInput):
+        return harness.phone_session(body.challenge_id, body.code)
 
     @app.get("/sessions/{sid}/turns")
     def turns(sid: str, request: Request, offset: int = 0, limit: int = 100):
@@ -233,6 +246,8 @@ def create_app(settings=None):
     def message(sid: str, body: MessageInput, request: Request, tasks: BackgroundTasks):
         owner(sid, request)
         response = harness.message(sid, body.text, body.client_message_id)
+        if harness.identity_status(harness.session(sid)) == "identified":
+            response = {**response, "brief": harness.engine.memory.brief(harness.session(sid)["customer_id"])}
         tasks.add_task(harness.engine.memory.flush, harness.session(sid)["customer_id"])
         if hasattr(app.state, "dispatcher"):
             tasks.add_task(app.state.dispatcher.send_pending)

@@ -28,6 +28,15 @@ class VerifyInput(Input):
     dob: str = Field(max_length=10)
 
 
+class PhoneLoginInput(Input):
+    phone: str = Field(min_length=5, max_length=64)
+
+
+class PhoneConfirmInput(Input):
+    challenge_id: str = Field(min_length=20, max_length=100)
+    code: str = Field(pattern=r"^\d{6}$")
+
+
 class HandoffInput(Input):
     reason: str = Field(default="Khách yêu cầu chuyên viên", max_length=1000)
 
