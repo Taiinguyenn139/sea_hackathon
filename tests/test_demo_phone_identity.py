@@ -254,7 +254,7 @@ def test_openai_with_legacy_demo_flag_still_uses_fixture_tool_and_never_phone_sh
             else:
                 choice = {"finish_reason": "stop", "message": {"content": json.dumps({"draft": "Anh/chị muốn tiếp tục nhu cầu nào?"})}}
         else:
-            value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else {"spans": []}
+            value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else {"facts": []}
             choice = {"finish_reason": "stop", "message": {"content": json.dumps(value)}}
         return httpx.Response(200, json={"choices": [choice]})
 
@@ -315,7 +315,12 @@ def test_openai_telegram_guest_binds_once_keeps_old_memory_isolated_and_reuses_f
             else:
                 choice = {"finish_reason": "stop", "message": {"content": json.dumps({"draft": "Anh/chị muốn tiếp tục nhu cầu nào?"})}}
         else:
-            value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else {"spans": []}
+            value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else {"facts": []}
+            if "Trích xuất memory" in payload["messages"][0]["content"]:
+                extracted = json.loads(payload["messages"][1]["content"])
+                if "Thu nhập chính xác của tôi là 50 triệu" in extracted["text"]:
+                    value = {"facts": [{"key": "income", "value": "50000000", "unit": "đồng",
+                                        "operation": "replace", "source_text": "50 triệu"}]}
             choice = {"finish_reason": "stop", "message": {"content": json.dumps(value)}}
         return httpx.Response(200, json={"choices": [choice]})
 
@@ -451,9 +456,14 @@ def test_openai_draft_cannot_reuse_old_income_after_cross_channel_update(setting
         instruction = messages[0]["content"]
         if "INPUT_SECURITY_CLASSIFIER" in instruction:
             value = {"category": "safe"}
-        elif "Trích các đoạn" in instruction:
+        elif "Trích xuất memory" in instruction:
             payload = json.loads(messages[1]["content"])
-            value = {"spans": [payload["text"]]}
+            text = payload["text"]
+            value = {"facts": []}
+            if text == "Thu nhập 47 triệu" or text == update:
+                value = {"facts": [{"key": "income", "value": "47000000" if text == "Thu nhập 47 triệu" else "53000000",
+                                    "unit": "đồng", "operation": "conflict" if text == update and expected is None else "replace",
+                                    "source_text": text}]}
         else:
             assert "tools" in kwargs["json"]
             payload = json.loads(instruction.split("BACKEND_CONTEXT_JSON:\n", 1)[1])

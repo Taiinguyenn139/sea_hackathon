@@ -32,9 +32,10 @@ def calls(*items):
 
 
 class Provider:
-    def __init__(self, steps):
+    def __init__(self, steps, memory_facts=()):
         self.steps = list(steps)
         self.requests = []
+        self.memory_facts = list(memory_facts)
 
     async def post(self, _client, url, **kwargs):
         payload = kwargs["json"]
@@ -42,7 +43,7 @@ class Provider:
         if "INPUT_SECURITY_CLASSIFIER" in instruction:
             value = {"category": "safe"}
         elif "tools" not in payload:
-            value = {"spans": []}
+            value = {"facts": self.memory_facts}
         else:
             self.requests.append(payload)
             assert self.steps, "Unexpected extra agent request"
@@ -87,7 +88,9 @@ def test_model_calls_identity_then_receives_an_and_sourced_history(tmp_path, mon
         data = context(payload)
         assert data["brief"]["name"] == "Trần Minh An"
         assert data["brief"]["user_id"] == "0900000002"
-        assert len(data["brief"]["history"]) == 9
+        history = data["brief"]["history"]
+        assert len([row for row in history if row.get("source_origin") == "dataset_history"]) == 9
+        assert any(row.get("source_origin") == "runtime" for row in history)
         names = {tool["function"]["name"] for tool in payload["tools"]}
         assert "send_summary" in names and "schedule_callback" in names and "crm_lookup" not in names
         values = {fact["key"]: fact for fact in data["facts"].values()}
@@ -133,7 +136,16 @@ def test_phone_and_loan_in_one_turn_continue_through_real_tools(tmp_path, monkey
         rate = next(fact for fact in facts if fact["key"] == "standard_rate")
         return answer(f"Lãi suất tham khảo {{fact:{rate['id']}}}. Đây là minh họa, chưa phải phê duyệt.")
 
-    provider = Provider([calls(("id", "verify_identity", {"phone": "+84900000003"})), quote, calculate, finish])
+    memory_facts = [{"key": key, "value": value, "unit": unit, "operation": "replace", "source_text": source}
+                    for key, value, unit, source in [
+                        ("product", "home_loan", "", "vay mua nhà"),
+                        ("amount", "2000000000", "đồng", "2 tỷ"),
+                        ("term", "240", "tháng", "20 năm"),
+                        ("income", "45000000", "đồng", "thu nhập 45 triệu"),
+                        ("debt", "0", "đồng", "không có nợ"),
+                        ("property_value", "3000000000", "đồng", "giá nhà 3 tỷ"),
+                    ]]
+    provider = Provider([calls(("id", "verify_identity", {"phone": "+84900000003"})), quote, calculate, finish], memory_facts)
     provider.install(monkeypatch)
     with TestClient(create_app(settings(tmp_path))) as client:
         session, auth = new_session(client)

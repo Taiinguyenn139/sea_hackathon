@@ -34,8 +34,18 @@ def provider(request):
                 "Em đã ghi nhận khoản vay {fact:" + amount["id"] + "}. Anh/chị muốn làm rõ điểm nào?"
                 if amount else "Em tiếp tục hỗ trợ nhu cầu của anh/chị."
             )}
-    elif "Trích các đoạn" in instruction:
-        value = {"spans": []}
+    elif "Trích xuất memory" in instruction:
+        data = json.loads(body["messages"][1]["content"])
+        value = {"facts": []}
+        if data["text"] == "Tôi vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ":
+            value = {"facts": [
+                {"key": key, "value": item, "unit": unit, "operation": "replace", "source_text": data["text"]}
+                for key, item, unit in [
+                    ("product", "home_loan", ""), ("amount", "2000000000", "đồng"),
+                    ("term", "240", "tháng"), ("income", "45000000", "đồng"),
+                    ("debt", "0", "đồng"), ("property_value", "3000000000", "đồng"),
+                ]
+            ]}
     elif "Phân loại hội thoại" in instruction:
         value = {"stage": "quote", "intent": "advice", "objection": None}
     else:

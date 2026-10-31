@@ -335,6 +335,8 @@ class Harness:
                         if guest_binding:
                             c.execute("INSERT INTO identity_links VALUES('telegram',?,?)", (session["external_id"], target["id"]))
                         c.execute("INSERT OR REPLACE INTO session_identity_modes VALUES(?,?)", (sid, "demo"))
+                        if turn_id is not None:
+                            self.engine.memory.enqueue(c, turn_id, target["id"], sid, session["channel"], text)
                         c.execute("DELETE FROM auth_attempts WHERE identity=? AND source=? AND at=?", (identity_key, source, current))
                         result["data"] = {
                             "verified": True, "identity_status": "verified", "user_id": target["user_id"],
@@ -606,6 +608,7 @@ class Harness:
             "business_as_of": self.db.setting("clock"),
             "backend": self.settings.llm_backend,
             "revision": self.settings.revision,
+            "memory_result": state.get("memory_result", {}),
             "profile_context": {k: v for k, v in state.get("profile_context", {}).items() if k != "name"},
         }
         logger.info("profile_context %s", canonical({

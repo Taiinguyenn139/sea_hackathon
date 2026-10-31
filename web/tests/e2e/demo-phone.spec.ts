@@ -9,6 +9,10 @@ for (const width of [375, 1440]) {
     let legacyStarts = 0;
     let messages = 0;
     let siblings = 0;
+    const transcripts = new Map<
+      string,
+      { id: string; text: string; reply: string }[]
+    >();
     const sessions = new Map<
       string,
       {
@@ -30,6 +34,7 @@ for (const width of [375, 1440]) {
         brief: { redacted: true },
       };
       sessions.set(id, session);
+      transcripts.set(id, []);
       return session;
     };
     await page.route("**/api/**", async (route) => {
@@ -60,7 +65,9 @@ for (const width of [375, 1440]) {
           "Bearer token-first",
         );
         siblings += 1;
-        return route.fulfill({ json: anonymous("second") });
+        return route.fulfill({
+          json: anonymous(siblings === 1 ? "second" : "third"),
+        });
       }
       if (path.endsWith("/messages/stream")) {
         const id = path.split("/")[2];
@@ -87,13 +94,29 @@ for (const width of [375, 1440]) {
           reply =
             "Kết quả verify_identity đã kết nối hồ sơ Trần Minh An cho phiên này.";
         }
+        if (body.text === "0900000001") {
+          session.user_id = "0900000001";
+          session.identity_status = "verified";
+          session.brief = {
+            customer_id: "hoa",
+            name: "Nguyễn Thị Hoa",
+            needs: [],
+          };
+          reply =
+            "Kết quả verify_identity đã kết nối hồ sơ Nguyễn Thị Hoa cho phiên này.";
+        }
+        transcripts
+          .get(id)!
+          .push({ id: body.client_message_id, text: body.text, reply });
         return route.fulfill({
           contentType: "text/event-stream",
           body: `event: result\ndata: ${JSON.stringify({ ...session, reply, guard_events: [], used_fact_ids: [] })}\n\n`,
         });
       }
       if (path.endsWith("/turns"))
-        return route.fulfill({ json: { items: [] } });
+        return route.fulfill({
+          json: { items: transcripts.get(path.split("/")[2]) ?? [] },
+        });
       if (path.startsWith("/sessions/"))
         return route.fulfill({ json: sessions.get(path.split("/")[2]) });
       return route.fulfill({ status: 404, json: {} });
@@ -152,6 +175,7 @@ for (const width of [375, 1440]) {
       fullPage: true,
       animations: "disabled",
     });
+    await composer.fill("Bản nháp của anh An");
     await page
       .getByRole("button", { name: "Bắt đầu phiên mới", exact: true })
       .click();
@@ -173,10 +197,61 @@ for (const width of [375, 1440]) {
     await expect(page.getByRole("log")).toContainText(
       "thông tin công khai trước khi nhận diện",
     );
+    await composer.fill("0900000001");
+    await composer.press("Enter");
+    await expect(page.getByRole("log")).toContainText("Nguyễn Thị Hoa");
+    await expect(page.getByRole("log")).not.toContainText("Trần Minh An");
+    expect(sessions.get("first")?.user_id).toBe("0900000002");
+    expect(sessions.get("second")?.user_id).toBe("0900000001");
+    await page.reload();
+    await expect(composer).toBeEnabled();
+    await expect(page.getByRole("log")).toContainText("Nguyễn Thị Hoa");
+    await expect(page.getByRole("log")).not.toContainText("Trần Minh An");
+    const history =
+      width === 375
+        ? page.getByRole("dialog", { name: "Các cuộc trò chuyện" })
+        : page.locator("#customer-history");
+    if (width === 375)
+      await page.getByRole("button", { name: "Mở danh sách phiên" }).click();
+    await history.getByRole("button", { name: /123 Có thể tiếp tục/ }).click();
+    await expect(composer).toHaveValue("Bản nháp của anh An");
+    await expect(page.getByRole("log")).toContainText("Trần Minh An");
+    await expect(page.getByRole("log")).not.toContainText("Nguyễn Thị Hoa");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            JSON.parse(
+              sessionStorage.getItem("bankwise-chat-session") ?? "null",
+            )?.user_id,
+        ),
+      )
+      .toBe("0900000002");
+    // Reusing this person's phone requires a fresh claim in another anonymous session.
+    await page
+      .getByRole("button", { name: "Bắt đầu phiên mới", exact: true })
+      .click();
+    await expect(composer).toHaveValue("");
+    await expect(page.getByRole("log")).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            JSON.parse(
+              sessionStorage.getItem("bankwise-chat-session") ?? "null",
+            )?.user_id,
+        ),
+      )
+      .toBeNull();
+    await composer.fill("0900000002");
+    await composer.press("Enter");
+    await expect(page.getByRole("log")).toContainText("Trần Minh An");
+    expect(transcripts.get("first")).toHaveLength(2);
+    expect(transcripts.get("third")).toHaveLength(1);
     expect(starts).toBe(1);
-    expect(siblings).toBe(1);
+    expect(siblings).toBe(2);
     expect(legacyStarts).toBe(0);
-    expect(messages).toBe(3);
+    expect(messages).toBe(5);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth > innerWidth,

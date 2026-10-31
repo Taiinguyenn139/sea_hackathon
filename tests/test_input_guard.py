@@ -178,7 +178,7 @@ def test_phone_claim_is_masked_and_classified_before_identity_route(client, monk
                 }]}}
             return httpx.Response(200, json={"choices": [choice]}, request=httpx.Request("POST", url))
         if "Trích" in request["messages"][0]["content"]:
-            return httpx.Response(200, json={"choices": [{"message": {"content": '{"spans":[]}'}}]},
+            return httpx.Response(200, json={"choices": [{"message": {"content": '{"facts":[]}'}}]},
                                   request=httpx.Request("POST", url))
         assert "INPUT_SECURITY_CLASSIFIER" in request["messages"][0]["content"]
         classified_text = json.loads(request["messages"][1]["content"])["text"]
@@ -191,7 +191,11 @@ def test_phone_claim_is_masked_and_classified_before_identity_route(client, monk
 
     monkeypatch.setattr(httpx.AsyncClient, "post", classify)
     result = post(client, sid, headers, "Số điện thoại của tôi là 0900000001").json()
-    assert len(requests) == (4 if category == "safe" else 1)
+    assert "INPUT_SECURITY_CLASSIFIER" in requests[0]["messages"][0]["content"]
+    if category == "safe":
+        assert len([request for request in requests if "tools" in request]) == 2
+    else:
+        assert len(requests) == 1
     harness = client.app.state.harness
     if category == "safe":
         assert result["identity_status"] == "verified"
@@ -199,8 +203,9 @@ def test_phone_claim_is_masked_and_classified_before_identity_route(client, monk
         assert all(job["status"] == "processed" for job in harness.db.all("SELECT * FROM memory_jobs"))
         assert not harness.db.all("SELECT * FROM facts WHERE source_type='customer'")
         assert len(harness.db.all("SELECT * FROM tool_calls WHERE tool='verify_identity'")) == 1
+        request_count = len(requests)
         assert post(client, sid, headers, "Số điện thoại của tôi là 0900000001").json() == result
-        assert len(requests) == 4
+        assert len(requests) == request_count
     else:
         assert result["guard_events"][0]["guard_id"] == "G9"
         assert result["identity_status"] == "unverified"
@@ -259,7 +264,7 @@ def test_allowed_turn_has_guard_agent_and_extraction_calls_and_duplicate_has_non
         elif "Phân loại" in instruction:
             result = {"stage": "discover", "objection": None}
         elif "Trích" in instruction:
-            result = {"spans": ["Thu nhập 45 triệu"]}
+            result = {"facts": [{"key": "income", "value": "45000000", "unit": "đồng", "operation": "replace", "source_text": "Thu nhập 45 triệu"}]}
         else:
             result = {"draft": "Anh/chị muốn vay bao nhiêu tiền?"}
         return httpx.Response(
@@ -353,7 +358,7 @@ def test_telegram_approved_message_runs_classifier_once(client, monkeypatch):
         elif "Phân loại" in instruction:
             result = {"stage": "discover", "objection": None}
         elif "Trích" in instruction:
-            result = {"spans": []}
+            result = {"facts": []}
         else:
             result = {"draft": "Anh/chị muốn vay bao nhiêu tiền?"}
         return httpx.Response(

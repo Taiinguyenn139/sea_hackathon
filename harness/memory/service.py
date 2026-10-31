@@ -1,114 +1,13 @@
 import json
-import re
 import time
-from decimal import Decimal
 
 from bank_tools.service import canonical, ident
 from harness.customer_profile import customer_profile
 from harness.llm import ExtractionSuggestion, LLMUnavailable, current_deadline, json_completion
+from harness.memory import rules
 from harness.memory.dataset_history import combine_facts, context_slots, project_history
-
-_MONEY = re.compile(
-    r"(?<![\w.])-?(?:\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)\s*(?:tỷ|triệu|nghìn|trieu|ty|đồng|vnd)\b"
-)
-_CLAUSES = re.compile(r"(?<!\d)[.;!?]|[.;!?](?!\d)|,(?!\d)")
-
-
-def _money_slots(text):
-    slots = {}
-    for clause in _CLAUSES.split(text):
-        previous_end = 0
-        for match in _MONEY.finditer(clause):
-            token = re.fullmatch(r"(-?[\d.,]+)\s*(tỷ|triệu|nghìn|trieu|ty|đồng|vnd)", match[0])
-            number, unit = token.groups()
-            if unit in ("đồng", "vnd") and not re.fullmatch(r"-?(?:\d{1,3}(?:[.,]\d{3})+|\d+)", number):
-                continue
-            number = re.sub(r"[.,]", "", number) if re.fullmatch(r"-?\d{1,3}(?:[.,]\d{3})+", number) else number.replace(",", ".")
-            value = Decimal(number) * {
-                "tỷ": 10**9, "ty": 10**9, "triệu": 10**6, "trieu": 10**6,
-                "nghìn": 1000, "đồng": 1, "vnd": 1,
-            }[unit]
-            before = clause[previous_end:match.start()]
-            after = clause[match.end():match.end() + 40]
-            previous_end = match.end()
-            if any(cue in before for cue in ("đừng", "không tự", "không lấy lại", "không được", "chưa nhận")):
-                continue
-            cues = {
-                "income": ["thu nhập", "lương"], "debt": ["nợ", "trả nợ"],
-                "property_value": ["giá nhà", "giá trị", "căn nhà"], "amount": ["khoản vay", "vay", "ngân sách"],
-            }
-            nearest = [(before.rfind(cue), key) for key, words in cues.items() for cue in words if cue in before]
-            key = max(nearest)[1] if nearest else "amount"
-            if re.search(r"(?<!mua )\bnhà\s*(?:giá|là|vẫn)?\s*$", before):
-                key = "property_value"
-            if not nearest and (re.match(r"\s*thu nhập", after) or ("khai" in before and "mỗi tháng" in after)):
-                key = "income"
-            if key == "amount" and any(cue in before for cue in ("hỗ trợ", "giúp thêm", "góp thêm", "cho thêm")):
-                continue
-            if key == "amount" and any(cue in clause for cue in ("hư cấu", "%", "ưu đãi")) and not any(
-                cue in before for cue in ("vay", "ngân sách", "cùng", "phương án")
-            ):
-                continue
-            slots[key] = (str(value.quantize(Decimal(1))), "đồng")
-    return slots
-
-
-def extract(text):
-    low = text.lower()
-    slots = {}
-    if any(x in low for x in ["mua nhà", "vay nhà", "home_loan"]):
-        slots["product"] = ("home_loan", "")
-    elif any(x in low for x in ["tiêu dùng", "personal_loan"]):
-        slots["product"] = ("personal_loan", "")
-    elif any(x in low for x in ["thẻ", "credit_card"]):
-        slots["product"] = ("credit_card", "")
-    slots.update(_money_slots(low))
-    if re.search(r"không (?:có |còn )?nợ|(?:nợ|trả nợ)(?: hàng tháng)?\s*(?:là |: )?0(?:\s|$|[.,;])", low):
-        slots["debt"] = ("0", "đồng")
-    for clause in _CLAUSES.split(low):
-        # A promotion's duration is a bank claim, not the customer's loan term.
-        if any(cue in clause for cue in ("%", "ưu đãi", "hư cấu", "trả sớm", "trả bớt")):
-            continue
-        term = re.search(r"(\d+)\s*(năm|tháng)", clause)
-        if term:
-            slots["term"] = (str(int(term[1]) * (12 if term[2] == "năm" else 1)), "tháng")
-    if any(x in low for x in ["lãi cao", "lãi sau", "tăng lãi"]):
-        slots["objection"] = ("rate_high", "")
-    if any(x in low for x in ["chồng", "vợ", "gia đình"]):
-        slots["objection"] = ("need_spouse", "")
-    for clause in _CLAUSES.split(low):
-        if any(x in clause for x in ["gọi lại", "hẹn", "liên hệ lại"]) and not re.search(
-            r"(?:đừng|không|chưa)\b.*(?:hẹn|gọi|liên hệ)|(?:tự|sẽ)\s*(?:chủ động\s*)?liên hệ", clause,
-        ):
-            slots["commitment"] = ("Khách yêu cầu liên hệ lại", "")
-    if re.search(r"\btôi (?:sẽ |quyết định |muốn )?(?:hoãn|dừng kế hoạch|chưa vay|không vay nữa)\b", low):
-        slots["loan_status"] = ("tạm hoãn kế hoạch vay", "")
-    return slots
-
-
-def corrects(text, key):
-    """Recognize an explicit current-value update for this field, not another clause."""
-    clauses = re.split(r"[;\n]|\.(?!\d)|,(?!\d)|\s+(?:và|nhưng)\s+", text.lower())
-    # An explicit confirmation of the whole new request also covers the
-    # comma-separated fields in that sentence, without extending to later ones.
-    clauses.extend(sentence for sentence in re.split(r"[;\n]|\.(?!\d)", text.lower())
-                   if re.search(r"\bxác nhận nhu cầu mới\b", sentence))
-    for clause in clauses:
-        if key not in extract(clause):
-            continue
-        # A proposed or negated change must not resolve conflicting statements.
-        intent = re.sub(r"không (?:có |còn )?nợ", "", clause)
-        if "?" in clause or re.search(
-            r"\b(?:nếu|giả sử|giả định|ước gì|mong muốn|dự kiến|sẽ|chưa|không)\b", intent,
-        ):
-            continue
-        if re.search(
-            r"\b(?:xác nhận|đính chính|sửa lại|chính xác|cập nhật|"
-            r"tăng (?:lên|thành)|giảm (?:xuống|còn)|đổi (?:sang|thành)|"
-            r"hiện tại|bây giờ|hiện nay|mới là)\b", clause,
-        ):
-            return True
-    return False
+from harness.memory.prompts import DEMO_HISTORY_INSTRUCTION, EXTRACTION_INSTRUCTION
+from harness.memory.rules import corrects, extract
 
 
 class Memory:
@@ -127,7 +26,7 @@ class Memory:
         if not getattr(self.settings, "identity_history_enabled", False):
             return {"facts": [], "history": [], "pending_topics": []}
         return project_history(
-            customer, as_of or self.db.setting("clock"), extract, directory=self.history_directory,
+            customer, as_of or self.db.setting("clock"), rules.extract, directory=self.history_directory,
         )
 
     def _legacy_demo_history_enabled(self):
@@ -177,7 +76,10 @@ class Memory:
                     raise RuntimeError("memory sequence gap")
                 if job["status"] == "failed":
                     raise RuntimeError("memory job failed")
-                use_llm = allow_llm and self.settings and self.settings.llm_backend == "openai"
+                use_llm = self.settings and self.settings.llm_backend == "openai"
+                if use_llm and not allow_llm:
+                    # Preflight checks ordering but leaves interpretation for the LLM worker.
+                    return
                 if not use_llm:
                     self._write(c, job["turn_id"], customer, json.loads(job["payload"]))
                     self._finish(c, job, customer)
@@ -203,13 +105,7 @@ class Memory:
                 continue
             try:
                 # Provider calls must never hold the shared SQLite transaction/lock.
-                suggestion = json_completion(
-                    self.settings,
-                    "Trích các đoạn nguyên văn chứa thông tin nhu cầu tài chính. Trả JSON {spans:[string]}. Mỗi span phải là chuỗi con nguyên văn của text. Không tự tạo giá trị.",
-                    {"text": payload["text"]},
-                    schema=ExtractionSuggestion,
-                    purpose="extract",
-                )
+                suggestion = self.interpret(payload["text"], payload["session_id"], job["turn_id"], customer)
                 with self.db.transaction() as c:
                     current = c.execute("SELECT * FROM memory_jobs WHERE turn_id=?", (job["turn_id"],)).fetchone()
                     sequence = c.execute(
@@ -234,6 +130,32 @@ class Memory:
                 )
                 raise
 
+    def interpret(self, text, session_id, turn_id, customer=None):
+        history = self.db.all(
+            "SELECT t.id,t.text,t.reply FROM turns t WHERE t.session_id=? AND t.rowid < "
+            "(SELECT rowid FROM turns WHERE id=?) AND NOT EXISTS "
+            "(SELECT 1 FROM memory_jobs j WHERE j.turn_id=t.id AND ? IS NOT NULL AND j.customer_id<>?) "
+            "ORDER BY t.rowid DESC LIMIT 12", (session_id, turn_id, customer, customer),
+        )[::-1]
+        session = self.db.one("SELECT mode FROM sessions WHERE id=?", (session_id,))
+        remembered = [
+            {key: fact[key] for key in ("key", "value", "unit", "status", "channel", "source_ref")}
+            for fact in self.facts(customer)
+            if fact["source_type"] in ("customer", "demo_history") and fact["status"] in ("active", "conflicted")
+        ] if customer and (not session or session["mode"] != "no_memory") else []
+        result = json_completion(
+            self.settings, EXTRACTION_INSTRUCTION,
+            {"text": text, "recent_conversation": history, "remembered_facts": remembered},
+            schema=ExtractionSuggestion, purpose="extract",
+        )
+        if result is None:
+            raise LLMUnavailable("missing_extraction")
+        return result
+
+    def turn_extraction(self, turn_id):
+        job = self.db.one("SELECT payload FROM memory_jobs WHERE turn_id=? AND status='processed'", (turn_id,))
+        return json.loads(job["payload"]).get("extraction") if job else None
+
     @staticmethod
     def _finish(c, job, customer):
         c.execute(
@@ -242,18 +164,25 @@ class Memory:
         c.execute("UPDATE customer_sequences SET processed_seq=? WHERE customer_id=?", (job["seq"], customer))
 
     def _write(self, c, turn, customer, payload, suggestion=None):
-        extracted = extract(payload["text"])
-        if getattr(self.settings, "identity_history_enabled", False):
-            extracted.update(context_slots(payload["text"]))
-        if suggestion and isinstance(suggestion.get("spans"), list):
-            for span in suggestion["spans"][:20]:
-                if isinstance(span, str) and span and span in payload["text"]:
-                    for key, value in extract(span).items():
-                        extracted.setdefault(key, value)
-        baseline = {fact["key"]: fact for fact in self._historical(customer, payload["date"])["facts"]
-                    if fact["status"] == "active"}
-        for key, (value, unit) in extracted.items():
-            correction = corrects(payload["text"], key)
+        if self.settings and self.settings.llm_backend == "openai":
+            if suggestion is None:
+                raise LLMUnavailable("missing_extraction")
+            extraction = ExtractionSuggestion.model_validate(suggestion).model_dump()
+            updates = extraction["facts"]
+            # Cache exactly what the model decided, atomically with the facts and sequence.
+            payload = {**payload, "extraction": extraction}
+            c.execute("UPDATE memory_jobs SET payload=? WHERE turn_id=?", (canonical(payload), turn))
+        else:
+            extracted = extract(payload["text"])
+            if getattr(self.settings, "identity_history_enabled", False):
+                extracted.update(context_slots(payload["text"]))
+            updates = [{"key": key, "value": value, "unit": unit, "operation": "replace" if corrects(payload["text"], key)
+                        else "observe"} for key, (value, unit) in extracted.items()]
+        baseline = {} if self.settings and self.settings.llm_backend == "openai" else {
+            fact["key"]: fact for fact in self._historical(customer, payload["date"])["facts"] if fact["status"] == "active"
+        }
+        for update in updates:
+            key, value, unit = update["key"], update["value"], update["unit"]
             fid = ident("cf_", [turn, key, value])
             old = c.execute(
                 "SELECT * FROM facts WHERE customer_id=? AND key=? AND source_type='customer' AND status IN ('active','conflicted')",
@@ -265,7 +194,10 @@ class Memory:
                 old = [baseline[key]]
             different = [f for f in old if f["value"] != value]
             status = "active"
-            if different and not correction and any(f["channel"] != payload["channel"] for f in different):
+            if update["operation"] == "conflict" or (
+                update["operation"] == "observe" and different
+                and any(f["channel"] != payload["channel"] for f in different)
+            ):
                 status = "conflicted"
                 c.execute(
                     "UPDATE facts SET status='conflicted' WHERE customer_id=? AND key=? AND source_type='customer' AND status IN ('active','conflicted')",
@@ -321,6 +253,32 @@ class Memory:
                            and (fact["status"] == "conflicted" or fact["value"] != product) for fact in runtime):
             historical = [fact for fact in historical if fact["key"] not in ("amount", "term", "property_value", "loan_status")]
         return combine_facts(historical, runtime)
+
+    def llm_demo_facts(self, customer, date, live):
+        from harness.demo_history import filter_live, history
+
+        messages = history(customer, date)
+        if not messages:
+            return []
+        cache_key = ident("demo_llm_", [customer, date, messages, self.settings.openai_model, DEMO_HISTORY_INSTRUCTION])
+        extraction = self.db.setting(cache_key)
+        if extraction is None:
+            extraction = json_completion(
+                self.settings, DEMO_HISTORY_INSTRUCTION, {"history": messages},
+                schema=ExtractionSuggestion, purpose="extract_demo_history",
+            )
+            if extraction is None:
+                raise LLMUnavailable("missing_demo_extraction")
+            self.db.set(cache_key, extraction)
+        baseline = [{
+            "id": ident("dh_", [customer, cache_key, fact["key"], fact["value"]]),
+            "customer_id": customer, "key": fact["key"], "value": fact["value"], "unit": fact["unit"],
+            "source_type": "demo_history", "source_ref": messages[-1]["source_ref"].split("#")[0] + "#llm",
+            "source_text": fact["source_text"], "channel": "demo_history", "observed_at": date,
+            "valid_until": None, "status": "conflicted" if fact["operation"] == "conflict" else "active",
+            "confidence": 0.95,
+        } for fact in extraction["facts"]]
+        return filter_live(baseline, live)
 
     def demo_history(self, customer):
         if not self._legacy_demo_history_enabled():

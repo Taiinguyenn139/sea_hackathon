@@ -11,7 +11,6 @@ from bank_tools.service import canonical, ident, now
 from harness.identity import IDENTITY_TOOL_DEFINITION
 from harness.input_guard import normalized
 from harness.llm import DEFAULT_REPLY, LLMUnavailable, current_deadline, tool_completion
-from harness.memory.service import corrects, extract
 
 SYSTEM = """Bạn là Bankwise, trợ lý tư vấn ngân hàng giả lập, nói tiếng Việt tự nhiên.
 Bạn tự quyết định gọi các function tools được cung cấp; backend thực thi và cấp quyền.
@@ -144,15 +143,9 @@ class AgentLoop:
             brief = (self.engine.memory.brief(session["customer_id"], flush=False)
                      if self.engine.memory_access(session) and conversation_intent(state["text"]) != "profile_name"
                      else None)
-        if brief:
-            current = extract(state["text"])
-            conflicts = {fact["key"] for fact in brief["conflicts"]
-                         if fact["key"] not in current or not corrects(state["text"], fact["key"])}
-            for fact in brief["needs"]:
-                if (fact["key"] in current and current[fact["key"]][0] != fact["value"]
-                        and not corrects(state["text"], fact["key"])):
-                    conflicts.add(fact["key"])
-            state["confirmations"] = sorted(set(state.get("confirmations", [])) | conflicts)
+        # Engine context already applies validated structured memory operations.
+        # Re-parsing this text would discard the model's resolution of short
+        # answers and incorrectly restore conflicts it has just resolved.
         return {
             "business_as_of": self.db.setting("clock"),
             "current_channel": session["channel"],
@@ -164,6 +157,7 @@ class AgentLoop:
             "brief": brief,
             "published_playbook": self.engine.agent_playbook(session),
             "facts": state["facts"],
+            "memory_result": state.get("memory_result", {"saved": False, "facts": []}),
             "needs_confirmation": state.get("confirmations", []),
         }
 
@@ -315,6 +309,8 @@ class AgentLoop:
         if current_deadline() is not None:
             deadline = min(deadline, current_deadline())
         try:
+            if time.monotonic() >= deadline:
+                raise LLMUnavailable("agent_turn_deadline")
             context = self._context(state, run)
             if not run["messages"]:
                 # Specialist context already carries its bounded history. Do

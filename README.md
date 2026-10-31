@@ -367,3 +367,30 @@ mâu thuẫn và chưa có xác nhận/cập nhật rõ ràng, trợ lý hỏi l
 transcript làm thông tin hiện hành. Câu giả định hoặc dự kiến không tự giải quyết
 xung đột. Những xung đột đã lưu trước bản sửa vẫn cần khách cập nhật/xác nhận lại;
 không tự thay đổi dữ liệu lịch sử khi triển khai.
+
+
+### Memory có cấu trúc từ LLM
+
+Với `LLM_BACKEND=openai`, model nhận tin nhắn hiện tại, tối đa 12 lượt gần nhất
+trong cùng phiên và các fact của đúng hồ sơ. Model trả trực tiếp
+`{facts: [{key, value, unit, operation, source_text}]}`: giá trị chuẩn hóa theo
+đồng/tháng, cùng quyết định `replace` hoặc `conflict`. Backend lưu kết quả này,
+không dùng regex để trích lại số hoặc từ khóa để quyết định cập nhật. Các câu
+“65tr”, “sáu mươi lăm triệu”, và câu ngắn “65tr đó” được diễn giải theo ngữ cảnh.
+JSON vẫn phải đúng kiểu và đơn vị để có thể lưu và gọi công cụ ngân hàng.
+
+Kết quả model được lưu cùng memory job để tra cứu/retry; trace có `memory_result`.
+Model soạn câu trả lời được nhận kết quả commit và chỉ được xác nhận cập nhật
+khi có fact đã lưu. Nếu trích xuất thất bại ở cả primary và backup, lượt trả thông
+báo gián đoạn, job giữ pending; không fallback sang rule. Preflight deployment
+không gọi model hoặc biến pending job thành dữ liệu do rule trích xuất.
+
+`harness/memory/rules.py` chỉ phục vụ `LLM_BACKEND=rules` cho test/eval offline,
+không tham gia luồng OpenAI. Không đổi schema DB; hồ sơ và facts đã có được giữ.
+Không tự tái diễn giải các lượt cũ đã xử lý: khách gửi lại thông tin cần cập nhật.
+
+Memory runtime trong luồng agent dùng schema có cấu trúc ở trên. Lịch sử fixture
+chuẩn vẫn do projector `dataset_history.py` cấp theo quyền/ngày và giữ nguồn,
+không nạp thêm bộ trích lịch sử legacy song song. Fact khách cập nhật vẫn ưu tiên
+hơn baseline. Khi khách hỏi lại thông tin đã nhớ, agent dùng facts trong context;
+không buộc bổ sung các trường khoản vay không liên quan chỉ để nhắc lại thu nhập.

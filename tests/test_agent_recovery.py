@@ -154,7 +154,16 @@ def test_real_pending_tool_batch_recovers_after_restart_and_calculates_with_orig
 
     settings = config(tmp_path, llm_backend="openai", openai_key="test-only", openai_model="primary", openai_backup_model="backup")
     monkeypatch.setattr(input_module, "json_completion", lambda *args, **kwargs: {"category": "safe"})
-    monkeypatch.setattr(memory_module, "json_completion", lambda *args, **kwargs: {"spans": []})
+    memory_facts = [{"key": key, "value": value, "unit": unit, "operation": "replace", "source_text": source}
+                    for key, value, unit, source in [
+                        ("product", "home_loan", "", "vay mua nhà"),
+                        ("amount", "2000000000", "đồng", "2 tỷ"),
+                        ("term", "240", "tháng", "20 năm"),
+                        ("income", "45000000", "đồng", "thu nhập 45 triệu"),
+                        ("debt", "0", "đồng", "không có nợ"),
+                        ("property_value", "3000000000", "đồng", "giá nhà 3 tỷ"),
+                    ]]
+    monkeypatch.setattr(memory_module, "json_completion", lambda *args, **kwargs: {"facts": memory_facts})
     stage = 0
 
     def envelope(*items):

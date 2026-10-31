@@ -11,6 +11,18 @@ from harness.api import create_app
 LOAN_TEXT = "Tôi xác nhận nhu cầu mới vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ."
 
 
+def loan_facts(income="45000000"):
+    source = LOAN_TEXT if income == "45000000" else LOAN_TEXT.replace("45 triệu", "10 triệu")
+    return [
+        {"key": key, "value": value, "unit": unit, "operation": "replace", "source_text": source}
+        for key, value, unit in [
+            ("product", "home_loan", ""), ("amount", "2000000000", "đồng"),
+            ("term", "240", "tháng"), ("income", income, "đồng"),
+            ("debt", "0", "đồng"), ("property_value", "3000000000", "đồng"),
+        ]
+    ]
+
+
 def trace(client, session):
     return json.loads(client.app.state.harness.db.one(
         "SELECT data FROM traces WHERE session_id=? ORDER BY rowid DESC LIMIT 1", (session["session_id"],),
@@ -30,7 +42,7 @@ def test_unrelated_disclosure_cannot_unlock_a_loan_rate(tmp_path, monkeypatch, p
             ("wrong-disclosure", "get_disclosures", {"product": product, "topics": topics}),
         ),
         rate_draft, rate_draft,
-    ])
+    ], memory_facts=loan_facts())
     provider.install(monkeypatch)
     with TestClient(create_app(settings(tmp_path, identity_history_enabled=False))) as client:
         session, auth = new_session(client)
@@ -58,7 +70,7 @@ def test_ineligible_loan_stays_g4_even_after_successful_different_product_check(
             ("disclosures", "get_disclosures", {"product": "home_loan", "topics": ["rate"]}),
         ),
         approved_looking_quote,
-    ])
+    ], memory_facts=loan_facts("10000000"))
     provider.install(monkeypatch)
     with TestClient(create_app(settings(tmp_path, identity_history_enabled=False))) as client:
         session, auth = new_session(client)
@@ -78,6 +90,10 @@ def test_ineligible_card_offer_cannot_be_overruled_by_a_nonnumeric_model_claim(t
         calls(("identity", "verify_identity", {"phone": "0900000003"})),
         calls(("card", "get_card_offer", {"income": 2000000, "segment": "mass"})),
         answer("Anh/chị đủ điều kiện mở thẻ."),
+    ], memory_facts=[
+        {"key": key, "value": value, "unit": unit, "operation": "replace",
+         "source_text": "Tôi xác nhận nhu cầu mới mở thẻ, thu nhập 2 triệu, không có nợ."}
+        for key, value, unit in [("product", "credit_card", ""), ("income", "2000000", "đồng"), ("debt", "0", "đồng")]
     ])
     provider.install(monkeypatch)
     with TestClient(create_app(settings(tmp_path, identity_history_enabled=False))) as client:
@@ -102,7 +118,7 @@ def test_installment_requires_a_matching_suitability_receipt_in_this_turn(tmp_pa
     provider = Provider([
         calls(("rate", "get_rate", {"product": "home_loan", "amount": 2000000000, "term": 240, "segment": "mass"})),
         calculate_without_assessment, answer("Tôi cần kiểm tra điều kiện phù hợp trước khi tính khoản trả."),
-    ])
+    ], memory_facts=loan_facts())
     provider.install(monkeypatch)
     with TestClient(create_app(settings(tmp_path, identity_history_enabled=False))) as client:
         session, auth = new_session(client)
@@ -117,7 +133,7 @@ def test_huge_integer_argument_is_a_controlled_tool_error_not_a_server_error(tmp
     provider = Provider([
         calls(("oversized", "get_rate", {"product": "home_loan", "amount": 10**400, "term": 240, "segment": "mass"})),
         answer("Anh/chị vui lòng xác nhận lại số tiền vay."),
-    ])
+    ], memory_facts=loan_facts())
     provider.install(monkeypatch)
     with TestClient(create_app(settings(tmp_path, identity_history_enabled=False))) as client:
         session, auth = new_session(client)

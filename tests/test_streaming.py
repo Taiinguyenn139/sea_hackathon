@@ -141,7 +141,7 @@ def test_sse_auth_guard_receipt_and_retry(tmp_path, monkeypatch, draft, blocked)
         if payload.get("tools"):
             assert not payload.get("stream")
             return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({"draft": draft})}, "finish_reason": "stop"}]})
-        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else {"spans": []}
+        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else {"facts": []}
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}}]})
 
     mock_provider(monkeypatch, handler)
@@ -217,7 +217,7 @@ def test_socket_progress_disconnect_persists_without_replay(tmp_path, monkeypatc
             drafts.append(True)
             await asyncio.sleep(0.15)
             return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({"draft": "Đã ghi nhận lịch gọi mô phỏng."})}, "finish_reason": "stop"}]})
-        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else {"spans": []}
+        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else {"facts": []}
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}}]})
 
     mock_provider(monkeypatch, handler)

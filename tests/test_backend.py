@@ -607,7 +607,7 @@ def test_unbacked_draft_variants(client, monkeypatch, draft):
     assert result["guard_events"][0]["guard_id"] == "G1"
 
 
-def test_optional_llm_schema_fallback_and_extraction_source(client, monkeypatch):
+def test_optional_llm_schema_fallback_and_structured_extraction(client, monkeypatch):
     import httpx
 
     settings = client.app.state.harness.settings
@@ -632,7 +632,12 @@ def test_optional_llm_schema_fallback_and_extraction_source(client, monkeypatch)
         elif "Phân loại" in instruction:
             result = {"stage": "quote", "objection": None}
         elif "Trích" in instruction:
-            result = {"spans": ["thu nhập 999 triệu", "Thu nhập 45 triệu"]}
+            result = {"facts": [
+                {"key": key, "value": value, "unit": unit, "operation": "replace", "source_text": "Vay mua nhà"}
+                for key, value, unit in [("product", "home_loan", ""), ("amount", "2000000000", "đồng"),
+                                         ("term", "240", "tháng"), ("income", "45000000", "đồng"),
+                                         ("debt", "0", "đồng"), ("property_value", "3000000000", "đồng")]
+            ]}
         else:
             result = {"draft": "Em có thể cho vay 999 tỷ đồng."}
         return httpx.Response(
@@ -725,7 +730,7 @@ def test_callback_uses_business_clock(client):
     assert callbacks[0]["due_at"].startswith("2026-11-02")
 
 
-def test_candidate_preflight_recovers_memory_without_network(tmp_path, monkeypatch):
+def test_candidate_preflight_defers_llm_memory_without_network(tmp_path, monkeypatch):
     import httpx
 
     gate = tmp_path / "not-promoted"
@@ -751,12 +756,12 @@ def test_candidate_preflight_recovers_memory_without_network(tmp_path, monkeypat
     with TestClient(app) as client:
         assert client.get("/healthz").status_code == 200
         job = harness.db.one("SELECT status FROM memory_jobs WHERE turn_id=?", ("pending-before-release",))
-        assert job["status"] == "processed"
+        assert job["status"] == "pending"
         assert (
             harness.db.one("SELECT processed_seq FROM customer_sequences WHERE customer_id=?", ("hoa",))[
                 "processed_seq"
             ]
-            == 1
+            == 0
         )
         assert not gate.exists()
 
