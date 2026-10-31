@@ -34,8 +34,9 @@ Backend `rules` chạy không cần API key. Telegram và backend LLM cần cred
 qua kho secret, không đưa giá trị vào Git hoặc chat.
 
 [Cấu hình Telegram](docs/telegram.md): tạo bot, nạp credential và đăng ký webhook.
-Khách mới có hồ sơ riêng và chat ngay; chia sẻ số điện thoại để tiếp tục cùng
-ngữ cảnh trên web. Liên kết hồ sơ demo là tùy chọn. Script kiểm tra kết
+Khách mới chia sẻ số điện thoại trên Telegram rồi chat ngay. Trên web chỉ cần
+nhập cùng số để dùng chung ngữ cảnh, không cần OTP hay liên kết demo thủ công.
+Có thể bắt đầu từ kênh nào cũng được; đây là cơ chế truy cập đơn giản dành cho demo. Script kiểm tra kết
 nối và đăng ký webhook mà không in credential.
 
 ## Chuyên viên tư vấn trong demo
@@ -94,6 +95,27 @@ Kiểm chứng riêng tính năng: `uv run pytest -q tests/test_specialist.py` v
 Browser test chạy FastAPI/SQLite cách ly và chỉ stub provider LLM, không dùng
 credential thật hoặc database tư vấn.
 
+## Trả lời tên khách hàng
+
+Chat lấy tên từ cùng nguồn hồ sơ với brief, sau khi kiểm tra quyền của phiên.
+Tên hồ sơ demo được ghi rõ là dữ liệu demo; tên hiển thị Telegram không được
+coi là tên đã xác minh tại ngân hàng. Chọn hồ sơ chưa nhận diện không cấp quyền
+đọc tên. Tin nhắn tự giới thiệu hoặc yêu cầu đổi cách xưng hô không ghi đè tên
+hồ sơ. Hồ sơ chưa có tên và lỗi tra cứu tạm thời có thông báo khác nhau.
+
+Các câu hỏi tên trực tiếp như “Tôi tên gì?”, “Tên tôi là gì?” hoặc “Tôi là ai?”
+được trả từ fact `profile_name`, không gọi planner/draft/extract hoặc chờ memory.
+Input guard vẫn chạy, kể cả classifier khi bật OpenAI. Câu diễn đạt khác có thể
+được planner phân loại thành `profile_name`; câu vừa hỏi tên vừa yêu cầu vay tiếp
+tục luồng tư vấn và có thêm tên từ hồ sơ. JSON và SSE dùng cùng receipt, retry
+cùng message ID giữ nguyên kết quả. Lượt hỏi tên trực tiếp không cập nhật brief
+tài chính trong response; client giữ brief đã có.
+
+Log `profile_context` chỉ ghi revision, turn ID, trạng thái nhận diện/tra cứu,
+nguồn tên, intent và việc có fact tên; không ghi tên hay số điện thoại. Trace
+được bảo vệ bằng quyền hiện hữu vẫn lưu nguồn fact để kiểm chứng câu trả lời.
+Kiểm thử hồi quy: `uv run pytest -q tests/test_profile_context.py`.
+
 ## Kiểm tra an toàn đầu vào
 
 Web chat, nội dung yêu cầu handoff và Telegram đều được kiểm tra trước khi ghi
@@ -106,7 +128,9 @@ guard và placeholder, không lưu nguyên văn hoặc các trường dư của 
   đọc nhãn và kiểm tra checksum số thẻ. Câu hỏi về OTP/mật khẩu không chứa bí mật,
   thu nhập, khoản vay, kỳ hạn và nhận diện bằng số điện thoại demo vẫn được xử lý.
 - `G9`: chặn các mẫu prompt injection trực tiếp như ghi đè chỉ dẫn, giả vai system,
-  yêu cầu lộ prompt nội bộ hoặc tắt kiểm soát. Khi `LLM_BACKEND=openai`, mỗi đầu
+  yêu cầu lộ prompt nội bộ hoặc tắt kiểm soát. Câu phủ định độc lập như
+  “Tôi không muốn tắt bảo mật” không bị chặn bởi luật này; các lệnh khác trong
+  cùng tin nhắn vẫn được kiểm tra. Khi `LLM_BACKEND=openai`, mỗi đầu
   vào vượt qua luật còn được phân loại ngữ nghĩa bằng một lần gọi LLM, chỉ nhận
   text hiện tại, không nhận lịch sử hoặc tools. Classifier dùng primary/backup
   và ngân sách thời gian như các bước LLM khác, ghi log `purpose=input_guard`.
@@ -136,6 +160,18 @@ loại PII. Nội dung vượt qua luật được gửi tới classifier khi b�
 chưa bao phủ mọi cách che giấu/mã hóa bí mật. Không tự làm sạch lịch sử đã lưu.
 Quyền truy cập, xác minh danh tính, kiểm tra tool và guard đầu ra vẫn cần được giữ.
 Hướng dẫn tham khảo: [OWASP Prompt Injection Prevention](https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html).
+
+## Kiểm tra câu trả lời
+
+Ở mode `harness`, G1 kiểm tra số liệu không có `{fact:id}`, fact không hợp lệ
+và mẫu cam kết chắc chắn duyệt vay hoặc giải ngân. Các số tài chính viết bằng
+chữ tiếng Anh như `six percent`, `six point nine percent`, `twenty-one months`
+được kiểm tra bên cạnh các mẫu tiếng Việt. Cam kết bị chặn ghi reason
+`unsupported_approval_guarantee`; câu phủ định như “Em không thể cam kết phê
+duyệt khoản vay” vẫn hợp lệ. Nếu bản thay thế cũng không đạt, trả câu an toàn.
+Streaming dùng cùng phép kiểm tra trước khi phát từng đoạn hoàn chỉnh, nên các
+mẫu không đạt không được đưa ra bản xem trước. Các luật này chỉ bao phủ những
+mẫu đã nhận diện, không thay thế đánh giá ngữ nghĩa cho mọi cách diễn đạt.
 
 ## Kiểm tra và build
 
@@ -267,3 +303,25 @@ ngày gọi bắt buộc và adapter agent trên main. [Dữ liệu giả lập]
 fixtures nghiệp vụ. Backend nhận diện phone demo dùng
 `simulators/datasets/identity_v1/identities.json` qua registry `harness/identity.py`;
 alias `hoa`/`minh` được giữ để dùng tiếp memory cũ.
+
+## Nhận diện cùng hồ sơ trên web và Telegram trong bản demo
+
+Demo GCP bật `DEMO_PHONE_IDENTITY=true`: nhập số điện thoại vào ô ở màn hình đầu
+trên web, bấm **Bắt đầu chat**; trên Telegram bấm Start và **Chia sẻ số điện thoại**
+hoặc nhập cùng số trong chat. Hai kênh dùng
+chung hồ sơ và memory, không cần OTP. `0901234567` và `+84 90 123 4567` là cùng
+một số. Số trong bộ mẫu nối vào hồ sơ có sẵn; số mới tạo hồ sơ demo riêng.
+
+Số nhập ở màn hình đầu không tạo tin nhắn. Mỗi phiên có transcript, bản nháp và
+luồng xử lý riêng; các phiên cùng hồ sơ vẫn đóng góp và đọc memory chung.
+Tạo phiên mới không sao chép hội thoại hoặc handoff của phiên trước. Muốn đổi sang số khác sau
+khi đã kết nối, mở phiên mới rồi nhập số khác. Chi tiết ở [Telegram](docs/telegram.md).
+Ngoài deployment demo, cấu hình mặc định tắt: Telegram yêu cầu chia sẻ contact;
+web dùng **Tiếp tục bằng số điện thoại**, không cần OTP.
+
+Cập nhật rõ ràng như “Lương mới được tăng lên 53 triệu rồi” hoặc “Thu nhập hiện tại
+của tôi là 53 triệu” thay thế mức thu nhập cũ giữa các kênh. Nếu hai giá trị vẫn
+mâu thuẫn và chưa có xác nhận/cập nhật rõ ràng, trợ lý hỏi lại; không lấy số cũ từ
+transcript làm thông tin hiện hành. Câu giả định hoặc dự kiến không tự giải quyết
+xung đột. Những xung đột đã lưu trước bản sửa vẫn cần khách cập nhật/xác nhận lại;
+không tự thay đổi dữ liệu lịch sử khi triển khai.

@@ -28,6 +28,7 @@ start_app() {
     --network bridge --env-file /etc/memory-harness/runtime.env \
     --env "DEPLOY_REVISION=$2" --label "org.opencontainers.image.revision=$2" \
     --env HARNESS_RELEASE_GATE=/release/ready \
+    --env DEMO_PHONE_IDENTITY=true \
     --mount type=bind,source=/var/lib/memory-harness/release,target=/release,readonly \
     --mount "type=bind,source=$ROOT/data,target=/data" \
     --publish 127.0.0.1:8080:8080 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \

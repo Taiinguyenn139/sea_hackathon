@@ -29,9 +29,12 @@ class SpecialistEngine(Engine):
 
     def load_context(self, s):
         context = super().load_context(s)
+        history = next((p["turns"] for p in context["context_parts"] if p["type"] == "current_session"), None)
+        if history is None:
+            # Preserve the direct profile-name path: no advisory-memory/provider dependency.
+            return context
         row = self.db.one("SELECT summary FROM handoffs WHERE id=?", (s["session"]["specialist_id"],))
         snapshot = json.loads(row["summary"])
-        history = next(p["turns"] for p in context["context_parts"] if p["type"] == "current_session")
         recent = []
         budget = HISTORY_BUDGET
         for turn in reversed(history):
@@ -41,7 +44,7 @@ class SpecialistEngine(Engine):
                 break
             recent.append(item)
             budget -= size
-        context["context_parts"] = [
+        context["context_parts"] = [p for p in context["context_parts"] if p["type"] == "customer_profile"] + [
             {"type": "handoff", "reason": snapshot["reason"],
              "open_questions": context["confirmations"], "prompt_version": PROMPT_VERSION},
             {"type": "current_session", "turns": list(reversed(recent)),

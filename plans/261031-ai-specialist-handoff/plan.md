@@ -17,7 +17,7 @@ Triển khai vai trò chuyên viên dùng LLM để tiếp tục tư vấn ngay 
 - Web và Telegram dùng chung backend định tuyến, memory và quyền truy cập.
 - Dùng model chính và dự phòng hiện có ở phiên bản đầu. Không yêu cầu nhà cung cấp hoặc model mới.
 - Giữ luồng bàn giao người thật hiện có. Chưa triển khai chat trực tiếp với người thật, tổng đài hoặc phân công nhân viên.
-- Đã triển khai và kiểm chứng local theo yêu cầu tiếp theo của người dùng. Chưa commit, mở PR hoặc deploy.
+- Đã triển khai và kiểm chứng local theo yêu cầu tiếp theo của người dùng. Đã commit tính năng; đang hoàn tất đồng bộ và kiểm chứng để mở PR theo yêu cầu tiếp theo. Chưa deploy.
 
 ## Hiện trạng cần xử lý
 

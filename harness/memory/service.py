@@ -4,6 +4,7 @@ import time
 from decimal import Decimal
 
 from bank_tools.service import canonical, ident
+from harness.customer_profile import customer_profile
 from harness.llm import ExtractionSuggestion, LLMUnavailable, json_completion
 
 
@@ -42,6 +43,27 @@ def extract(text):
     if any(x in low for x in ["gọi lại", "hẹn", "liên hệ lại"]):
         slots["commitment"] = ("Khách yêu cầu liên hệ lại", "")
     return slots
+
+
+def corrects(text, key):
+    """Recognize an explicit current-value update for this field, not another clause."""
+    clauses = re.split(r"[;\n]|\.(?!\d)|,(?!\d)|\s+(?:và|nhưng)\s+", text.lower())
+    for clause in clauses:
+        if key not in extract(clause):
+            continue
+        # A proposed or negated change must not resolve conflicting statements.
+        intent = re.sub(r"không (?:có |còn )?nợ", "", clause)
+        if "?" in clause or re.search(
+            r"\b(?:nếu|giả sử|giả định|ước gì|mong muốn|dự kiến|sẽ|chưa|không)\b", intent,
+        ):
+            continue
+        if re.search(
+            r"\b(?:xác nhận|đính chính|sửa lại|chính xác|cập nhật|"
+            r"tăng (?:lên|thành)|giảm (?:xuống|còn)|đổi (?:sang|thành)|"
+            r"hiện tại|bây giờ|hiện nay|mới là)\b", clause,
+        ):
+            return True
+    return False
 
 
 class Memory:
@@ -151,7 +173,6 @@ class Memory:
         c.execute("UPDATE customer_sequences SET processed_seq=? WHERE customer_id=?", (job["seq"], customer))
 
     def _write(self, c, turn, customer, payload, suggestion=None):
-        correction = any(x in payload["text"].lower() for x in ["xác nhận", "đính chính", "sửa lại", "chính xác"])
         extracted = extract(payload["text"])
         if suggestion and isinstance(suggestion.get("spans"), list):
             for span in suggestion["spans"][:20]:
@@ -159,6 +180,7 @@ class Memory:
                     for key, value in extract(span).items():
                         extracted.setdefault(key, value)
         for key, (value, unit) in extracted.items():
+            correction = corrects(payload["text"], key)
             fid = ident("cf_", [turn, key, value])
             old = c.execute(
                 "SELECT * FROM facts WHERE customer_id=? AND key=? AND source_type='customer' AND status IN ('active','conflicted')",
@@ -210,15 +232,7 @@ class Memory:
         return self.db.all("SELECT * FROM facts WHERE customer_id=? ORDER BY observed_at,id", (customer,))
 
     def profile(self, customer):
-        from bank_tools.service import FIXTURES
-        from harness.identity import resolve_identity
-
-        customer = resolve_identity(customer) or customer
-        return next((x for x in FIXTURES["customers"] if x["id"] == customer), None) or self.db.one(
-            "SELECT id,name,NULL AS cif FROM customer_profiles WHERE id=?", (customer,)
-        ) or self.db.one(
-            "SELECT id,name,NULL AS cif FROM guest_customers WHERE id=?", (customer,)
-        )
+        return customer_profile(self.db, customer)
 
     def brief(self, customer):
         from harness.identity import resolve_identity
@@ -229,12 +243,15 @@ class Memory:
         if not profile:
             raise ValueError("Unknown customer")
         facts = self.facts(customer)
-        phone = self.db.one("SELECT phone_e164 FROM customer_profiles WHERE id=?", (customer,))
+        phone = self.db.one("SELECT phone_e164 FROM customer_profiles WHERE id=?", (customer,)) or self.db.one(
+            "SELECT phone_e164 FROM demo_phone_links WHERE customer_id=?", (customer,)
+        )
         return {
             "redacted": False,
             "customer_id": customer,
             "user_id": profile.get("user_id", phone["phone_e164"] if phone else customer),
             "name": profile["name"],
+            "name_source": profile["name_source"],
             "cif": profile["cif"],
             "phone": phone["phone_e164"] if phone else profile.get("phone"),
             "facts": facts,

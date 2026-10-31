@@ -91,6 +91,7 @@ export type SpecialistSession = {
   specialist_available?: boolean;
 };
 export type ChatSession = SpecialistSession & {
+  telegram_url?: string;
   session_id: string;
   user_id?: string;
   session_token: string;

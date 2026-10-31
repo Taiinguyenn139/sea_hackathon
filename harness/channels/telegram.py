@@ -128,21 +128,40 @@ class Dispatcher:
                     if late:
                         reply = "Tin nhắn đến trễ so với cuộc trao đổi hiện tại. Anh/chị vui lòng gửi lại thông tin cần cập nhật để em xác nhận."
                     elif isinstance(contact, dict):
-                        # Contact binding is a separate proof path. Existing
-                        # fixture sessions must first match their bound demo phone.
-                        if not self.harness.can_chat(session):
-                            raise HTTPException(403, "Vui lòng gửi số điện thoại demo trong chat để nhận diện phiên này trước.")
-                        profile = self.harness.engine.memory.profile(customer)
-                        self.harness.phone_identity.bind(
-                            customer, profile["name"], target, contact, message.get("from", {}).get("id")
-                        )
+                        if self.settings.demo_phone_identity:
+                            sender_id = message.get("from", {}).get("id")
+                            if not isinstance(sender_id, int) or contact.get("user_id") != sender_id or str(sender_id) != target:
+                                raise HTTPException(400, "Vui lòng bấm Chia sẻ số điện thoại để gửi số của chính anh/chị.")
+                            session = self.harness._demo_phone_customer(session, contact.get("phone_number", ""))
+                            linked_customer = customer = session["customer_id"]
+                        else:
+                            profile = self.harness.engine.memory.profile(customer)
+                            linked_customer = self.harness.phone_identity.bind(
+                                customer, profile["name"], target, contact, message.get("from", {}).get("id")
+                            )
+                        if linked_customer != customer:
+                            self.db.execute("UPDATE sessions SET status='ended' WHERE id=?", (session["id"],))
+                            customer = linked_customer
+                            created = self.harness._create_session(customer, channel="telegram", external_id=target,
+                                                                   phone_authenticated=True)
+                            session = self.harness.session(created["session_id"])
                         reply = (
                             "Đã lưu số điện thoại và giữ lại thông tin anh/chị đã chia sẻ. "
-                            "Anh/chị có thể dùng số này để tiếp tục hội thoại trên website."
+                            "Anh/chị có thể bắt đầu chat ngay: muốn tìm hiểu vay mua nhà, vay tiêu dùng hay thẻ tín dụng? "
+                            "Khi mở website, dùng cùng số điện thoại để tiếp tục ngữ cảnh này."
                         )
                         markup = {"remove_keyboard": True}
                     elif session["status"] == "waiting_human":
                         reply = "Chuyên viên đang tiếp nhận yêu cầu. Em sẽ tiếp tục khi chuyên viên hoàn tất."
+                    elif not self.settings.demo_phone_identity and not self.db.one(
+                        "SELECT id FROM customer_profiles WHERE id=?", (customer,)
+                    ):
+                        reply = (
+                            "Chào anh/chị! Để bắt đầu tư vấn sản phẩm và giữ ngữ cảnh giữa Telegram với website, "
+                            "anh/chị vui lòng bấm Chia sẻ số điện thoại bên dưới. "
+                            "Hồ sơ cá nhân sẽ được tạo tự động, không cần chọn hồ sơ demo."
+                        )
+                        markup = PHONE_KEYBOARD
                     elif command == "/specialist":
                         result = self.harness.specialist.start(
                             session["id"], "Khách yêu cầu tư vấn chuyên sâu", row["id"]
@@ -175,14 +194,14 @@ class Dispatcher:
                         reply = result["reply"]
                         if result.get("responder") == "ai_specialist":
                             reply = "Chuyên viên tư vấn\n" + reply
-                    if self.harness.can_chat(session) and session["status"] == "active" and not contact and not late and (
+                        session = self.harness.session(session["id"])
+                        customer = session["customer_id"]
+                    if self.settings.demo_phone_identity and not late and not contact and session["status"] == "active" and (
                         start or command == "/phone" or new_session
-                    ) and not self.db.one(
-                        "SELECT id FROM customer_profiles WHERE id=?", (customer,)
                     ):
                         reply += (
-                            "\n\nAnh/chị có thể chia sẻ số điện thoại để tiếp tục hội thoại trên website "
-                            "và giữ các thông tin đã trao đổi."
+                            "\n\nBản demo: chia sẻ số điện thoại bằng nút bên dưới hoặc nhập số ngay trong chat. "
+                            "Dùng cùng số trên web và Telegram để tiếp tục thông tin đã ghi nhớ, không cần mã xác nhận."
                         )
                         markup = PHONE_KEYBOARD
                     self.reply(row["id"], target, reply, markup)

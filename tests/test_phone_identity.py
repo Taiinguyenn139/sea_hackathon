@@ -45,11 +45,11 @@ def update(client, number, text=None, contact=None, target=111):
 
 
 def register(client):
-    update(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
+    update(client, 1, contact={"phone_number": "0901234567", "user_id": 111})
+    update(client, 2, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
     customer = client.app.state.harness.db.one("SELECT customer_id FROM sessions WHERE external_id='111'")[
         "customer_id"
     ]
-    update(client, 2, contact={"phone_number": "0901234567", "user_id": 111, "first_name": "Khách"})
     return customer
 
 
@@ -239,4 +239,105 @@ def test_existing_outbox_migrates_without_losing_pending_messages(tmp_path):
     db = Database(path)
     row = db.one("SELECT * FROM outbox WHERE id='existing'")
     assert row["text"] == "preserved" and row["status"] == "pending" and row["reply_markup"] is None
-    assert db.setting("schema_version") == 4
+    assert db.setting("schema_version") == 5
+
+
+def demo_login(client, phone="0901234567"):
+    response = client.post("/auth/phone/login", json={"phone": phone})
+    assert response.status_code == 200, response.text
+    session = response.json()
+    assert session["identity_status"] == "identified"
+    assert session["telegram_url"].startswith("https://t.me/")
+    return session
+
+
+def web_say(client, session, text, message_id):
+    response = client.post(
+        f"/sessions/{session['session_id']}/messages",
+        headers={"Authorization": "Bearer " + session["session_token"]},
+        json={"text": text, "client_message_id": message_id},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_telegram_first_phone_only_web_login_shares_memory(client):
+    update(client, 1, "/start")
+    db = client.app.state.harness.db
+    welcome = db.one("SELECT text,reply_markup FROM outbox ORDER BY rowid DESC LIMIT 1")
+    assert "Chia sẻ số điện thoại" in welcome["text"]
+    assert json.loads(welcome["reply_markup"])["keyboard"][0][0]["request_contact"]
+    update(client, 2, "Thu nhập 999 triệu")
+    assert not db.all("SELECT * FROM turns")
+    update(client, 3, contact={"phone_number": "0901234567", "user_id": 111})
+    update(client, 4, "Tôi cần thẻ tín dụng, thu nhập 47 triệu, không có nợ")
+    session = demo_login(client, "+84 90 123 4567")
+    assert any(f["key"] == "income" and f["value"] == "47000000" for f in session["brief"]["needs"])
+    assert not db.all("SELECT * FROM phone_challenges")
+    web_say(client, session, "Thu nhập chính xác 53 triệu", "change")
+    update(client, 5, "Tiếp tục tư vấn thẻ tín dụng")
+    row = db.one("SELECT data FROM traces WHERE session_id IN "
+                 "(SELECT id FROM sessions WHERE channel='telegram') ORDER BY rowid DESC LIMIT 1")
+    assert any(f["key"] == "income" and f["value"] == "53000000" for f in json.loads(row["data"])["facts"])
+
+
+def test_web_first_contact_attaches_to_existing_phone_memory(client):
+    session = demo_login(client)
+    customer = session["brief"]["customer_id"]
+    web_say(client, session, "Tôi cần thẻ tín dụng, thu nhập 47 triệu, không có nợ", "initial")
+    update(client, 1, "/start")
+    update(client, 2, contact={"phone_number": "+84901234567", "user_id": 111})
+    update(client, 3, "Tiếp tục tư vấn thẻ tín dụng")
+    db = client.app.state.harness.db
+    active = db.one("SELECT * FROM sessions WHERE channel='telegram' AND status='active'")
+    assert active["customer_id"] == customer
+    assert "100 triệu" in db.one("SELECT text FROM outbox ORDER BY rowid DESC LIMIT 1")["text"]
+    update(client, 4, "Thu nhập chính xác 53 triệu")
+    update(client, 5, "/start")
+    update(client, 6, "Tiếp tục tư vấn thẻ tín dụng")
+    again = demo_login(client)
+    assert again["brief"]["customer_id"] == customer
+    assert any(f["key"] == "income" and f["value"] == "53000000" for f in again["brief"]["needs"])
+    assert len(db.all("SELECT * FROM customer_profiles")) == 1
+    assert not db.all("SELECT * FROM phone_challenges")
+
+
+def test_demo_phone_login_rejects_invalid_and_keeps_different_phones_separate(client):
+    assert client.post("/auth/phone/login", json={"phone": "invalid"}).status_code == 422
+    one = demo_login(client)
+    web_say(client, one, "Thu nhập 47 triệu", "income")
+    two = demo_login(client, "0901234568")
+    assert one["brief"]["customer_id"] != two["brief"]["customer_id"]
+    assert not two["brief"]["needs"]
+
+
+def test_phone_only_web_profile_survives_restart(tmp_path):
+    settings = Settings(db_path=str(tmp_path / "demo-phone.sqlite"), llm_backend="rules")
+    with TestClient(create_app(settings)) as first:
+        session = demo_login(first)
+        web_say(first, session, "Thu nhập 47 triệu", "income")
+    with TestClient(create_app(settings)) as second:
+        again = demo_login(second)
+        assert again["brief"]["customer_id"] == session["brief"]["customer_id"]
+        assert any(f["key"] == "income" and f["value"] == "47000000" for f in again["brief"]["needs"])
+
+
+def test_new_conversation_keeps_demo_phone_memory_and_telegram_link(client):
+    original = demo_login(client)
+    web_say(client, original, "Thu nhập 47 triệu", "income")
+    response = client.post(
+        f"/sessions/{original['session_id']}/new",
+        headers={"Authorization": "Bearer " + original["session_token"]},
+    )
+    assert response.status_code == 200
+    new = response.json()
+    assert new["session_id"] != original["session_id"]
+    assert new["identity_status"] == "identified"
+    assert new["telegram_url"] == original["telegram_url"]
+    assert new["brief"]["customer_id"] == original["brief"]["customer_id"]
+    assert any(f["key"] == "income" and f["value"] == "47000000" for f in new["brief"]["needs"])
+    history = client.get(
+        f"/sessions/{new['session_id']}/turns",
+        headers={"Authorization": "Bearer " + new["session_token"]},
+    )
+    assert history.json()["items"] == []

@@ -216,9 +216,16 @@ def test_telegram_specialist_commands_and_replay(setup):
         assert response.status_code == 200, response.text
     telegram(101, "/specialist")
     h = client.app.state.harness
+    assert not h.db.one("SELECT * FROM specialist_sessions")
+    contact = client.post("/webhooks/telegram", headers={"X-Telegram-Bot-Api-Secret-Token": "webhook-test"},
+                          json={"update_id": 1001, "message": {"message_id": 1001,
+                                "chat": {"id": 919, "type": "private"}, "from": {"id": 919},
+                                "contact": {"user_id": 919, "phone_number": "0901234567"}}})
+    assert contact.status_code == 200
+    telegram(1002, "/specialist")
     current = h.db.one("SELECT * FROM specialist_sessions")
     assert current
-    telegram(101, "/specialist")
+    telegram(1002, "/specialist")
     assert len(h.db.all("SELECT * FROM handoffs")) == 1
     telegram(102, "Thu nhập 40 triệu")
     assert h.specialist.current(current["session_id"])
@@ -226,6 +233,18 @@ def test_telegram_specialist_commands_and_replay(setup):
     assert not h.specialist.current(current["session_id"])
     assert len(h.db.all("SELECT * FROM handoffs")) == 1
     assert any("Chuyên viên tư vấn" in row["text"] for row in h.db.all("SELECT * FROM outbox"))
+
+
+def test_specialist_preserves_direct_profile_name_path(setup):
+    client, sid, auth, _, calls, control = setup
+    assert start(client, sid, auth).status_code == 200
+    control["fail"] = True
+    before = len(calls)
+    result = message(client, sid, auth, "Tôi tên gì?", "name")
+    assert result.status_code == 200, result.text
+    assert "Hoa" in result.json()["reply"]
+    assert result.json()["responder"] == "ai_specialist"
+    assert all("INPUT_SECURITY_CLASSIFIER" in instruction for instruction, _, _ in calls[before:])
 
 
 def test_conflicting_memory_requires_confirmation_and_keeps_customer_sources(setup):

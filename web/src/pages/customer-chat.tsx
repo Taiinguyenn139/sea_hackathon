@@ -80,6 +80,8 @@ export function CustomerChat() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profile, setProfile] = useState(initial.current?.demo_profile ?? "hoa");
   const [phoneLogin, setPhoneLogin] = useState(false);
+  const [demoPhoneIdentity, setDemoPhoneIdentity] = useState(false);
+  const [entryPhone, setEntryPhone] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
@@ -189,9 +191,10 @@ export function CustomerChat() {
     navigate("conversation");
   }
   const loadProfiles = () =>
-    request<{ profiles: Profile[] }>("/demo/profiles")
+    request<{ profiles: Profile[]; demo_phone_identity?: boolean }>("/demo/profiles")
       .then((data) => {
         setProfiles(data.profiles);
+        setDemoPhoneIdentity(data.demo_phone_identity === true);
         setProfile(
           (current) =>
             data.profiles.find(
@@ -273,15 +276,18 @@ export function CustomerChat() {
   }, [session?.session_id, session?.handoff_id, session?.specialist_id, ended]);
   async function start() {
     if (pending || activeStream.current) return;
+    if (demoPhoneIdentity && !entryPhone.trim()) { document.getElementById("entry-phone")?.focus(); return; }
     setError("");
     setPending(true);
     try {
-      const next = await request<ChatSession>("/sessions", {
+      const next = await request<ChatSession>(demoPhoneIdentity ? "/demo/phone/session" : "/sessions", {
         method: "POST",
-        body: { mode: "harness", demo_profile: profile },
+        body: demoPhoneIdentity ? { phone: entryPhone.trim() } : { mode: "harness", demo_profile: profile },
       });
       setLoading(true);
-      save({ ...next, demo_profile: profile });
+      rememberView();
+      save(demoPhoneIdentity ? next : { ...next, demo_profile: profile });
+      if (session) setDraft("");
       setTurns([]);
       navigate("conversation");
     } catch (e) {
@@ -489,10 +495,14 @@ export function CustomerChat() {
         next = await request<ChatSession>(`/sessions/${session.session_id}/new`, { method: "POST", body: {}, token: session.session_token });
       } catch (e) {
         if (!(e instanceof ApiError) || ![401, 403, 404].includes(e.status)) throw e;
-        next = await request<ChatSession>("/sessions", { method: "POST", body: { mode: "harness", demo_profile: profile } });
+        next = await request<ChatSession>(demoPhoneIdentity ? "/demo/phone/session" : "/sessions", {
+          method: "POST", body: demoPhoneIdentity
+            ? { phone: session.user_id ?? entryPhone.trim() }
+            : { mode: "harness", demo_profile: profile },
+        });
       }
       rememberView();
-      save({ ...next, demo_profile: session.demo_profile ?? profile });
+      save(demoPhoneIdentity ? next : { ...next, demo_profile: session.demo_profile ?? profile });
       setTurns([]); setDraft(""); setLastFailed(null); setHint(""); setPromptNotice("");
       setLoading(true); setHistoryError(""); setPhoneLogin(false); setHistoryOpen(false);
       navigate("conversation");
@@ -509,7 +519,7 @@ export function CustomerChat() {
     if (session) {
       navigate("conversation");
       input.current?.focus();
-    } else document.getElementById("demo-profile")?.focus();
+    } else document.getElementById(demoPhoneIdentity ? "entry-phone" : "demo-profile")?.focus();
   }
   const chosenProfile = profiles.find((p) => p.id === profile);
   const historyProps = {
@@ -597,6 +607,23 @@ export function CustomerChat() {
           </div>
         )}
         <div className="conversation-scroll">
+          {demoPhoneIdentity && (!session || !verified) && (
+            <form className="demo-phone-entry" onSubmit={(e) => { e.preventDefault(); void start(); }}>
+              <span className="mini-label">BẮT ĐẦU HỘI THOẠI</span>
+              <label htmlFor="entry-phone">Số điện thoại của bạn</label>
+              <p>Dùng cùng số với Telegram để kết nối hồ sơ và thông tin đã ghi nhớ.</p>
+              <div className="demo-phone-entry-row">
+                <input id="entry-phone" type="tel" inputMode="tel" autoComplete="tel"
+                  placeholder="Ví dụ: 0901234567" value={entryPhone}
+                  onChange={(e) => setEntryPhone(e.target.value)} disabled={pending} required maxLength={32}
+                  aria-describedby="entry-phone-note" />
+                <button className="button primary" type="submit" disabled={pending || !entryPhone.trim()}>
+                  {pending ? <Spinner label="Đang kết nối…" /> : <>Bắt đầu chat <ArrowRight size={16} /></>}
+                </button>
+              </div>
+              <small id="entry-phone-note">Bản demo không yêu cầu mã xác nhận. Mỗi phiên có hội thoại riêng, cùng đóng góp vào bộ nhớ hồ sơ.</small>
+            </form>
+          )}
           {isHome && (
             <section className="welcome">
               <div className="welcome-hero">
@@ -749,9 +776,16 @@ export function CustomerChat() {
               {hint}
             </p>
           )}
+          {!isHome && session?.telegram_url && (
+            <p className="success-message">
+              <a href={session.telegram_url} target="_blank" rel="noopener noreferrer">
+                Tiếp tục trên Telegram
+              </a>{" "}— chia sẻ cùng số điện thoại để dùng chung ngữ cảnh.
+            </p>
+          )}
           <div ref={end} />
         </div>
-        {(!isHome || !session) && <div className="composer-area">
+        {(!isHome || !session) && (!demoPhoneIdentity || session) && <div className="composer-area">
           {isHome && (
             <div className="conversation-intro">
               <span className="section-index">02 / KẾT NỐI</span>
@@ -797,17 +831,17 @@ export function CustomerChat() {
                 setTurns([]);
                 setPhoneLogin(false);
                 setHint(
-                  "Đã kết nối hồ sơ từ Telegram. Bạn có thể tiếp tục nhu cầu đã trao đổi.",
+                  "Đã mở hồ sơ theo số điện thoại. Ngữ cảnh được dùng chung trên web và Telegram.",
                 );
                 setError("");
                 navigate("conversation");
               }}
             />
           )}
-          {!session && !phoneLogin && (
+          {!session && !phoneLogin && !demoPhoneIdentity && (
             <div className="phone-continuation">
               <button
-                className="button secondary"
+                className="button primary"
                 onClick={() => setPhoneLogin(true)}
                 disabled={pending}
               >
@@ -815,12 +849,12 @@ export function CustomerChat() {
               </button>
             </div>
           )}
-          {!session && !phoneLogin && (
+          {!session && !phoneLogin && !demoPhoneIdentity && (
             <div className="onboarding-bar">
               <div>
-                <span className="mini-label">THÔNG TIN KHÁCH HÀNG</span>
+                <span className="mini-label">HOẶC THỬ DỮ LIỆU GIẢ LẬP</span>
                 <label htmlFor="demo-profile">
-                  Chọn hồ sơ để bắt đầu hỗ trợ
+                  Hồ sơ demo (không dùng để liên kết Telegram)
                 </label>
               </div>
               <select
@@ -851,12 +885,13 @@ export function CustomerChat() {
               </button>
             </div>
           )}
-          {session && !verified && (
+          {session && !verified && !demoPhoneIdentity && (
             <details className="identity-help">
               <summary>Tiếp nối hồ sơ và đặt lịch</summary>
                 <p>
-                  Bạn có thể trò chuyện ngay. Khi cần xem lịch sử hoặc đặt lịch,
-                  gửi số điện thoại demo trong khung chat để kết nối hồ sơ.
+                  {demoPhoneIdentity
+                    ? "Nhập số điện thoại trong chat để kết nối hồ sơ. Dùng cùng số trên Telegram để tiếp tục thông tin đã ghi nhớ."
+                    : "Bạn có thể trò chuyện ngay. Khi cần xem lịch sử hoặc đặt lịch, gửi số điện thoại demo trong khung chat để kết nối hồ sơ."}
                 </p>
                 {chosenProfile?.phone && (
                   <small>
@@ -1024,8 +1059,8 @@ export function CustomerChat() {
             <div>
               <dt>Khách hàng</dt>
               <dd>
-                {session?.identity_status === "identified"
-                  ? String(session.brief?.name ?? "Khách hàng")
+                {session?.brief?.name
+                  ? String(session.brief.name)
                   : (chosenProfile?.name ??
                     chosenProfile?.full_name ??
                     "Chưa chọn hồ sơ")}
@@ -1034,7 +1069,7 @@ export function CustomerChat() {
             <div>
               <dt>Xác minh</dt>
               <dd className={verified ? "session-verified" : ""}>
-                {session?.identity_status === "identified"
+                {demoPhoneIdentity && verified ? "Đã kết nối hồ sơ demo" : session?.identity_status === "identified"
                   ? "Đã xác nhận SĐT"
                   : specialist ? "Chuyên viên tư vấn đang hỗ trợ"
                   : verified
@@ -1056,7 +1091,7 @@ export function CustomerChat() {
         </div>
         {session?.identity_status === "identified" && session.brief && (
           <details className="phone-context">
-            <summary>Thông tin đã ghi nhận từ Telegram</summary>
+            <summary>Thông tin đã ghi nhớ giữa các kênh</summary>
             <BriefView brief={session.brief} />
           </details>
         )}
