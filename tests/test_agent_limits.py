@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from test_agent_tools import Provider, answer, calls, message, new_session, settings
+from test_agent_tools import Provider, answer, calls, context, message, new_session, settings
 
 from harness import llm
 from harness.agent import tool_loop
@@ -149,16 +149,55 @@ def test_current_negative_callback_request_cannot_be_treated_as_consent(tmp_path
         assert callback["result"]["error"]
 
 
-def test_cancellation_removes_a_previous_pending_callback_request(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cancellation", [
+    "Tôi hủy yêu cầu gọi lại; không đặt lịch nữa.",
+    "Tôi hủy yêu cầu gọi lại.",
+])
+def test_cancellation_removes_a_previous_pending_callback_request(tmp_path, monkeypatch, cancellation):
     provider = Provider([
         calls(("identity", "verify_identity", {"phone": "0900000002"})), answer(),
         calls(("callback", "schedule_callback", {"time": "2026-11-02T09:00:00+07:00"})), answer(),
+        calls(("new-callback", "schedule_callback", {"time": "2026-11-03T10:00:00+07:00"})), answer(),
     ])
     provider.install(monkeypatch)
     with TestClient(create_app(settings(tmp_path, identity_history_enabled=False))) as client:
         session, auth = new_session(client)
         message(client, session, auth, "Số điện thoại của tôi là 0900000002. Hẹn gọi lại sau 2 ngày lúc 09:00.", "request")
         assert not client.app.state.harness.db.all("SELECT * FROM callbacks")
-        message(client, session, auth, "Tôi hủy yêu cầu gọi lại; không đặt lịch nữa.", "cancel")
+        message(client, session, auth, cancellation, "cancel")
         assert not client.app.state.harness.db.all("SELECT * FROM callbacks")
         assert len(provider.requests) == 4
+        message(client, session, auth, "Hẹn gọi lại ngày 2026-11-03 lúc 10:00.", "fresh-request")
+        rows = client.app.state.harness.db.all("SELECT due_at FROM callbacks")
+        assert rows == [{"due_at": "2026-11-03T10:00:00+07:00"}]
+        assert len(provider.requests) == 6
+
+
+def test_summary_cancellation_revokes_old_consent_but_allows_a_fresh_request(tmp_path, monkeypatch):
+    fact_ids = []
+
+    def retain_issued_fact(payload):
+        fact = next(fact for fact in context(payload)["facts"].values() if fact["key"] == "promo_rate")
+        fact_ids.append(fact["id"])
+        return answer()
+
+    def summary(_payload):
+        return calls(("summary", "send_summary", {"channel": "web", "fact_ids": fact_ids}))
+
+    provider = Provider([
+        calls(("identity", "verify_identity", {"phone": "0900000002"})),
+        promotions("promotion"), retain_issued_fact,
+        summary, answer(), summary, answer(),
+    ])
+    provider.install(monkeypatch)
+    with TestClient(create_app(settings(tmp_path, identity_history_enabled=False))) as client:
+        session, auth = new_session(client)
+        message(client, session, auth, "Số điện thoại của tôi là 0900000002. Gửi tóm tắt qua web giúp tôi.", "request")
+        db = client.app.state.harness.db
+        assert fact_ids and not db.all("SELECT * FROM outbox")
+        message(client, session, auth, "Tôi hủy yêu cầu gửi tóm tắt.", "cancel")
+        assert not db.all("SELECT * FROM outbox")
+        assert not db.all("SELECT * FROM tool_calls WHERE tool='send_summary'")
+        message(client, session, auth, "Giờ tôi muốn gửi tóm tắt qua web.", "fresh-request")
+        assert len(db.all("SELECT * FROM outbox WHERE status='mock_sent'")) == 1
+        assert len(db.all("SELECT * FROM tool_calls WHERE tool='send_summary'")) == 1

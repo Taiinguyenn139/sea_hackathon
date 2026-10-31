@@ -158,7 +158,7 @@ class AgentLoop:
             low = normalized(row["text"])
             target = r"(?:goi|hen|lich|dat lich|lien he)" if name == "schedule_callback" else r"(?:gui|tom tat|tong ket)"
             cancelled = re.search(
-                r"\b(?:khong|dung|chua|huy)(?:\s+(?:can|muon|phai|nen|duoc|giup|cho|em|toi|anh|chi|voi|hay)){0,4}"
+                r"\b(?:khong|dung|chua|huy)(?:\s+(?:can|muon|phai|nen|duoc|giup|cho|em|toi|anh|chi|voi|hay|yeu cau)){0,4}"
                 r"\s+" + target + r"\b", low,
             )
             if cancelled:
