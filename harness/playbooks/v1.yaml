@@ -1,0 +1,12 @@
+version: v1
+cards:
+  rate_high:
+    retail:
+      - id: explain-floating-rate
+        text: Mức sau ưu đãi có thể thay đổi; chuyên viên sẽ giải thích cách xác định lãi tại thời điểm ký.
+        tools: [get_rate, get_disclosures]
+  need_spouse:
+    retail:
+      - id: family-discussion
+        text: Anh/chị có thể trao đổi thêm cùng gia đình; em sẵn sàng giải thích các điều kiện còn băn khoăn.
+        tools: [get_disclosures]

@@ -1,0 +1,66 @@
+{
+  "profile": "hoa",
+  "dob": "1988-05-12",
+  "scenario_id": "duplicate-message",
+  "product": "home_loan",
+  "customer_claims": [
+    [
+      "VND",
+      2000000000
+    ],
+    [
+      "months",
+      240
+    ],
+    [
+      "VND",
+      45000000
+    ],
+    [
+      "VND",
+      3000000000
+    ],
+    [
+      "VND",
+      0
+    ]
+  ],
+  "sessions": [
+    {
+      "channel": "telegram",
+      "as_of": "2026-10-31",
+      "verify": true,
+      "steps": [
+        {
+          "text": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 45 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng, không có nợ.",
+          "reveals": [
+            "amount",
+            "term",
+            "income",
+            "property_value",
+            "debt"
+          ],
+          "expect": {
+            "offer": true
+          },
+          "duplicate": true
+        },
+        {
+          "text": "Chuyển cho chuyên viên giúp tôi.",
+          "handoff": true,
+          "handoff_required": [
+            "reason",
+            "next_step",
+            "brief.customer_id",
+            "brief.needs",
+            "bot_said"
+          ]
+        }
+      ]
+    }
+  ],
+  "loan": {
+    "amount": "2000000000",
+    "term": 240
+  }
+}

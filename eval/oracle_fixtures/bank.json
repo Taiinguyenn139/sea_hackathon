@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "description": "Independent reviewed snapshot of fictional bank fixture values; never loaded from SUT responses.",
+  "offers": [
+    {
+      "product": "home_loan",
+      "valid_from": "2026-07-01",
+      "valid_until": "2026-09-30",
+      "channels": [
+        "web",
+        "telegram"
+      ],
+      "claims": [
+        [
+          "%",
+          "6.5"
+        ],
+        [
+          "%",
+          "10.5"
+        ],
+        [
+          "%",
+          "3.5"
+        ],
+        [
+          "months",
+          12
+        ]
+      ]
+    },
+    {
+      "product": "home_loan",
+      "valid_from": "2026-10-01",
+      "valid_until": "2026-12-31",
+      "channels": [
+        "web",
+        "telegram"
+      ],
+      "claims": [
+        [
+          "%",
+          "6.9"
+        ],
+        [
+          "%",
+          "10.5"
+        ],
+        [
+          "%",
+          "3.5"
+        ],
+        [
+          "months",
+          12
+        ]
+      ]
+    },
+    {
+      "product": "personal_loan",
+      "valid_from": "2026-10-01",
+      "valid_until": "2026-12-31",
+      "channels": [
+        "web",
+        "telegram"
+      ],
+      "claims": [
+        [
+          "%",
+          "12.9"
+        ],
+        [
+          "%",
+          "16.5"
+        ],
+        [
+          "%",
+          "4.5"
+        ],
+        [
+          "months",
+          6
+        ]
+      ]
+    },
+    {
+      "product": "credit_card",
+      "valid_from": "2026-10-01",
+      "valid_until": "2026-12-31",
+      "channels": [
+        "web",
+        "telegram"
+      ],
+      "claims": [
+        [
+          "%",
+          24
+        ],
+        [
+          "VND",
+          500000
+        ],
+        [
+          "VND",
+          10000000
+        ],
+        [
+          "VND",
+          100000000
+        ],
+        [
+          "months",
+          12
+        ]
+      ]
+    }
+  ]
+}
