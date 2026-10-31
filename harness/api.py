@@ -36,6 +36,8 @@ from harness.schemas import (
     PhoneConfirmInput,
     PhoneLoginInput,
     SessionInput,
+    SpecialistCompleteInput,
+    SpecialistStartInput,
     VerifyInput,
 )
 from harness.service import Harness, token_hash
@@ -98,6 +100,7 @@ def create_app(settings=None):
             # never invoke an LLM/provider or consume the external inbox before promotion.
             for row in db.all("SELECT customer_id FROM customer_sequences"):
                 harness.engine.memory.flush(row["customer_id"], allow_llm=False)
+            harness.specialist.recover()
             for row in db.all("SELECT * FROM handoffs WHERE status IN ('pending', 'completing')"):
                 session = db.one("SELECT * FROM sessions WHERE id=?", (row["session_id"],))
                 summary = json.loads(row["summary"])
@@ -271,7 +274,7 @@ def create_app(settings=None):
     @app.get("/sessions/{sid}")
     def get_session(sid: str, request: Request):
         s = owner_or_staff(sid, request)
-        h = db.one("SELECT id FROM handoffs WHERE session_id=? AND status!='completed'", (sid,))
+        h = db.one("SELECT id FROM handoffs WHERE session_id=? AND status IN ('pending','completing')", (sid,))
         return {
             "session_id": sid,
             "status": s["status"],
@@ -279,6 +282,7 @@ def create_app(settings=None):
             "customer_id": s["customer_id"] if harness.can_chat(s) else None,
             "user_id": harness.user_id(s["customer_id"]) if harness.can_chat(s) else None,
             "handoff_id": h["id"] if h else None,
+            **harness.specialist.metadata(sid),
         }
 
     @app.post("/auth/phone/login")
@@ -310,9 +314,12 @@ def create_app(settings=None):
     def turns(sid: str, request: Request, offset: int = 0, limit: int = 100):
         owner_or_staff(sid, request)
         rows = db.all(
-            "SELECT id,text,reply,created_at FROM turns WHERE session_id=? ORDER BY created_at,id LIMIT ? OFFSET ?",
+            "SELECT id,text,reply,created_at,result FROM turns WHERE session_id=? ORDER BY created_at,id LIMIT ? OFFSET ?",
             (sid, min(max(limit, 1), 100), max(offset, 0)),
         )
+        for row in rows:
+            result = json.loads(row.pop("result") or "{}")
+            row["responder"] = result.get("responder", "assistant")
         return {"items": rows}
 
     @app.get("/sessions/{sid}/tools")
@@ -425,13 +432,27 @@ def create_app(settings=None):
         owner(sid, request)
         return harness.handoff(sid, body.reason)
 
+    @app.post("/sessions/{sid}/specialist/start")
+    def specialist_start(sid: str, body: SpecialistStartInput, request: Request):
+        owner(sid, request)
+        return harness.specialist.start(sid, body.reason, body.idempotency_key)
+
+    @app.post("/sessions/{sid}/specialist/complete")
+    def specialist_complete(sid: str, body: SpecialistCompleteInput, request: Request):
+        owner(sid, request)
+        return harness.specialist.complete(sid, body.handoff_id)
+
     @app.post("/sessions/{sid}/end")
     def end(sid: str, request: Request):
         s = owner(sid, request)
         with harness.engine.lock(s["customer_id"]):
+            s = harness.session(sid)
             harness.engine.memory.flush(s["customer_id"])
             if s["status"] == "waiting_human":
                 raise HTTPException(409, "Complete handoff before ending session")
+            current = harness.specialist.current(sid)
+            if current:
+                harness.specialist.complete(sid, current["handoff_id"])
             db.execute("UPDATE sessions SET status='ended' WHERE id=?", (sid,))
         return {"session_id": sid, "status": "ended"}
 
@@ -502,6 +523,8 @@ def create_app(settings=None):
         h = db.one("SELECT * FROM handoffs WHERE id=?", (hid,))
         if not h:
             raise HTTPException(404, "Handoff not found")
+        if db.one("SELECT handoff_id FROM specialist_handoffs WHERE handoff_id=?", (hid,)):
+            raise HTTPException(409, "Yêu cầu mô phỏng được hoàn tất trong phiên chat của khách.")
         return harness.engine.complete(h, body.model_dump())
 
     @app.get("/callbacks", dependencies=[Depends(staff)])

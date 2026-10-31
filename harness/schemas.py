@@ -41,6 +41,16 @@ class HandoffInput(Input):
     reason: str = Field(default="Khách yêu cầu chuyên viên", max_length=1000)
 
 
+class SpecialistStartInput(Input):
+    reason: str = Field(default="Khách yêu cầu tư vấn chuyên sâu", min_length=1, max_length=1000)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class SpecialistCompleteInput(Input):
+    handoff_id: str = Field(min_length=1, max_length=128)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
 class CompleteInput(Input):
     notes: str = Field(default="", max_length=4000)
     commitments: list[str] = Field(default_factory=list, max_length=20)
