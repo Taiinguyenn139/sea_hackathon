@@ -66,12 +66,15 @@ class Memory:
         )
 
     def flush(self, customer, target_seq=None, allow_llm=True):
+        wait_deadline = time.monotonic() + (self.settings.llm_call_budget_seconds if self.settings else 20)
+        waited = False
         with self.db.transaction() as c:
             row = c.execute("SELECT * FROM customer_sequences WHERE customer_id=?", (customer,)).fetchone()
             if not row:
                 return
             target = row["next_seq"] if target_seq is None else min(target_seq, row["next_seq"])
         while True:
+            busy = False
             with self.db.transaction() as c:
                 row = c.execute("SELECT * FROM customer_sequences WHERE customer_id=?", (customer,)).fetchone()
                 if row["processed_seq"] >= target:
@@ -89,13 +92,24 @@ class Memory:
                     self._finish(c, job, customer)
                     continue
                 if job["lease_until"] > time.time():
+                    if job["status"] != "processing":
+                        raise LLMUnavailable("memory_cooldown")
+                    busy = True
+                else:
+                    if waited and time.monotonic() >= wait_deadline:
+                        raise LLMUnavailable("memory_busy")
+                    lease = time.time() + self.settings.llm_call_budget_seconds + 10
+                    c.execute(
+                        "UPDATE memory_jobs SET status='processing',lease_until=?,error=NULL WHERE turn_id=?",
+                        (lease, job["turn_id"]),
+                    )
+                    payload = json.loads(job["payload"])
+            if busy:
+                waited = True
+                if time.monotonic() >= wait_deadline:
                     raise LLMUnavailable("memory_busy")
-                lease = time.time() + self.settings.llm_call_budget_seconds + 10
-                c.execute(
-                    "UPDATE memory_jobs SET status='processing',lease_until=?,error=NULL WHERE turn_id=?",
-                    (lease, job["turn_id"]),
-                )
-                payload = json.loads(job["payload"])
+                time.sleep(0.01)
+                continue
             try:
                 # Provider calls must never hold the shared SQLite transaction/lock.
                 suggestion = json_completion(

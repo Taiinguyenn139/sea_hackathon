@@ -272,12 +272,14 @@ class Engine:
                 stage = suggestion["stage"]
             if suggestion.get("objection") in ("rate_high", "need_spouse"):
                 objection = suggestion["objection"]
-            handoff = handoff or stage == "apply"
         handoff = handoff and self.memory_access(s["session"])
         slots = ["income", "debt"] if product == "credit_card" else ["amount", "term", "income", "debt"]
         if product == "home_loan":
             slots.append("property_value")
         missing = [k for k in slots if k not in known]
+        # A classification suggestion cannot authorize a human handoff by itself.
+        if stage == "apply" and not handoff:
+            stage = "discover" if missing else "quote"
         return {
             "plan": {
                 "product": product,
