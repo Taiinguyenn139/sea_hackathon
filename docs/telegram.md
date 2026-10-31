@@ -93,14 +93,47 @@ Gửi `/start` để mở phiên mới vẫn giữ các thông tin đã ghi nh�
 được lưu trong SQLite nên tiếp tục dùng được sau khi backend khởi động lại.
 Trong lúc chuyên viên tiếp nhận, `/start` không bỏ qua quy trình bàn giao.
 
-Hồ sơ khách mới có trạng thái `guest`, không có CIF và không được đánh dấu đã
-xác minh tài khoản ngân hàng. Public API tạo phiên web vẫn chỉ chấp nhận hồ sơ
-demo; không thể nhập ID hồ sơ Telegram để truy cập thông tin của người khác.
+Trước khi chia sẻ số điện thoại, hồ sơ có trạng thái `guest`. Sau khi chia sẻ
+số của chính mình, khách có hồ sơ `identified` lưu bền vững với số điện thoại
+là khóa liên kết duy nhất. Hồ sơ này không tự nhận CIF hoặc trạng thái đã xác
+minh tài khoản ngân hàng. Mã khách nội bộ được giữ nguyên để không mất memory
+đã tạo trước khi chia sẻ số.
 
-Schema phiên bản 3 tự thêm bảng `guest_customers` khi backend khởi động, giữ
-nguyên dữ liệu hiện có. Quy trình release backup database trước khi chạy bản mới.
+Schema phiên bản 4 tự thêm bảng hồ sơ, xác nhận số điện thoại và quyền phiên
+web; bổ sung `reply_markup` cho outbox. Dữ liệu cũ được giữ nguyên. Quy trình
+release backup database trước khi chạy bản mới.
 Reset hội thoại qua API quản trị giữ hồ sơ khách và liên kết định danh, đồng
 thời xóa các thông tin hội thoại như với khách demo.
+
+## Tiếp tục trên web bằng cùng số điện thoại
+
+1. Trên Telegram, bấm **Chia sẻ số điện thoại** ở lời chào hoặc gửi `/phone`
+   để hiện lại nút. Bot không tự nhận số điện thoại từ tin nhắn thông thường.
+2. Backend chỉ nhận contact có `contact.user_id` trùng người gửi trong chat
+   riêng. Gửi số bằng văn bản hoặc contact của người khác không liên kết hồ sơ.
+3. Số được chuẩn hóa bằng `phonenumbers` về E.164; mặc định vùng Việt Nam khi
+   nhập số trong nước. Ví dụ `0901234567` và `+84901234567` là một khóa.
+   Cột `customer_profiles.phone_e164` có ràng buộc duy nhất.
+4. Trên web, chọn **Tiếp tục bằng số điện thoại**, nhập cùng số rồi nhận mã
+   qua Telegram. Nhập mã ở biểu mẫu xác nhận trên web để mở phiên thuộc đúng
+   hồ sơ đó và nạp bản tóm tắt nhu cầu đã ghi nhận.
+5. Web và Telegram dùng cùng `customer_id`, bộ tư vấn và memory. Thông tin
+   xác nhận mới ở một kênh được dùng cho lần tư vấn tiếp theo ở kênh còn lại.
+   Transcript riêng từng phiên vẫn tách biệt; ngữ cảnh dùng chung qua memory.
+
+API public `/auth/phone/start` nhận `{phone}` và trả `{challenge_id, expires_in}`.
+API `/auth/phone/confirm` nhận `{challenge_id, code}`; chỉ sau khi xác nhận mới
+trả capability phiên web và brief. Không thể lấy ngữ cảnh bằng cách chỉ nhập
+một số điện thoại. Mã sáu chữ số hết hạn sau 10 phút, dùng một lần, tối đa năm
+lần thử; mỗi số được yêu cầu ba mã trong 15 phút, mỗi IP tối đa mười yêu cầu.
+Yêu cầu mã mới làm mã cũ mất hiệu lực. Mã đi qua outbox bền vững của Telegram.
+
+Bản demo chưa tích hợp SMS OTP hoặc đăng nhập khách hàng ngân hàng, nên dùng
+Telegram để xác nhận quyền truy cập số đã chia sẻ. Luồng hồ sơ demo chọn
+Hoa/Minh và xác minh ngày sinh trên web vẫn hoạt động như trước. Public API
+`/sessions` không cho nhập ID hồ sơ Telegram để chiếm phiên khách khác.
+Nếu một số đã liên kết với hồ sơ khác, bot giữ nguyên các hồ sơ và yêu cầu
+hỗ trợ; không tự gộp lịch sử của hai người. Chưa có luồng tự đổi số điện thoại.
 
 ## Liên kết hồ sơ ngân hàng demo (tùy chọn)
 

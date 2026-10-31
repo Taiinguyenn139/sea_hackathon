@@ -182,8 +182,13 @@ class Engine:
                         "valid_until": None,
                     }
             parts.append({"type": "old_transcript", "turns": old})
+        remembered_keys = set(known) if session["mode"] == "harness" else set()
         for t in current:
             for k, (v, u) in extract(t["text"]).items():
+                # Shared memory includes newer updates from other channels.
+                # An older turn in this session must not replace those values.
+                if k in remembered_keys:
+                    continue
                 known[k] = v
                 fid = ident("cf_", [t["id"], k, v])
                 facts = {i: f for i, f in facts.items() if f["key"] != k}

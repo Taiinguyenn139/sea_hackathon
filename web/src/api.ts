@@ -100,6 +100,7 @@ export type Turn = {
 };
 export type Reply = {
   reply: string;
+  brief?: Record<string, unknown>;
   used_fact_ids: string[];
   guard_events: unknown[];
   session_id: string;

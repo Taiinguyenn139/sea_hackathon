@@ -28,6 +28,8 @@ import {
   type Turn,
 } from "../api";
 import { BrandMark, ErrorBanner, Spinner } from "../ui";
+import { PhoneLogin } from "../phone-login";
+import { BriefView } from "../brief-view";
 const STORAGE = "mach-chat-session";
 function savedSession(): ChatSession | null {
   try {
@@ -61,6 +63,7 @@ export function CustomerChat() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profile, setProfile] = useState(savedSession()?.demo_profile ?? "hoa");
   const [dob, setDob] = useState("");
+  const [phoneLogin, setPhoneLogin] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
@@ -75,7 +78,7 @@ export function CustomerChat() {
   const [promptNotice, setPromptNotice] = useState("");
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-  const verified = session?.identity_status === "verified";
+  const verified = ["verified", "identified"].includes(session?.identity_status ?? "");
   const waiting =
     Boolean(session?.handoff_id) && session?.status !== "completed";
   useEffect(() => {
@@ -200,11 +203,12 @@ export function CustomerChat() {
       ]);
       setDraft("");
       setPromptNotice("");
-      if (data.handoff_id)
+      if (data.handoff_id || data.brief)
         save({
           ...session,
-          handoff_id: data.handoff_id,
-          status: "waiting_human",
+          brief: data.brief ?? session.brief,
+          handoff_id: data.handoff_id ?? session.handoff_id,
+          status: data.handoff_id ? "waiting_human" : session.status,
         });
     } catch (e) {
       setError(errorMessage(e));
@@ -417,7 +421,23 @@ export function CustomerChat() {
               }
             />
           )}
-          {!session && (
+          {!session && phoneLogin && (
+            <PhoneLogin onCancel={() => setPhoneLogin(false)} onSuccess={(next) => {
+              save(next);
+              setTurns([]);
+              setPhoneLogin(false);
+              setHint("Đã kết nối hồ sơ từ Telegram. Bạn có thể tiếp tục nhu cầu đã trao đổi.");
+              setError("");
+            }} />
+          )}
+          {!session && !phoneLogin && (
+            <div className="phone-continuation">
+              <button className="button secondary" onClick={() => setPhoneLogin(true)} disabled={pending}>
+                Tiếp tục bằng số điện thoại <ArrowRight size={16} />
+              </button>
+            </div>
+          )}
+          {!session && !phoneLogin && (
             <div className="onboarding-bar">
               <div>
                 <span className="mini-label">THÔNG TIN KHÁCH HÀNG</span>
@@ -586,7 +606,7 @@ export function CustomerChat() {
             <div>
               <dt>Khách hàng</dt>
               <dd>
-                {chosenProfile?.name ??
+                {session?.identity_status === "identified" ? String(session.brief?.name ?? "Khách hàng") : chosenProfile?.name ??
                   chosenProfile?.full_name ??
                   "Chưa chọn hồ sơ"}
               </dd>
@@ -594,7 +614,7 @@ export function CustomerChat() {
             <div>
               <dt>Xác minh</dt>
               <dd className={verified ? "session-verified" : ""}>
-                {verified ? "Đã xác minh" : "Chưa xác minh"}
+                {session?.identity_status === "identified" ? "Đã xác nhận SĐT" : verified ? "Đã xác minh" : "Chưa xác minh"}
               </dd>
             </div>
             <div>
@@ -609,6 +629,12 @@ export function CustomerChat() {
             </div>
           </dl>
         </div>
+        {session?.identity_status === "identified" && session.brief && (
+          <details className="phone-context">
+            <summary>Thông tin đã ghi nhận từ Telegram</summary>
+            <BriefView brief={session.brief} />
+          </details>
+        )}
         <button
           className="human-help"
           onClick={handoff}
