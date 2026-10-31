@@ -256,11 +256,16 @@ def create_app(settings=None):
                 for p in FIXTURES["customers"]
             ],
             "fictional": True,
+            "demo_phone_identity": settings.demo_phone_identity,
         }
 
     @app.post("/sessions")
     def create(body: SessionInput):
         return harness.new_session(body.demo_profile, body.mode)
+
+    @app.post("/demo/phone/session")
+    def demo_phone_session(body: PhoneLoginInput):
+        return harness.demo_phone_session(body.phone)
 
     @app.get("/sessions/{sid}")
     def get_session(sid: str, request: Request):
@@ -277,6 +282,8 @@ def create_app(settings=None):
 
     @app.post("/auth/phone/login")
     def phone_demo_login(body: PhoneLoginInput):
+        if settings.demo_phone_identity:
+            return harness.demo_phone_session(body.phone)
         customer = harness.phone_identity.demo_customer(body.phone)
         result = harness._create_session(customer, phone_authenticated=True)
         result["telegram_url"] = "https://t.me/" + settings.telegram_bot_username

@@ -11,7 +11,7 @@ from bank_tools.service import canonical, ident, now
 from harness.agent.engine import Engine, event
 from harness.identity import extract_phone_claims, get_profile
 from harness.input_guard import inspect_input
-from harness.phone_identity import PhoneIdentity
+from harness.phone_identity import PhoneIdentity, normalize_phone
 
 
 def token_hash(value):
@@ -31,7 +31,9 @@ class Harness:
             link = c.execute(
                 "SELECT customer_id FROM identity_links WHERE channel='telegram' AND external_id=?", (target,)
             ).fetchone()
-            if link and not get_profile(link["customer_id"]):
+            if link and (not get_profile(link["customer_id"]) or self.settings.demo_phone_identity and c.execute(
+                "SELECT customer_id FROM demo_phone_links WHERE customer_id=?", (link["customer_id"],)
+            ).fetchone()):
                 return link["customer_id"]
             customer = ident("guest_", ["telegram", target])
             display_name = name.strip()[:100] if isinstance(name, str) and name.strip() else "Khách Telegram"
@@ -58,6 +60,8 @@ class Harness:
         if self.can_chat(session):
             return "identified" if self.db.one(
                 "SELECT id FROM customer_profiles WHERE id=?", (session["customer_id"],)
+            ) or self.db.one(
+                "SELECT customer_id FROM demo_phone_links WHERE customer_id=?", (session["customer_id"],)
             ) else "guest"
         return "unverified"
 
@@ -74,20 +78,44 @@ class Harness:
             "WHERE l.channel='telegram' AND l.external_id=? AND p.id=? AND p.telegram_id=?",
             (external_id, profile, external_id),
         ) is not None
-        if not identity and not guest and not linked:
+        demo_link = self.settings.demo_phone_identity and channel == "telegram" and self.db.one(
+            "SELECT customer_id FROM identity_links WHERE channel='telegram' AND external_id=? AND customer_id=?",
+            (external_id, profile),
+        ) is not None and self.db.one("SELECT customer_id FROM demo_phone_links WHERE customer_id=?", (profile,)) is not None
+        if not identity and not guest and not linked and not demo_link:
             raise HTTPException(400, "Unknown demo profile")
-        return self._create_session(profile, mode, channel, external_id)
+        result = self._create_session(profile, mode, channel, external_id, phone_authenticated=demo_link)
+        if demo_link and identity:
+            self.db.execute("UPDATE sessions SET verified=1 WHERE id=?", (result["session_id"],))
+            result["identity_status"] = "verified"
+        return result
 
     def user_id(self, customer):
         profile = get_profile(customer)
         if profile:
             return profile["user_id"]
-        linked = self.db.one("SELECT phone_e164 FROM customer_profiles WHERE id=?", (customer,))
+        linked = self.db.one("SELECT phone_e164 FROM customer_profiles WHERE id=?", (customer,)) or self.db.one(
+            "SELECT phone_e164 FROM demo_phone_links WHERE customer_id=?", (customer,)
+        )
         return linked["phone_e164"] if linked else None
 
     def phone_session(self, challenge, code):
         customer = self.phone_identity.confirm(challenge, code)
         return self._create_session(customer, phone_authenticated=True)
+
+    def demo_phone_session(self, raw_phone):
+        if not self.settings.demo_phone_identity:
+            raise HTTPException(404, "Demo phone entry is disabled")
+        phone = normalize_phone(raw_phone)
+        result = self._create_session(ident("demo_", [phone]))
+        session = self._demo_phone_customer(self.session(result["session_id"]), phone)
+        return {
+            **result,
+            "identity_status": self.identity_status(session),
+            "user_id": self.user_id(session["customer_id"]),
+            "brief": self.engine.memory.brief(session["customer_id"]),
+            "telegram_url": "https://t.me/" + self.settings.telegram_bot_username,
+        }
 
     def _create_session(self, profile, mode="harness", channel="web", external_id=None, phone_authenticated=False):
         if channel == "telegram" and self.db.one(
@@ -130,7 +158,9 @@ class Harness:
         if previous["verified"]:
             self.db.execute("UPDATE sessions SET verified=1 WHERE id=?", (result["session_id"],))
             result["identity_status"] = "verified"
-        if authenticated and self.db.one("SELECT id FROM customer_profiles WHERE id=?", (previous["customer_id"],)):
+        if authenticated and (self.db.one("SELECT id FROM customer_profiles WHERE id=?", (previous["customer_id"],))
+                              or self.db.one("SELECT customer_id FROM demo_phone_links WHERE customer_id=?",
+                                             (previous["customer_id"],))):
             result["telegram_url"] = "https://t.me/" + self.settings.telegram_bot_username
         return result
 
@@ -179,10 +209,66 @@ class Harness:
             "tool_call_id": result["tool_call_id"],
         }
 
+    def _demo_phone_customer(self, session, raw_phone):
+        """Demo-only phone selection; never changes the contact/OTP ownership registry."""
+        phone = normalize_phone(raw_phone)
+        fixture = get_profile(phone)
+        old_customer = session["customer_id"]
+        with self.db.transaction() as c:
+            linked = c.execute("SELECT customer_id FROM demo_phone_links WHERE phone_e164=?", (phone,)).fetchone()
+            proven = c.execute("SELECT id FROM customer_profiles WHERE phone_e164=?", (phone,)).fetchone()
+            if linked:
+                customer = linked["customer_id"]
+            elif proven:
+                customer = proven["id"]
+            elif fixture:
+                customer = fixture["id"]
+            else:
+                # Preserve a prospect's memory when their first phone creates a profile.
+                guest = c.execute("SELECT id FROM guest_customers WHERE id=?", (old_customer,)).fetchone()
+                bound = c.execute(
+                    "SELECT customer_id FROM demo_phone_links WHERE customer_id=? UNION "
+                    "SELECT id FROM customer_profiles WHERE id=?", (old_customer, old_customer),
+                ).fetchone()
+                customer = old_customer if guest and not bound else ident("demo_", [phone])
+                c.execute(
+                    "INSERT OR IGNORE INTO guest_customers VALUES(?,?,?,?,?)",
+                    (customer, "demo_phone", phone, "Khách demo", now()),
+                )
+            # A conversation with remembered content must not silently move to another person.
+            already_linked = session["verified"] or c.execute(
+                "SELECT customer_id FROM demo_phone_links WHERE customer_id=? UNION "
+                "SELECT id FROM customer_profiles WHERE id=?", (old_customer, old_customer),
+            ).fetchone()
+            if customer != old_customer and already_linked and c.execute(
+                "SELECT 1 FROM turns WHERE session_id=? LIMIT 1", (session["id"],)
+            ).fetchone():
+                raise HTTPException(409, "Vui lòng mở phiên chat mới rồi nhập số điện thoại khác.")
+            c.execute("INSERT OR IGNORE INTO demo_phone_links VALUES(?,?)", (phone, customer))
+            c.execute(
+                "UPDATE sessions SET customer_id=?,verified=? WHERE id=?",
+                (customer, int(get_profile(customer) is not None), session["id"]),
+            )
+            c.execute("INSERT OR REPLACE INTO phone_sessions VALUES(?,?)", (session["id"], customer))
+            if session["channel"] == "telegram":
+                c.execute(
+                    "INSERT OR REPLACE INTO identity_links VALUES('telegram',?,?)", (session["external_id"], customer)
+                )
+        if customer != old_customer:
+            self.engine.checkpointer.delete_thread(session["id"])
+        return self.session(session["id"])
+
     def _phone_message(self, session, text, client_id, existing, phones, source):
         """Handle screened fixture claims before financial extraction or the agent."""
         tool_calls = []
-        if session["verified"]:
+        if self.settings.demo_phone_identity and len(phones) == 1:
+            session = self._demo_phone_customer(session, phones[0])
+            state = self.identity_status(session)
+            reply = (
+                "Đã kết nối hồ sơ demo theo số điện thoại. Nhập cùng số này trong chat web hoặc Telegram "
+                "để dùng chung thông tin đã ghi nhớ. Anh/chị muốn tiếp tục nhu cầu nào?"
+            )
+        elif session["verified"]:
             reply = "Phiên này đã nhận diện hồ sơ demo. Số điện thoại trong tin nhắn không thay đổi hồ sơ đang gắn."
             state = "verified"
         elif len(phones) != 1:
@@ -214,10 +300,12 @@ class Harness:
             "identity_status": state,
             "user_id": self.user_id(session["customer_id"]) if state in ("verified", "identified") else None,
             "used_fact_ids": [],
-            "guard_events": [event("G7", "demo_phone_identified" if state == "verified" else "identity_unverified", "identify")],
+            "guard_events": [event(
+                "G7", "demo_phone_identified" if state in ("verified", "identified") else "identity_unverified", "identify"
+            )],
             "handoff_id": None,
         }
-        if state == "verified":
+        if state in ("verified", "identified"):
             # Return the same bound profile as the direct verification endpoint,
             # and persist its snapshot so message retries return one receipt.
             response["brief"] = self.engine.memory.brief(session["customer_id"])

@@ -1,5 +1,31 @@
 # Cấu hình Telegram
 
+## Luồng demo đang triển khai: dùng cùng số điện thoại
+
+Deployment GCP bật `DEMO_PHONE_IDENTITY=true`. Trên web, nhập số điện thoại vào ô
+ở màn hình đầu rồi bấm **Bắt đầu chat**; trên Telegram bấm Start rồi **Chia sẻ số
+điện thoại**, hoặc gõ cùng số trong chat. Không cần mã OTP hoặc quản trị viên liên kết. Ví dụ `0901234567` và
+`+84 90 123 4567` cùng trỏ về một hồ sơ, bất kể hồ sơ mẫu được chọn trên web.
+
+- Số có trong bộ dữ liệu nối vào hồ sơ mẫu; số mới tạo hồ sơ demo riêng.
+- Cả hai thứ tự web → Telegram và Telegram → web đều dùng chung memory.
+- Telegram giữ liên kết cho các lượt sau, kể cả `/start` và sau khi backend
+  khởi động lại. Nút **Cuộc trò chuyện mới** trên web giữ hồ sơ và memory.
+- Transcript và danh sách phiên vẫn riêng. Đổi sang số khác sau khi đã kết nối
+  cần mở phiên mới; hệ thống không chuyển memory của số cũ sang số mới.
+- `POST /demo/phone/session` nhận `{phone}`, mở phiên đã kết nối với transcript
+  trống. Số điện thoại không tạo một tin nhắn trong chat. Context hồ sơ dùng chung,
+  còn bản nháp, transcript, checkpoint và handoff độc lập theo phiên.
+- Liên kết contact/OTP cũ vẫn được nhận diện nếu số đã tồn tại. Memory đã ghi
+  cho một hồ sơ khác trước khi nhập số không tự gộp vào hồ sơ vừa chọn.
+
+Đây là cơ chế nhận diện dành cho demo. Biến cấu hình mặc định `false` ngoài
+deployment demo; khi tắt, Telegram yêu cầu chia sẻ contact và web dùng ô đăng nhập
+số điện thoại bên dưới, vẫn không cần OTP. Khi bật, `/auth/phone/login` và
+`/demo/phone/session` cùng mở hồ sơ demo theo số; chia sẻ contact cũng trỏ về hồ sơ đó.
+Bảng `demo_phone_links` (schema 5) lưu liên kết demo riêng, không thay bảng xác nhận
+contact/OTP. Reset hội thoại giữ liên kết, tương tự các hồ sơ đã xác nhận.
+
 Adapter Telegram đã có trong backend. Để chạy bot thật cần token từ BotFather,
 webhook secret giống nhau ở backend và Telegram và URL HTTPS public.
 Khách mới tự có hồ sơ riêng và có thể chat ngay, không cần quản trị viên liên kết.
@@ -79,7 +105,7 @@ python3 scripts/setup_telegram.py \
   --check-only
 ```
 
-## Luồng demo không cần setup khách hàng
+## Luồng khi `DEMO_PHONE_IDENTITY=false`
 
 - Telegram: mở bot, bấm Start → bấm **Chia sẻ số điện thoại** → chat ngay.
 - Website: **Tiếp tục bằng số điện thoại** → nhập số → **Bắt đầu trò chuyện**.
@@ -105,7 +131,7 @@ python3 scripts/setup_telegram.py \
 
 ## Liên kết demo cũ
 
-Các identity link cũ tới Hoa/Minh không còn quyết định hồ sơ của người chat bot.
+Khi `DEMO_PHONE_IDENTITY=false`, các identity link cũ tới Hoa/Minh không còn quyết định hồ sơ của người chat bot.
 Bot tự dùng hồ sơ cá nhân; người dùng chỉ cần chia sẻ số, không cần nhập số demo.
 Nếu contact cùng chủ Telegram trùng với phone binding demo cũ, binding chuyển
 sang hồ sơ cá nhân khi chia sẻ lại. Không sao chép memory demo dùng chung vào
@@ -122,4 +148,6 @@ hồ sơ cá nhân. Khách đã có hồ sơ riêng tiếp tục dùng memory hi
 
 Kiểm thử local bằng DB tạm và Telegram adapter: `uv run pytest -q`.
 Kiểm thử browser/backend local hai chiều: `node web/tests/phone-demo-smoke.mjs`
-sau khi `npm --prefix web run build`. Chưa gửi tới Telegram thật trong lệnh này.
+sau khi `npm --prefix web run build`. Chạy thêm
+`DEMO_PHONE_IDENTITY=true node web/tests/phone-demo-smoke.mjs` để kiểm tra cấu hình
+deployment demo. Các lệnh này dùng Telegram webhook giả lập, không gửi tới bot thật.

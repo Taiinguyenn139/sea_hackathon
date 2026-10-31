@@ -239,7 +239,7 @@ def test_existing_outbox_migrates_without_losing_pending_messages(tmp_path):
     db = Database(path)
     row = db.one("SELECT * FROM outbox WHERE id='existing'")
     assert row["text"] == "preserved" and row["status"] == "pending" and row["reply_markup"] is None
-    assert db.setting("schema_version") == 4
+    assert db.setting("schema_version") == 5
 
 
 def demo_login(client, phone="0901234567"):

@@ -13,7 +13,7 @@ def docker(*args):
     return subprocess.run(["docker", *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
-def main():
+def main(demo_phone=False):
     name = "harness-smoke-" + secrets.token_hex(4)
     with tempfile.TemporaryDirectory(prefix="harness-container-", dir="/private/tmp" if Path("/private/tmp").exists() else None) as folder:
         root = Path(folder)
@@ -25,6 +25,8 @@ def main():
         webhook_secret = secrets.token_urlsafe(48)
         env = root / "runtime.env"
         env.write_text("ADMIN_TOKEN=" + secrets.token_urlsafe(32) + "\nSTAFF_PASSWORD=" + staff + "\nTELEGRAM_WEBHOOK_SECRET=" + webhook_secret + "\nHARNESS_RELEASE_GATE=/release/ready\nDEPLOY_REVISION=container-smoke\n")
+        with env.open("a") as config:
+            config.write("DEMO_PHONE_IDENTITY=" + str(demo_phone).lower() + "\n")
         env.chmod(0o600)
         try:
             docker("run", "-d", "--name", name, "--env-file", str(env), "--read-only",
@@ -106,8 +108,9 @@ print(json.dumps({'customer': customer, 'reply': reply, 'markup': json.loads(mar
             telegram(100, "/start")
             welcome = guest_state()
             assert welcome["markup"]["keyboard"][0][0]["request_contact"] is True
-            telegram(101, "Thu nhập 999 triệu")
-            assert guest_state()["income"] is None, "Unbound chat created financial memory"
+            if not demo_phone:
+                telegram(101, "Thu nhập 999 triệu")
+                assert guest_state()["income"] is None, "Unbound chat created financial memory"
             telegram(102, contact={"phone_number": "0901234567", "user_id": 424242})
             assert guest_state()["markup"] == {"remove_keyboard": True}
             telegram(103, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
@@ -139,7 +142,7 @@ print(json.dumps({'customer': customer, 'reply': reply, 'markup': json.loads(mar
 
             # Reverse order: a web-first profile must retain its identity and
             # memory when Telegram later supplies the same normalized phone.
-            web_first = request("/auth/phone/login", {"phone": "0901234568"})
+            web_first = request("/demo/phone/session" if demo_phone else "/auth/phone/login", {"phone": "0901234568"})
             request(f"/sessions/{web_first['session_id']}/messages",
                     {"text": "Tôi cần thẻ tín dụng, thu nhập 61 triệu, không có nợ", "client_message_id": "web-first"},
                     web_first["session_token"])
@@ -154,10 +157,11 @@ print(json.dumps({'customer': customer, 'reply': reply, 'markup': json.loads(mar
             assert challenge_count == "0", "Phone-only onboarding unexpectedly requested an OTP"
             with urllib.request.urlopen(base + "/", timeout=10) as response:
                 assert "<html" in response.read().decode().lower(), "Frontend missing"
-            print("PASS: production read-only container, bank quote, contact-first Telegram onboarding, persistent restart, phone-only web login, bidirectional memory, web-first linking, static frontend")
+            print(f"PASS (DEMO_PHONE_IDENTITY={demo_phone}): production read-only container, bank quote, contact-first Telegram onboarding, persistent restart, phone-only web login, bidirectional memory, web-first linking, static frontend")
         finally:
             subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":
     main()
+    main(demo_phone=True)

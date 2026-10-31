@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 const root = resolve(import.meta.dirname, "../..");
 const temp = await mkdtemp(join(tmpdir(), "bankwise-phone-demo-"));
+const demoPhone = process.env.DEMO_PHONE_IDENTITY === "true";
 const port = process.env.LIVE_TEST_PORT ?? "8008";
 const base = `http://127.0.0.1:${port}`;
 const server = spawn(
@@ -59,6 +60,14 @@ async function tg(target, text, contact) {
 }
 async function login(page, phone) {
   await page.goto(base + "/chat");
+  if (demoPhone) {
+    await page.getByLabel("Số điện thoại của bạn", { exact: true }).fill(phone);
+    const response = page.waitForResponse((r) => r.url().endsWith("/demo/phone/session"));
+    await page.getByRole("button", { name: "Bắt đầu chat", exact: true }).click();
+    const session = await (await response).json();
+    await expect(page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" })).toBeEnabled();
+    return session;
+  }
   await page
     .getByRole("button", { name: "Tiếp tục bằng số điện thoại" })
     .click();

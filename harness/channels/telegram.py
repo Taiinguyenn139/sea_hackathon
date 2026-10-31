@@ -118,16 +118,24 @@ class Dispatcher:
                         self.harness.engine.memory.flush(customer)
                         self.db.execute("UPDATE sessions SET status='ended' WHERE id=?", (session["id"],))
                         session = None
+                    new_session = not session
                     if not session:
                         created = self.harness.new_session(customer, "harness", "telegram", target)
                         session = self.harness.session(created["session_id"])
                     if late:
                         reply = "Tin nhắn đến trễ so với cuộc trao đổi hiện tại. Anh/chị vui lòng gửi lại thông tin cần cập nhật để em xác nhận."
                     elif isinstance(contact, dict):
-                        profile = self.harness.engine.memory.profile(customer)
-                        linked_customer = self.harness.phone_identity.bind(
-                            customer, profile["name"], target, contact, message.get("from", {}).get("id")
-                        )
+                        if self.settings.demo_phone_identity:
+                            sender_id = message.get("from", {}).get("id")
+                            if not isinstance(sender_id, int) or contact.get("user_id") != sender_id or str(sender_id) != target:
+                                raise HTTPException(400, "Vui lòng bấm Chia sẻ số điện thoại để gửi số của chính anh/chị.")
+                            session = self.harness._demo_phone_customer(session, contact.get("phone_number", ""))
+                            linked_customer = customer = session["customer_id"]
+                        else:
+                            profile = self.harness.engine.memory.profile(customer)
+                            linked_customer = self.harness.phone_identity.bind(
+                                customer, profile["name"], target, contact, message.get("from", {}).get("id")
+                            )
                         if linked_customer != customer:
                             self.db.execute("UPDATE sessions SET status='ended' WHERE id=?", (session["id"],))
                             customer = linked_customer
@@ -142,7 +150,9 @@ class Dispatcher:
                         markup = {"remove_keyboard": True}
                     elif session["status"] == "waiting_human":
                         reply = "Chuyên viên đang tiếp nhận yêu cầu. Em sẽ tiếp tục khi chuyên viên hoàn tất."
-                    elif not self.db.one("SELECT id FROM customer_profiles WHERE id=?", (customer,)):
+                    elif not self.settings.demo_phone_identity and not self.db.one(
+                        "SELECT id FROM customer_profiles WHERE id=?", (customer,)
+                    ):
                         reply = (
                             "Chào anh/chị! Để bắt đầu tư vấn sản phẩm và giữ ngữ cảnh giữa Telegram với website, "
                             "anh/chị vui lòng bấm Chia sẻ số điện thoại bên dưới. "
@@ -159,6 +169,16 @@ class Dispatcher:
                             session["id"], text, row["id"], "telegram:" + target,
                             input_checked=payload.get("input_guard_version") == VERSION,
                         )["reply"]
+                        session = self.harness.session(session["id"])
+                        customer = session["customer_id"]
+                    if self.settings.demo_phone_identity and not late and not contact and session["status"] == "active" and (
+                        start or command == "/phone" or new_session
+                    ):
+                        reply += (
+                            "\n\nBản demo: chia sẻ số điện thoại bằng nút bên dưới hoặc nhập số ngay trong chat. "
+                            "Dùng cùng số trên web và Telegram để tiếp tục thông tin đã ghi nhớ, không cần mã xác nhận."
+                        )
+                        markup = PHONE_KEYBOARD
                     self.reply(row["id"], target, reply, markup)
                     self.db.set("telegram_last:" + target, max(previous, stamp))
                     self.db.execute("UPDATE provider_events SET status='processed',error=NULL WHERE id=?", (row["id"],))
