@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from bank_tools.service import canonical, ident, now
 from harness.agent.engine import Engine, event
 from harness.identity import extract_phone_claims, get_profile
+from harness.input_guard import inspect_input
 from harness.phone_identity import PhoneIdentity
 
 
@@ -109,6 +110,17 @@ class Harness:
             raise HTTPException(404, "Session not found")
         return session
 
+    def new_conversation(self, previous):
+        """Start a separate transcript without ending a conversation or handoff."""
+        authenticated = bool(self.can_chat(previous))
+        result = self._create_session(
+            previous["customer_id"], previous["mode"], phone_authenticated=authenticated
+        )
+        if previous["verified"]:
+            self.db.execute("UPDATE sessions SET verified=1 WHERE id=?", (result["session_id"],))
+            result["identity_status"] = "verified"
+        return result
+
     def verify(self, session, phone, source):
         # Refresh server state: a claim can never select or replace the bound
         # customer, nor reopen an ended session.
@@ -155,7 +167,7 @@ class Harness:
         }
 
     def _phone_message(self, session, text, client_id, existing, phones, source):
-        """Handle fixture claims before the text reaches extraction or an LLM."""
+        """Handle screened fixture claims before financial extraction or the agent."""
         tool_calls = []
         if session["verified"]:
             reply = "Phiên này đã nhận diện hồ sơ demo. Số điện thoại trong tin nhắn không thay đổi hồ sơ đang gắn."
@@ -220,7 +232,7 @@ class Harness:
             c.execute("INSERT OR REPLACE INTO traces VALUES(?,?,?)", (turn, session["id"], canonical(trace)))
         return response
 
-    def message(self, sid, text, client_id, source="web"):
+    def message(self, sid, text, client_id, source="web", *, input_checked=False):
         session = self.session(sid)
         with self.engine.lock(session["customer_id"]):
             session = self.session(sid)
@@ -231,6 +243,16 @@ class Harness:
                 return json.loads(existing["result"])
             if session["status"] != "active":
                 raise HTTPException(409, "Session is waiting for staff or ended")
+            blocked = inspect_input(text, self.settings, semantic=not input_checked)
+            if blocked:
+                return {
+                    "session_id": sid,
+                    "identity_status": self.identity_status(session),
+                    "user_id": self.user_id(session["customer_id"]) if self.can_chat(session) else None,
+                    **blocked,
+                    "used_fact_ids": [],
+                    "handoff_id": None,
+                }
             phones = extract_phone_claims(text)
             if phones:
                 return self._phone_message(session, text, client_id, existing, phones, source)
@@ -286,11 +308,13 @@ class Harness:
         )
         if previous:
             return self.handoff_detail(previous)
-        self.message(
+        response = self.message(
             sid,
             "Yêu cầu chuyên viên: " + reason,
             "handoff-request:" + str(self.db.one("SELECT count(*) AS n FROM handoffs WHERE session_id=?", (sid,))["n"]),
         )
+        if any(e.get("stage") == "input" and e["action"] == "block" for e in response["guard_events"]):
+            raise HTTPException(400, response["reply"])
         return self.handoff_detail(
             self.db.one("SELECT * FROM handoffs WHERE session_id=? ORDER BY created_at DESC LIMIT 1", (sid,))
         )

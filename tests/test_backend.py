@@ -67,6 +67,52 @@ def test_verify_limit(client):
     assert client.post(f"/sessions/{sid}/verify", headers=b, json={"phone": "0900000001"}).status_code == 429
 
 
+@pytest.mark.parametrize("verified", [False, True])
+def test_new_conversation_keeps_identity_but_isolates_transcript_and_capability(client, verified):
+    sid, auth = session(client)
+    _, other = session(client, "minh")
+    if verified:
+        verify(client, sid, auth)
+    send(client, sid, auth, "Tôi muốn tìm hiểu vay mua nhà.")
+    assert client.post(f"/sessions/{sid}/new").status_code == 403
+    assert client.post(f"/sessions/{sid}/new", headers=other).status_code == 403
+    result = client.post(f"/sessions/{sid}/new", headers=auth)
+    assert result.status_code == 200, result.text
+    new = result.json()
+    new_auth = {"Authorization": "Bearer " + new["session_token"]}
+    assert new["session_id"] != sid
+    assert new["identity_status"] == ("verified" if verified else "unverified")
+    assert client.get(f"/sessions/{new['session_id']}/turns", headers=new_auth).json()["items"] == []
+    assert len(client.get(f"/sessions/{sid}/turns", headers=auth).json()["items"]) == 1
+    assert client.get(f"/sessions/{sid}", headers=auth).json()["status"] == "active"
+    assert client.get(f"/sessions/{new['session_id']}/turns", headers=auth).status_code == 403
+    assert client.get(f"/sessions/{sid}/turns", headers=new_auth).status_code == 403
+
+
+def test_new_conversation_does_not_end_waiting_handoff(client):
+    sid, auth = session(client)
+    verify(client, sid, auth)
+    handoff = send(client, sid, auth, "Tôi muốn gặp chuyên viên")
+    assert handoff["handoff_id"]
+    new = client.post(f"/sessions/{sid}/new", headers=auth).json()
+    assert new["session_id"] != sid
+    previous = client.get(f"/sessions/{sid}", headers=auth).json()
+    assert previous["status"] == "waiting_human"
+    assert previous["handoff_id"] == handoff["handoff_id"]
+
+
+def test_new_conversation_preserves_phone_linked_customer(client):
+    harness = client.app.state.harness
+    guest = harness.telegram_customer("chat-history-guest", "Khách kiểm thử")
+    original = harness._create_session(guest, phone_authenticated=True)
+    auth = {"Authorization": "Bearer " + original["session_token"]}
+    response = client.post(f"/sessions/{original['session_id']}/new", headers=auth)
+    assert response.status_code == 200
+    new = harness.session(response.json()["session_id"])
+    assert new["customer_id"] == guest
+    assert harness.can_chat(new)
+
+
 def test_staff_cookie_csrf(client):
     assert client.post("/staff/login", json={"password": "bad"}).status_code == 401
     r = client.post("/staff/login", json={"password": "staff-test"})
@@ -213,6 +259,46 @@ def test_telegram_auth_private_dedupe(client):
     payload["message"]["chat"]["type"] = "group"
     client.post("/webhooks/telegram", headers=headers, json=payload)
     assert len(h.db.all("SELECT * FROM provider_events")) == 1
+
+
+@pytest.mark.parametrize("text,expected,intent", [
+    ("Hello", "Chào anh/chị", "greeting"),
+    ("Có những sản phẩm vay nào ???", "vay tiêu dùng", "loan_catalog"),
+    ("Ngân hàng có những dịch vụ nào?", "thẻ tín dụng", "product_catalog"),
+    ("Cảm ơn bạn!", "Rất vui", "acknowledgement"),
+])
+def test_web_public_conversation_answers_intent_before_collecting_quote_slots(client, text, expected, intent):
+    sid, auth = session(client)
+    result = send(client, sid, auth, text)
+    assert expected in result["reply"]
+    assert "số tiền muốn vay" not in result["reply"]
+    h = client.app.state.harness
+    assert not h.db.all("SELECT * FROM tool_calls")
+    trace = json.loads(h.db.one("SELECT data FROM traces WHERE session_id=?", (sid,))["data"])
+    assert trace["plan"]["intent"] == intent
+
+
+def test_telegram_hello_and_loan_catalog_do_not_repeat_default_question(client):
+    h = client.app.state.harness
+    h.db.execute("INSERT INTO identity_links VALUES('telegram','111','hoa')")
+    _, greeting = telegram_message(client, 1, "Hello")
+    _, catalog = telegram_message(client, 2, "Có những sản phẩm vay nào ???")
+    assert "Chào anh/chị" in greeting
+    assert "vay mua nhà" in catalog and "vay tiêu dùng" in catalog
+    assert "số tiền muốn vay" not in greeting + catalog
+    assert greeting != catalog
+    assert not h.db.all("SELECT * FROM tool_calls")
+
+
+def test_greeting_after_quote_does_not_trigger_another_quote(client):
+    sid, auth = session(client)
+    verify(client, sid, auth)
+    send(client, sid, auth, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ")
+    h = client.app.state.harness
+    before = len(h.db.all("SELECT * FROM tool_calls"))
+    result = send(client, sid, auth, "Xin chào", "greeting")
+    assert "Chào anh/chị" in result["reply"]
+    assert len(h.db.all("SELECT * FROM tool_calls")) == before
 
 
 def telegram_message(client, update_id, text, chat_id=111, stamp=None):
@@ -504,7 +590,9 @@ def test_optional_llm_schema_fallback_and_extraction_source(client, monkeypatch)
 
     async def fake_post(self, url, **kwargs):
         instruction = kwargs["json"]["messages"][0]["content"]
-        if "Phân loại" in instruction:
+        if "INPUT_SECURITY_CLASSIFIER" in instruction:
+            result = {"category": "safe"}
+        elif "Phân loại" in instruction:
             result = {"stage": "quote", "objection": None}
         elif "Trích" in instruction:
             result = {"spans": ["thu nhập 999 triệu", "Thu nhập 45 triệu"]}
@@ -524,6 +612,11 @@ def test_optional_llm_schema_fallback_and_extraction_source(client, monkeypatch)
     assert not any(f["value"] == "999000000" for f in brief["facts"])
 
     async def malformed(self, url, **kwargs):
+        if "INPUT_SECURITY_CLASSIFIER" in kwargs["json"]["messages"][0]["content"]:
+            return httpx.Response(
+                200, json={"choices": [{"message": {"content": '{"category":"safe"}'}}]},
+                request=httpx.Request("POST", url),
+            )
         return httpx.Response(
             200, json={"choices": [{"message": {"content": '{"unexpected":true}'}}]}, request=httpx.Request("POST", url)
         )
