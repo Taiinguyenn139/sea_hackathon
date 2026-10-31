@@ -148,9 +148,9 @@ export function CustomerChat() {
     return () => window.removeEventListener("hashchange", syncView);
   }, []);
   useEffect(() => {
-    if (isHome) document.getElementById("chat-home-title")?.focus({ preventScroll: true });
+    if (isHome) document.getElementById(demoPhoneIdentity && !session ? "entry-phone" : "chat-home-title")?.focus({ preventScroll: true });
     else if (!pending && !loading && !waiting && !ended && !historyOpen && !historyError) input.current?.focus({ preventScroll: true });
-  }, [isHome, pending, loading, waiting, ended, historyError]);
+  }, [isHome, pending, loading, waiting, ended, historyError, demoPhoneIdentity, session?.session_id]);
   useEffect(() => {
     if (!input.current) return;
     input.current.style.height = "auto";
@@ -486,6 +486,15 @@ export function CustomerChat() {
   }
   async function newChat() {
     if (pending || activeStream.current) return;
+    if (demoPhoneIdentity) {
+      rememberView();
+      save(null);
+      setEntryPhone("");
+      setTurns([]); setDraft(""); setLastFailed(null); setHint(""); setPromptNotice("");
+      setLoading(false); setError(""); setHistoryError(""); setPhoneLogin(false); setHistoryOpen(false);
+      navigate("home");
+      return;
+    }
     if (!session) { setHistoryOpen(false); await start(); return; }
     setPending(true);
     setError("");
@@ -495,14 +504,12 @@ export function CustomerChat() {
         next = await request<ChatSession>(`/sessions/${session.session_id}/new`, { method: "POST", body: {}, token: session.session_token });
       } catch (e) {
         if (!(e instanceof ApiError) || ![401, 403, 404].includes(e.status)) throw e;
-        next = await request<ChatSession>(demoPhoneIdentity ? "/demo/phone/session" : "/sessions", {
-          method: "POST", body: demoPhoneIdentity
-            ? { phone: session.user_id ?? entryPhone.trim() }
-            : { mode: "harness", demo_profile: profile },
+        next = await request<ChatSession>("/sessions", {
+          method: "POST", body: { mode: "harness", demo_profile: profile },
         });
       }
       rememberView();
-      save(demoPhoneIdentity ? next : { ...next, demo_profile: session.demo_profile ?? profile });
+      save({ ...next, demo_profile: session.demo_profile ?? profile });
       setTurns([]); setDraft(""); setLastFailed(null); setHint(""); setPromptNotice("");
       setLoading(true); setHistoryError(""); setPhoneLogin(false); setHistoryOpen(false);
       navigate("conversation");
@@ -588,7 +595,7 @@ export function CustomerChat() {
             <button
               className="icon-button"
               onClick={newChat}
-              disabled={pending || (!session && !profiles.length)}
+              disabled={pending || (!session && !demoPhoneIdentity && !profiles.length)}
               aria-label="Bắt đầu phiên mới"
               title="Bắt đầu phiên mới"
             >
