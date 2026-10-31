@@ -31,7 +31,7 @@ print(result)
 result = bank.call("get_active_promotions", {
     "product": "home_loan", "channel": "zalo", "as_of": "2026-10-31",
 })
-definitions = get_tool_definitions()  # 9 mô tả, độc lập SDK/model
+definitions = get_tool_definitions()  # 6 tool công khai khi chưa xác thực
 ```
 
 Mỗi tool bắt buộc nhận `as_of` (ngày gọi `YYYY-MM-DD`) do backend cung cấp.
@@ -43,30 +43,52 @@ ngày sinh hay tool xác minh.
 
 ## Các tool có sẵn
 
-| Tool | Chức năng |
-| --- | --- |
-| `crm_lookup` | Tìm khách bằng customer ID, CIF hoặc định danh kênh |
-| `get_rate` | Tra lãi suất chuẩn và biên độ theo phân khúc |
-| `get_active_promotions` | Lọc ưu đãi theo sản phẩm, kênh, ngày giả lập |
-| `get_card_offer` | Tra gói thẻ, khoảng hạn mức và phí |
-| `calc_installment` | Tính trả góp đều, có thể đổi lãi sau giai đoạn ưu đãi |
-| `check_suitability` | Kiểm tra thu nhập, tỷ lệ trả nợ và tỷ lệ vay/giá trị nhà |
-| `get_disclosures` | Lấy câu lưu ý bắt buộc |
-| `send_summary` | Ghi nhận gửi tóm tắt **giả lập** |
-| `schedule_callback` | Ghi nhận lịch gọi lại **giả lập** |
+| Tool | Chức năng | Điều kiện |
+| --- | --- | --- |
+| `crm_lookup` | Đọc hồ sơ của chính khách trong phiên | Đã đăng nhập |
+| `get_rate` | Tra lãi suất chuẩn và biên độ theo phân khúc | Công khai |
+| `get_active_promotions` | Lọc ưu đãi theo sản phẩm, kênh, ngày giả lập | Công khai |
+| `get_card_offer` | Minh họa gói thẻ theo thu nhập nhập vào | Công khai |
+| `calc_installment` | Tính trả góp minh họa | Công khai |
+| `check_suitability` | Sàng lọc từ dữ liệu khách tự cung cấp | Công khai |
+| `get_disclosures` | Lấy câu lưu ý bắt buộc | Công khai |
+| `send_summary` | Ghi nhận gửi tóm tắt **giả lập** | Đăng nhập hoặc đã xác minh danh tính |
+| `schedule_callback` | Ghi nhận lịch gọi lại **giả lập** | Đăng nhập hoặc đã xác minh danh tính |
+
+Backend tạo `AuthContext` từ module đăng nhập/xác minh của nhóm. Tool riêng
+tư chỉ thao tác với `customer_id` khớp context; agent không được tự truyền
+quyền hoặc chọn khách khác. Ví dụ sau khi module xác minh đã thành công:
+
+```python
+from bank_tools import AuthContext
+
+# Chỉ backend được tạo context từ kết quả xác minh tin cậy của phiên hiện tại.
+context = AuthContext(customer_id="cus_001", identity_verified=True)
+definitions = get_tool_definitions(context=context)  # 8 tool; chưa có crm_lookup
+result = bank.call("schedule_callback", {
+    "time": "2026-11-02T14:00:00+07:00", "as_of": "2026-10-31",
+}, context=context)  # Dispatcher tự chèn customer_id, không lấy từ model.
+```
+
+Sau đăng nhập, backend dùng `AuthContext(customer_id=..., logged_in=True)`;
+agent thấy đủ 9 tool. Kiểm tra quyền áp dụng cả với hàm gọi trực tiếp. Khi
+logout hoặc xác minh hết hiệu lực, backend bỏ context và cập nhật danh sách
+tool. AuthContext không tự thực hiện đăng nhập hoặc kiểm tra token.
 
 ## Tài liệu bàn giao
 
 - [Hướng dẫn tích hợp và hợp đồng dữ liệu](docs/INTEGRATION.md): cách gọi, cấu trúc kết quả, tham số và xử lý lỗi.
 - [Hướng dẫn dữ liệu giả lập](docs/DATA.md): 10 khách hàng, bảng lãi/ưu đãi, đơn vị và ca demo.
 - [Demo đủ 9 tool](examples/demo.py): mẫu để người làm agent dùng ngay.
+- [Kiểm tra phân quyền](tests/test_authorization.py): đăng nhập, xác minh và chặn sai khách.
 - [Bộ kiểm tra](tests/test_bank_tools.py): kiểm tra tiền, ngày hết hạn, nguồn fact và luồng tích hợp.
 
 ## Cấu trúc
 
 ```text
 bank_tools/
-  __init__.py          # API public: BankTools, get_tool_definitions
+  __init__.py          # API: BankTools, AuthContext, get_tool_definitions
+  auth.py              # Phân quyền từ trạng thái backend tin cậy
   core.py              # 9 tool, ngày theo từng lời gọi, lỗi tiêm, trace
   catalog.py           # Mô tả tool + JSON Schema tham số
   fixtures/

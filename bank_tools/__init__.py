@@ -2,5 +2,6 @@
 
 from .core import BankTools
 from .catalog import get_tool_definitions
+from .auth import AuthContext
 
-__all__ = ["BankTools", "get_tool_definitions"]
+__all__ = ["BankTools", "AuthContext", "get_tool_definitions"]

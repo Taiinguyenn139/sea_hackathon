@@ -9,7 +9,7 @@ import unittest
 
 import yaml
 
-from bank_tools import BankTools, get_tool_definitions
+from bank_tools import AuthContext, BankTools, get_tool_definitions
 from examples.demo import main as demo_main
 from contextlib import redirect_stdout
 from io import StringIO
@@ -18,6 +18,7 @@ from io import StringIO
 class BankToolsTests(unittest.TestCase):
     def setUp(self):
         self.bank = BankTools()
+        self.context = AuthContext(customer_id="cus_001", logged_in=True)
 
     def assert_success(self, result):
         self.assertIsNone(result["error"], result)
@@ -35,26 +36,25 @@ class BankToolsTests(unittest.TestCase):
         return dict(amount=2_000_000_000, term=240, rate=promo["value"], rate_fact_id=promo["fact_id"],
                     promo_months=12, after_rate=standard["value"], after_rate_fact_id=standard["fact_id"])
 
-    def test_identity_aliases_resolve_same_customer_without_private_profile(self):
-        ids = [self.bank.crm_lookup(alias, as_of="2026-10-31")["data"]["customer_id"]
-               for alias in ("cus_001", "0048213", "demo:hoa:hotline", "demo:hoa:zalo")]
-        self.assertEqual(set(ids), {"cus_001"})
-        profile = self.bank.crm_lookup("cus_001", as_of="2026-10-31")["data"]
+    def test_crm_returns_only_current_customer_without_private_financial_profile(self):
+        result = self.assert_success(self.bank.crm_lookup("cus_001", as_of="2026-10-31", context=self.context))
+        profile = result["data"]
+        self.assertEqual(profile["customer_id"], "cus_001")
         self.assertNotIn("dob", profile)
         self.assertNotIn("income", profile)
         self.assertNotIn("monthly_debt_payment", profile)
 
     def test_verification_is_external_and_fixture_has_no_birthdates(self):
-        self.assertEqual(self.bank.crm_lookup("unknown", as_of="2026-10-31")["data"], {"found": False})
+        self.assertEqual(self.bank.crm_lookup("unknown", as_of="2026-10-31", context=AuthContext(customer_id="unknown", logged_in=True))["data"], {"found": False})
         self.assertFalse(hasattr(self.bank, "verify_identity"))
-        self.assertNotIn("verify_identity", {tool["name"] for tool in get_tool_definitions()})
+        self.assertNotIn("verify_identity", {tool["name"] for tool in get_tool_definitions(context=self.context)})
         fixture = Path(__file__).resolve().parents[1] / "bank_tools/fixtures/customers.yaml"
         self.assertTrue(all("dob" not in customer for customer in yaml.safe_load(fixture.read_text())["customers"]))
 
     def test_all_ten_customers_are_available(self):
         for number in range(1, 11):
             with self.subTest(number=number):
-                self.assertTrue(self.bank.crm_lookup(f"cus_{number:03}", as_of="2026-10-31")["data"]["found"])
+                self.assertTrue(self.bank.crm_lookup(f"cus_{number:03}", as_of="2026-10-31", context=AuthContext(customer_id=f"cus_{number:03}", logged_in=True))["data"]["found"])
 
     def test_promotion_expiry_is_inclusive_and_does_not_leak_future(self):
         for day, expected in (("2026-09-30", "HL-Q3-2026"), ("2026-10-01", "HL-Q4-2026"),
@@ -194,24 +194,24 @@ class BankToolsTests(unittest.TestCase):
             self.assertIsNotNone(self.bank.get_disclosures("home_loan", topics, as_of="2026-10-31")["error"])
 
     def test_summary_rejects_invented_fact_and_wrong_channel(self):
-        self.assertIsNotNone(self.bank.send_summary("cus_001", "zalo", ["invented"], as_of="2026-10-31")["error"])
+        self.assertIsNotNone(self.bank.send_summary("cus_001", "zalo", ["invented"], as_of="2026-10-31", context=self.context)["error"])
         args = self.financing()
         derived = self.bank.calc_installment(**args, as_of="2026-10-31")["facts"][0]
-        self.assertIsNotNone(self.bank.send_summary("cus_001", "web", [derived["fact_id"]], as_of="2026-10-31")["error"])
-        result = self.assert_success(self.bank.send_summary("cus_001", "zalo", [derived["fact_id"]], as_of="2026-10-31"))
+        self.assertIsNotNone(self.bank.send_summary("cus_001", "web", [derived["fact_id"]], as_of="2026-10-31", context=self.context)["error"])
+        result = self.assert_success(self.bank.send_summary("cus_001", "zalo", [derived["fact_id"]], as_of="2026-10-31", context=self.context))
         self.assertEqual(result["data"]["status"], "mock_sent")
         self.assertEqual(len(self.bank.get_mock_actions()["messages"]), 1)
 
     def test_next_day_requires_refresh_even_when_fact_not_expired(self):
         fact = self.rate()["facts"][0]
-        self.assertIsNotNone(self.bank.send_summary("cus_001", "zalo", [fact["fact_id"]], as_of="2026-11-01")["error"])
+        self.assertIsNotNone(self.bank.send_summary("cus_001", "zalo", [fact["fact_id"]], as_of="2026-11-01", context=self.context)["error"])
 
     def test_fact_registry_is_isolated_and_cannot_be_mutated_by_return_value(self):
         fact = self.rate()["facts"][0]
         other = BankTools()
-        self.assertIsNotNone(other.send_summary("cus_001", "zalo", [fact["fact_id"]], as_of="2026-10-31")["error"])
+        self.assertIsNotNone(other.send_summary("cus_001", "zalo", [fact["fact_id"]], as_of="2026-10-31", context=self.context)["error"])
         fact["value"] = 0
-        result = self.assert_success(self.bank.send_summary("cus_001", "zalo", [fact["fact_id"]], as_of="2026-10-31"))
+        result = self.assert_success(self.bank.send_summary("cus_001", "zalo", [fact["fact_id"]], as_of="2026-10-31", context=self.context))
         action = self.bank.get_mock_actions()["messages"][0]
         self.assertEqual(action["facts"][0]["value"], 10.5)
         action["facts"][0]["value"] = 999
@@ -219,8 +219,8 @@ class BankToolsTests(unittest.TestCase):
 
     def test_callback_requires_timezone_and_later_date(self):
         for value in ("2026-11-02T14:00:00", "2026-10-30T14:00:00+07:00", "2026-10-31T23:00:00+07:00", "not a date"):
-            self.assertIsNotNone(self.bank.schedule_callback("cus_001", value, as_of="2026-10-31")["error"])
-        result = self.assert_success(self.bank.schedule_callback("cus_001", "2026-11-02T14:00:00+07:00", as_of="2026-10-31"))
+            self.assertIsNotNone(self.bank.schedule_callback("cus_001", value, as_of="2026-10-31", context=self.context)["error"])
+        result = self.assert_success(self.bank.schedule_callback("cus_001", "2026-11-02T14:00:00+07:00", as_of="2026-10-31", context=self.context))
         self.assertTrue(result["data"]["mock"])
         self.assertEqual(len(self.bank.get_mock_actions()["callbacks"]), 1)
 
@@ -232,7 +232,7 @@ class BankToolsTests(unittest.TestCase):
             self.assertEqual(result["facts"], [])
         self.rate()
         self.bank.inject_fault("schedule_callback", "error")
-        result = self.bank.schedule_callback("cus_001", "2026-11-02T14:00:00+07:00", as_of="2026-10-31")
+        result = self.bank.schedule_callback("cus_001", "2026-11-02T14:00:00+07:00", as_of="2026-10-31", context=self.context)
         self.assertEqual(result["error"], "error")
         self.assertEqual(self.bank.get_mock_actions()["callbacks"], [])
 
@@ -241,10 +241,10 @@ class BankToolsTests(unittest.TestCase):
                                 ("get_rate", "[]"), ("get_rate", {}), ("crm_lookup", {"identifier": "cus_001", "extra": 1}),
                                 ("crm_lookup", "null"), ("crm_lookup", {1: "bad"})):
             with self.subTest(name=name, arguments=arguments):
-                result = self.bank.call(name, arguments)
+                result = self.bank.call(name, arguments, context=self.context)
                 self.assertIsNotNone(result["error"])
                 self.assertEqual(result["facts"], [])
-        result = self.assert_success(self.bank.call("crm_lookup", '{"identifier":"cus_001","as_of":"2026-10-31"}'))
+        result = self.assert_success(self.bank.call("crm_lookup", '{"as_of":"2026-10-31"}', context=self.context))
         self.assertTrue(result["data"]["found"])
 
     def test_invalid_numeric_inputs_do_not_enter_financial_calculations(self):
@@ -255,11 +255,11 @@ class BankToolsTests(unittest.TestCase):
             self.assertIsNotNone(self.bank.calc_installment(**{**args, "rate": rate}, as_of="2026-10-31")["error"])
 
     def test_tool_catalog_isolated_and_traces_are_json(self):
-        definitions = get_tool_definitions()
+        definitions = get_tool_definitions(context=self.context)
         self.assertEqual(len(definitions), 9)
         self.assertEqual(len({tool["name"] for tool in definitions}), 9)
-        definitions[0]["parameters"]["properties"]["identifier"]["type"] = "wrong"
-        self.assertEqual(get_tool_definitions()[0]["parameters"]["properties"]["identifier"]["type"], "string")
+        definitions[0]["parameters"]["properties"]["as_of"]["type"] = "wrong"
+        self.assertEqual(get_tool_definitions(context=self.context)[0]["parameters"]["properties"]["as_of"]["type"], "string")
         self.rate()
         trace = self.bank.get_tool_calls()
         json.dumps(trace, allow_nan=False)
@@ -284,7 +284,7 @@ class BankToolsTests(unittest.TestCase):
                 BankTools(fixtures_dir=temporary)
 
     def test_every_tool_requires_valid_date_in_schema_and_runtime(self):
-        for definition in get_tool_definitions():
+        for definition in get_tool_definitions(context=self.context):
             name = definition["name"]
             schema = definition["parameters"]
             self.assertIn("as_of", schema["required"])
@@ -294,13 +294,13 @@ class BankToolsTests(unittest.TestCase):
             self.assertIs(parameter.kind, Parameter.KEYWORD_ONLY)
             args = {key: None for key in schema["required"] if key != "as_of"}
             with self.subTest(tool=name, date="missing"):
-                result = self.bank.call(name, args)
+                result = self.bank.call(name, args, context=self.context)
                 self.assertIn("as_of", result["error"])
                 self.assertIsNone(result["as_of"])
                 self.assertEqual(result["facts"], [])
             for day in (None, False, "20261031", "31/10/2026", "2026-02-30", "2026-10-31T00:00:00"):
                 with self.subTest(tool=name, date=day):
-                    result = self.bank.call(name, {**args, "as_of": day})
+                    result = self.bank.call(name, {**args, "as_of": day}, context=self.context)
                     self.assertIsNotNone(result["error"])
                     self.assertIsNone(result["as_of"])
                     self.assertEqual(result["facts"], [])
@@ -323,11 +323,11 @@ class BankToolsTests(unittest.TestCase):
 
     def test_new_day_rejects_old_facts_and_accepts_refreshed_facts(self):
         original = self.rate()["facts"][0]
-        old = self.bank.send_summary("cus_001", "zalo", [original["fact_id"]], as_of="2026-11-01")
+        old = self.bank.send_summary("cus_001", "zalo", [original["fact_id"]], as_of="2026-11-01", context=self.context)
         self.assertIn("different date", old["error"])
         refreshed = self.rate(as_of="2026-11-01")["facts"][0]
         self.assertNotEqual(original["fact_id"], refreshed["fact_id"])
-        self.assert_success(self.bank.send_summary("cus_001", "zalo", [refreshed["fact_id"]], as_of="2026-11-01"))
+        self.assert_success(self.bank.send_summary("cus_001", "zalo", [refreshed["fact_id"]], as_of="2026-11-01", context=self.context))
 
     def test_calculation_rejects_future_stale_and_expired_rate_facts(self):
         arguments = self.financing()
@@ -346,7 +346,7 @@ class BankToolsTests(unittest.TestCase):
                 ("get_disclosures", {"product": "home_loan", "topics": ["rate"]}),
             ):
                 with self.subTest(day=day, tool=tool):
-                    result = self.bank.call(tool, {**args, "as_of": day})
+                    result = self.bank.call(tool, {**args, "as_of": day}, context=self.context)
                     self.assertIsNotNone(result["error"])
                     self.assertEqual(result["as_of"], day)
                     self.assertEqual(result["facts"], [])
@@ -357,19 +357,19 @@ class BankToolsTests(unittest.TestCase):
         self.rate()
         self.bank.inject_fault("get_rate", "timeout", 1)
         arguments = {"product": "home_loan", "amount": 2_000_000_000, "term": 240, "segment": "mass"}
-        invalid = self.bank.call("get_rate", {**arguments, "as_of": "bad-date"})
+        invalid = self.bank.call("get_rate", {**arguments, "as_of": "bad-date"}, context=self.context)
         self.assertIsNone(invalid["as_of"])
-        missing = self.bank.call("get_rate", arguments)
+        missing = self.bank.call("get_rate", arguments, context=self.context)
         self.assertIsNone(missing["as_of"])
-        valid = self.bank.call("get_rate", {**arguments, "as_of": "2026-10-31"})
+        valid = self.bank.call("get_rate", {**arguments, "as_of": "2026-10-31"}, context=self.context)
         self.assertEqual(valid["error"], "timeout")
         self.assertEqual(valid["as_of"], "2026-10-31")
 
     def test_callback_uses_call_date_and_records_it(self):
-        result = self.bank.schedule_callback("cus_001", "2026-11-02T14:00:00+07:00", as_of="2026-11-01")
+        result = self.bank.schedule_callback("cus_001", "2026-11-02T14:00:00+07:00", as_of="2026-11-01", context=self.context)
         self.assert_success(result)
         self.assertEqual(self.bank.get_mock_actions()["callbacks"][0]["as_of"], "2026-11-01")
-        rejected = self.bank.schedule_callback("cus_001", "2026-11-02T14:00:00+07:00", as_of="2026-11-02")
+        rejected = self.bank.schedule_callback("cus_001", "2026-11-02T14:00:00+07:00", as_of="2026-11-02", context=self.context)
         self.assertIsNotNone(rejected["error"])
         self.assertEqual(len(self.bank.get_mock_actions()["callbacks"]), 1)
 

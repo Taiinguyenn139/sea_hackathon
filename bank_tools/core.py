@@ -15,6 +15,7 @@ from uuid import uuid4
 import yaml
 
 from .catalog import TOOL_NAMES
+from .auth import AccessDenied, AuthContext, TOOL_ACCESS, require_access
 
 
 PRODUCTS = {"home_loan", "personal_loan", "credit_card"}
@@ -82,6 +83,8 @@ def bank_tool(function):
                 bound.apply_defaults()
                 parameters = {key: value for key, value in bound.arguments.items() if key != "self"}
                 call_date = _date(parameters["as_of"]).isoformat()
+                if TOOL_ACCESS[name] != "public":
+                    require_access(name, parameters.get("context"), parameters.get("customer_id"))
                 fault = self._faults.get(name)
                 if fault and fault["count"] > 0:
                     fault["count"] -= 1
@@ -89,6 +92,8 @@ def bank_tool(function):
                 data, specs = function(self, **parameters)
                 facts = [self._make_fact(name, tool_call_id, parameters, **spec) for spec in specs]
                 return self._record(name, tool_call_id, parameters, data, facts, None, as_of=call_date)
+            except AccessDenied as exc:
+                return self._record(name, tool_call_id, parameters, {}, [], str(exc), as_of=call_date)
             except (ValueError, TypeError, InvalidOperation) as exc:
                 return self._record(name, tool_call_id, parameters, {}, [], f"invalid: {exc}", as_of=call_date)
     return wrapped
@@ -97,8 +102,9 @@ def bank_tool(function):
 class BankTools:
     """Tạo một instance cho mỗi phiên agent để cô lập fact và dữ liệu hành động.
 
-    Instance không lưu DB, không thực hiện xác thực/phân quyền production và
-    không gửi tin nhắn thật. inject_fault dành cho test; backend truyền ngày
+    Instance kiểm tra quyền từ AuthContext do backend cung cấp, không thực hiện
+    đăng nhập/xác minh danh tính, không lưu DB hay gửi tin nhắn thật.
+    inject_fault dành cho test; backend truyền ngày
     as_of bắt buộc vào từng tool, không giữ clock mặc định trong instance.
     """
 
@@ -134,8 +140,8 @@ class BankTools:
         with self._lock:
             return deepcopy({"messages": self._messages, "callbacks": self._callbacks})
 
-    def call(self, tool_name, arguments):
-        """Dispatcher: chỉ cho phép đúng 9 tool; arguments phải có as_of."""
+    def call(self, tool_name, arguments, *, context=None):
+        """Dispatcher chèn customer_id từ context backend, không lấy quyền từ JSON."""
         if not isinstance(tool_name, str) or tool_name not in TOOL_NAMES:
             with self._lock:
                 return self._record("unknown", "tc_" + uuid4().hex[:12], {}, {}, [], "invalid: unknown tool")
@@ -146,9 +152,17 @@ class BankTools:
                 raise ValueError("arguments must be a JSON object")
             if any(not isinstance(key, str) for key in arguments):
                 raise ValueError("argument names must be strings")
+            if any(key in arguments for key in ("context", "logged_in", "identity_verified")):
+                raise ValueError("auth context and auth states must not appear in tool arguments")
+            if context is not None and not isinstance(context, AuthContext):
+                raise ValueError("context must be an AuthContext supplied by the backend")
         except (ValueError, TypeError) as exc:
             with self._lock:
                 return self._record(tool_name, "tc_" + uuid4().hex[:12], {}, {}, [], f"invalid: {exc}")
+        if TOOL_ACCESS[tool_name] != "public":
+            arguments = dict(arguments)
+            arguments.setdefault("customer_id", context.customer_id if context is not None else None)
+            return getattr(self, tool_name)(**arguments, context=context)
         return getattr(self, tool_name)(**arguments)
 
     def _validate_fixtures(self):
@@ -260,7 +274,9 @@ class BankTools:
     def _record(self, tool, tool_call_id, args, data, facts, error, *, as_of=None):
         result = {"tool_call_id": tool_call_id, "tool": tool, "as_of": as_of,
                   "data": data, "facts": facts, "error": error}
-        self._calls.append({"arguments": deepcopy(args), **deepcopy(result)})
+        # Không lưu đối tượng context/token/session của backend vào trace model.
+        trace_args = {key: value for key, value in args.items() if key != "context"}
+        self._calls.append({"arguments": deepcopy(trace_args), **deepcopy(result)})
         return result
 
     def _live_fact(self, fact_id, as_of, keys=None):
@@ -276,13 +292,9 @@ class BankTools:
         return fact
 
     @bank_tool
-    def crm_lookup(self, identifier, *, as_of):
-        if not isinstance(identifier, str) or not identifier.strip():
-            raise ValueError("identifier must be a nonempty string")
+    def crm_lookup(self, customer_id, *, as_of, context=None):
         for customer in self._fixtures["customers"]:
-            aliases = [customer["customer_id"], customer["cif"]] + [link["external_id"] for link in customer["identity_links"]]
-            if identifier in aliases:
-                # Chỉ trả hồ sơ tra cứu; xác minh danh tính thuộc thành phần ngoài package.
+            if customer_id == customer["customer_id"]:
                 return {"found": True, **{key: customer[key] for key in ("customer_id", "cif", "full_name", "segment")}}, []
         return {"found": False}, []
 
@@ -449,7 +461,7 @@ class BankTools:
         return {"disclosures": [{"topic": topic, "text": disclosure[topic]} for topic in selected]}, []
 
     @bank_tool
-    def send_summary(self, customer_id, channel, fact_ids, *, as_of):
+    def send_summary(self, customer_id, channel, fact_ids, *, as_of, context=None):
         self._customer(customer_id)
         _choice(channel, CHANNELS, "channel")
         if not isinstance(fact_ids, list) or not fact_ids:
@@ -467,7 +479,7 @@ class BankTools:
         return {"message_id": message_id, "status": "mock_sent", "mock": True}, []
 
     @bank_tool
-    def schedule_callback(self, customer_id, time, *, as_of):
+    def schedule_callback(self, customer_id, time, *, as_of, context=None):
         self._customer(customer_id)
         if not isinstance(time, str) or "T" not in time:
             raise ValueError("time must be ISO 8601 date-time with timezone")

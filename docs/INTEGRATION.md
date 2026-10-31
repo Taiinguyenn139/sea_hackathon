@@ -15,11 +15,12 @@ python -m examples.demo
 YAML được đóng gói cùng package; không phụ thuộc thư mục đang chạy.
 
 ```python
-from bank_tools import BankTools, get_tool_definitions
+from bank_tools import AuthContext, BankTools, get_tool_definitions
 
 # Một instance cho mỗi session; giữ lại qua các lượt trong session đó.
 bank = BankTools()
-definitions = get_tool_definitions()
+context = None  # Backend lấy AuthContext của request; None nếu khách ẩn danh.
+definitions = get_tool_definitions(context=context)
 ```
 
 `as_of` là tham số **bắt buộc ở từng tool**, dạng `YYYY-MM-DD`, không có ngày
@@ -40,6 +41,76 @@ liệu ngân hàng. Xác minh danh tính do module bên ngoài phụ trách; pac
 không chứa tool xác minh hay dữ liệu ngày sinh. Ứng dụng chatbot quản lý trạng
 thái xác minh, thông tin khách nói và memory liên phiên.
 
+## Phân quyền và tích hợp module xác thực
+
+| Trạng thái backend | Tool được cung cấp cho agent |
+| --- | --- |
+| Chưa đăng nhập/chưa xác minh | 6 tool công khai |
+| Đã xác minh danh tính, chưa đăng nhập | 6 tool công khai + `send_summary`, `schedule_callback` |
+| Đã đăng nhập | Đủ 9 tool, bao gồm `crm_lookup` |
+
+6 tool công khai gồm `get_rate`, `get_active_promotions`, `get_card_offer`,
+`calc_installment`, `check_suitability`, `get_disclosures`. Các công cụ này
+chỉ dùng bảng giá công khai và tham số khách tự cung cấp. Một phân khúc như
+`priority` ở phép tính thử không chứng minh khách thực sự thuộc phân khúc đó.
+Không tự đọc hồ sơ ngân hàng để điền thông tin khi khách chưa đăng nhập.
+
+Backend lấy `customer_id` và trạng thái từ module login/xác minh bên ngoài,
+rồi tạo `AuthContext` cho **request hiện tại**. Ví dụ các trạng thái demo:
+
+```python
+guest = None
+verified = AuthContext(customer_id="cus_001", identity_verified=True)
+logged_in = AuthContext(customer_id="cus_001", logged_in=True)
+
+assert len(get_tool_definitions()) == 6
+assert len(get_tool_definitions(context=verified)) == 8
+assert len(get_tool_definitions(context=logged_in)) == 9
+
+# Sau verify thành công: chưa cần đăng nhập để hẹn gọi lại.
+callback = bank.call("schedule_callback", {
+    "time": "2026-11-02T14:00:00+07:00", "as_of": "2026-10-31",
+}, context=verified)
+assert callback["error"] is None
+
+# Chỉ verify thì chưa được đọc CRM.
+denied = bank.call("crm_lookup", {"as_of": "2026-10-31"}, context=verified)
+assert denied["error"].startswith("authentication_required:")
+
+profile = bank.call("crm_lookup", {"as_of": "2026-10-31"}, context=logged_in)
+assert profile["data"]["customer_id"] == "cus_001"
+```
+
+`AuthContext` là đối tượng Python bất biến, không phải token hoặc bằng chứng
+xác thực tự thân. Các ví dụ trên mô phỏng kết quả của module bên ngoài; backend
+thật chỉ tạo context sau khi đã xác thực kết quả login/verify thuộc đúng phiên,
+khách hàng và còn hiệu lực. Không dùng JSON từ frontend/model để dựng context,
+không dựa vào lời khách nói “tôi đã xác minh”. Module bên ngoài chịu trách nhiệm
+kiểm tra token, giới hạn phiên, hết hạn xác minh và thu hồi quyền.
+
+Mỗi lần gọi, backend truyền `context=` riêng. `BankTools` không nhớ quyền đăng
+nhập của lần trước. Khi logout/xác minh hết hạn, truyền `None` và cập nhật
+`get_tool_definitions(context=None)` cho model. Không đưa AuthContext, token
+hoặc đối tượng session vào prompt; trace tool cũng không ghi AuthContext.
+
+Schema cho model không có `customer_id`, `context`, `logged_in`,
+`identity_verified`. Với tool riêng tư, dispatcher tự lấy `customer_id` từ
+context. Nếu một lời gọi cố chỉ định customer khác, runtime trả `forbidden`.
+Các cờ xác thực trong JSON tham số tool bị từ chối, không được diễn giải thành
+quyền. Việc ẩn tool chỉ giúp agent chọn đúng; kiểm tra quyền khi thực thi mới
+là bước chặn truy cập, và áp dụng cả khi gọi hàm trực tiếp:
+
+```python
+profile = bank.crm_lookup("cus_001", as_of="2026-10-31", context=logged_in)
+blocked = bank.crm_lookup("cus_002", as_of="2026-10-31", context=logged_in)
+assert blocked["error"].startswith("forbidden:")
+```
+
+Giữ một `BankTools` riêng cho mỗi phiên hội thoại của một khách. Không chia sẻ
+fact cache, trace hoặc mock actions giữa các khách. `get_tool_calls()` và
+`get_mock_actions()` là API nội bộ backend; chỉ cung cấp dữ liệu của phiên
+hiện tại cho console được cấp quyền, không đăng ký hai phương thức này cho model.
+
 ## 2. Hợp đồng kết quả chung
 
 Mọi tool trả `dict` có thể serialize thành JSON:
@@ -57,6 +128,8 @@ Mọi tool trả `dict` có thể serialize thành JSON:
 
 - `error: null`: tool thực thi thành công. Vẫn cần đọc trạng thái nghiệp vụ
   trong `data`, như `found`, `eligible`, `ok`.
+- `error: "authentication_required: ..."`: chưa đăng nhập hoặc chưa qua xác minh theo quyền tool.
+- `error: "forbidden: ..."`: `customer_id` không khớp khách trong context, hoặc context không tin cậy khi gọi trực tiếp.
 - `error: "timeout"` hoặc `"error"`: lỗi giả lập từ hệ thống ngân hàng.
 - `error: "invalid: ..."`: tham số sai, không tìm được dữ liệu hợp lệ hoặc
   bảng lãi/chính sách hết hạn. Không có fact trong phản hồi lỗi. Nếu chưa
@@ -119,25 +192,29 @@ Quy ước chung:
 - `as_of`: bắt buộc với cả 9 tool, định dạng `YYYY-MM-DD`.
 - Lịch gọi lại: ISO 8601 có múi giờ.
 
+Bảng dưới là tham số model gửi cho dispatcher. Với ba tool riêng tư,
+backend truyền thêm `context=`; dispatcher chèn `customer_id`. Nếu gọi hàm
+Python trực tiếp, truyền cả `customer_id` và `context=`.
+
 | Tool | Tham số bắt buộc | Tham số tùy chọn | Dữ liệu/fact chính |
 | --- | --- | --- | --- |
-| `crm_lookup` | `as_of`, `identifier` | — | `found`; khi tìm thấy có `customer_id`, `cif`, `full_name`, `segment`; không có fact |
+| `crm_lookup` | `as_of` | — | `found`; khi tìm thấy có `customer_id`, `cif`, `full_name`, `segment`; không có fact |
 | `get_rate` | `as_of`, `product`, `amount`, `term`, `segment` | — | `rate_id`; facts `standard_rate`, `floating_margin` |
 | `get_active_promotions` | `as_of`, `product`, `channel` | — | `promotions`; facts `promo_rate` hoặc `promo_fee_waiver`, kèm `promo_months` |
 | `get_card_offer` | `as_of`, `income`, `segment` | — | `eligible`; facts `card_limit_min`, `card_limit_max`, `annual_fee`, `fee_waiver_spend` |
 | `calc_installment` | `as_of`, `amount`, `term`, `rate`, `rate_fact_id` | `promo_months=0`, `after_rate`, `after_rate_fact_id` | facts `installment_standard` khi không ưu đãi, hoặc `installment_promo`; `installment_after` khi có giai đoạn sau; `total_payment` |
 | `check_suitability` | `as_of`, `product`, `income`, `debt` | `amount`, `term`, `property_value` theo sản phẩm | `ok`, `reasons`, `diagnostics`; không có fact |
 | `get_disclosures` | `as_of`, `product`, `topics` | — | `disclosures`: danh sách `{topic, text}`; không có fact |
-| `send_summary` | `as_of`, `customer_id`, `channel`, `fact_ids` | — | `message_id`, `status=mock_sent`, `mock=true` |
-| `schedule_callback` | `as_of`, `customer_id`, `time` | — | `task_id`, `time`, `status=mock_scheduled`, `mock=true` |
+| `send_summary` | `as_of`, `channel`, `fact_ids` | — | `message_id`, `status=mock_sent`, `mock=true` |
+| `schedule_callback` | `as_of`, `time` | — | `task_id`, `time`, `status=mock_scheduled`, `mock=true` |
 
 ### Quy tắc riêng cần biết
 
-**Tra khách:** `identifier` nhận customer ID, CIF hoặc external ID đầy đủ
-như `demo:hoa:zalo`. Không tra gần đúng theo tên. `crm_lookup` không trả thu
-nhập hoặc tiền trả nợ. Hồ sơ khách là snapshot demo tĩnh; `as_of` ghi ngày tra
-cứu, không tạo lịch sử hồ sơ theo thời gian. Backend tích hợp module xác minh
-của nhóm khác và chỉ hiển thị thông tin khi đã được phép.
+**Tra khách:** chỉ sau đăng nhập, chỉ đọc hồ sơ có `customer_id` khớp phiên.
+Agent không còn tra tùy ý bằng tên, CIF hay external ID. Các identity link
+trong fixture chỉ để nhóm tích hợp xây mapping định danh ở backend/module
+xác minh. `crm_lookup` không trả thu nhập hoặc tiền trả nợ. Hồ sơ là snapshot
+demo tĩnh; `as_of` ghi ngày tra cứu, không tạo lịch sử hồ sơ theo thời gian.
 
 **Lãi và ưu đãi:** `get_rate` chỉ dành cho hai sản phẩm vay. `floating_margin`
 là biên độ trong dữ liệu, không cộng thêm vào `standard_rate`. Khi có nhiều
@@ -181,12 +258,14 @@ Các file hiện chỉ có chính sách năm 2026; cần bổ sung trước khi 
 Agent/renderer chèn nguyên văn câu lưu ý tương ứng khi tư vấn. Tool không tự
 chèn vào câu trả lời hay nội dung gửi đi.
 
-**Gửi tóm tắt:** chỉ nhận fact từng được phát ra trong instance và còn hạn;
+**Gửi tóm tắt:** yêu cầu đăng nhập hoặc đã xác minh danh tính của chính
+khách trong phiên; chỉ nhận fact từng được phát ra trong instance và còn hạn;
 ưu đãi và kết quả trả góp từ ưu đãi phải đúng kênh gửi. Caller phải kiểm tra
 fact thuộc đúng khách/phiên và chỉ gửi những fact đã tư vấn. Tool ghi snapshot
 fact vào RAM, chưa dựng tin nhắn văn bản và chưa chèn disclosure để gửi thật.
 
-**Hẹn gọi lại:** phải có múi giờ, ví dụ `2026-11-02T14:00:00+07:00`.
+**Hẹn gọi lại:** yêu cầu đăng nhập hoặc đã xác minh danh tính của chính
+khách trong phiên; phải có múi giờ, ví dụ `2026-11-02T14:00:00+07:00`.
 `as_of` chỉ có ngày nên tool yêu cầu ngày hẹn **sau** `as_of`; chưa hỗ trợ
 lịch ngay trong ngày hoặc kiểm tra giờ làm việc. Hỏi khách làm rõ trước khi
 chuyển lời hẹn tương đối thành thời gian cụ thể.
@@ -200,24 +279,24 @@ Ví dụ đầy đủ, chạy được: [examples/demo.py](../examples/demo.py).
 
 Luồng vay mua nhà:
 
-1. Gateway gọi `crm_lookup`; chỉ hiển thị lời mở trung tính trước xác minh.
-2. Module xác minh bên ngoài xác nhận danh tính; chỉ tiếp tục khi backend cho phép.
-3. Lấy nhu cầu, thu nhập, khoản trả nợ, giá trị nhà từ hội thoại/memory đã xác nhận.
-4. `check_suitability`; thiếu slot thì hỏi, không phù hợp thì giải thích/chuyển người.
-5. `get_rate` và `get_active_promotions`.
-6. Nếu khách hỏi trả góp, gọi `calc_installment` với ID và giá trị fact đã nhận.
-7. `get_disclosures` theo chủ đề.
-8. Agent soạn placeholder → guard kiểm tra → renderer thay bằng giá trị fact.
-9. Khách muốn nhận tóm tắt/hẹn lại thì gọi tool hành động tương ứng.
+1. Khách ẩn danh được tư vấn/tính thử bằng 6 tool công khai từ thông tin tự cung cấp.
+2. Khi đăng nhập thành công, backend truyền context và có thể gọi `crm_lookup` cho chính khách đó.
+3. Chỉ qua verify_identity của module ngoài thì được gửi tóm tắt/hẹn lại, chưa được đọc CRM.
+4. Lấy nhu cầu, thu nhập, khoản trả nợ, giá trị nhà từ hội thoại/memory đã được phép dùng.
+5. `check_suitability`; thiếu slot thì hỏi, không phù hợp thì giải thích/chuyển người.
+6. `get_rate`, `get_active_promotions`; nếu cần, gọi `calc_installment` bằng fact đã lấy.
+7. `get_disclosures`; agent soạn placeholder → guard kiểm tra → renderer điền giá trị.
+8. Khách muốn nhận tóm tắt/hẹn lại: module ngoài login/verify nếu cần, cập nhật context và danh sách tool trước khi gọi.
 
 Ví dụ dispatcher nhận kết quả lựa chọn tool từ agent:
 
 ```python
 import json
-from bank_tools import BankTools, get_tool_definitions
+from bank_tools import AuthContext, BankTools, get_tool_definitions
 
 bank = BankTools()
-definitions = get_tool_definitions()
+context = None  # Backend lấy AuthContext của request; None nếu khách ẩn danh.
+definitions = get_tool_definitions(context=context)
 
 # Dữ liệu giả lập do model/framework trả về:
 tool_name = "get_active_promotions"
@@ -227,21 +306,21 @@ tool_arguments = '{"product":"home_loan","channel":"zalo"}'
 call_date = "2026-10-31"  # Demo; ứng dụng thật lấy ngày nghiệp vụ hiện tại.
 arguments = json.loads(tool_arguments)
 arguments["as_of"] = call_date
-result = bank.call(tool_name, arguments)
+result = bank.call(tool_name, arguments, context=context)
 tool_result_text = json.dumps(result, ensure_ascii=False, allow_nan=False)
 # Đưa tool_result_text vào message kết quả tool của framework đang dùng.
 # Giữ đúng tool-call ID của MODEL khi gửi kết quả về model. tool_call_id
 # trong result là ID TRACE nội bộ ngân hàng, không thay thế ID do model tạo.
 ```
 
-`get_tool_definitions()` trả mỗi mô tả dạng `{name, description, parameters}`.
+`get_tool_definitions(context=...)` lọc theo quyền và trả mỗi mô tả dạng `{name, description, parameters}`.
 `parameters` là JSON Schema. Gắn định dạng này vào SDK/framework của đội qua
 adapter phù hợp; thư viện không phụ thuộc một SDK hoặc model cụ thể. Không
 truyền `inject_fault`, `get_tool_calls`, `get_mock_actions` cho model.
 `bank.call` chỉ cho phép 9 tên đã đăng ký, không gọi tùy ý phương thức Python.
 
 Tool chạy đồng bộ và dùng khóa theo instance. Với ứng dụng async, có thể dùng
-`await asyncio.to_thread(bank.call, tool_name, tool_arguments)` để tránh chặn
+`await asyncio.to_thread(bank.call, tool_name, arguments, context=context)` để tránh chặn
 event loop. Không tạo instance mới cho từng lần gọi vì sẽ mất cache fact mà
 `calc_installment` và `send_summary` cần.
 
@@ -270,6 +349,11 @@ Muốn hiển thị trên console hoặc lưu SQLite, ứng dụng đọc hai ph
 và lưu theo schema của nhóm. Fixture chứa thu nhập/tiền trả nợ để dựng scenario,
 không tự nạp các trường này vào prompt từ lookup.
 
+Khi gặp `authentication_required`, agent hướng khách qua bước login hoặc
+verify bên ngoài phù hợp với tool. Khi gặp `forbidden`, không truy cập khách
+khác và không retry bằng cách đổi mã khách. Mọi lỗi quyền đều có `data={}`,
+`facts=[]` và không tạo mock action.
+
 ## 6. Kiểm tra trước khi nối chatbot
 
 ```bash
@@ -278,7 +362,9 @@ python -m examples.demo
 ```
 
 Test bao gồm ngày bắt buộc/sai định dạng, ngày độc lập giữa các lời gọi,
-chính sách hết hạn, định danh đa kênh, promo tại ngày biên, số tiền/kỳ hạn, hai giai
+chính sách hết hạn, hồ sơ đúng khách sau đăng nhập, promo tại ngày biên, số tiền/kỳ hạn, hai giai
 đoạn trả góp, lãi bằng không, fact không hợp lệ, DTI/LTV, lỗi có đếm, hành động
 giả lập và demo đủ 9 tool. Đây là kiểm tra thư viện, chưa phải benchmark chất
-lượng hội thoại, guardrail hoặc memory của chatbot.
+lượng hội thoại, guardrail hoặc memory của chatbot. `tests/test_authorization.py`
+kiểm tra riêng ma trận 6/8/9 tool, truy cập khác khách, giả cờ xác thực, gọi
+hàm trực tiếp, logout và tác động của lời gọi bị từ chối.

@@ -2,26 +2,26 @@
 
 import json
 
-from bank_tools import BankTools, get_tool_definitions
+from bank_tools import AuthContext, BankTools, get_tool_definitions
 
 
 def main():
     bank = BankTools()
+    # Chỉ backend tạo context sau khi module login xác nhận phiên hợp lệ.
+    context = AuthContext(customer_id="cus_002", logged_in=True)
 
     # Backend cung cấp ngày thực hoặc ngày giả lập, không lấy ngày do model tự chọn.
     as_of = "2026-10-31"
 
     def invoke(name, **arguments):
         arguments["as_of"] = as_of
-        result = bank.call(name, arguments)
+        result = bank.call(name, arguments, context=context)
         if result["error"]:
             raise RuntimeError(result["error"])
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return result
 
-    customer = invoke("crm_lookup", identifier="demo:an:zalo")
-    customer_id = customer["data"]["customer_id"]
-    # Demo giả định module xác minh bên ngoài đã hoàn tất.
+    customer = invoke("crm_lookup")
 
     # Các số hồ sơ dưới đây giả lập thông tin khách đã nói/xác nhận trong hội thoại.
     # crm_lookup cố ý không trả thu nhập hoặc dư nợ cho model.
@@ -42,10 +42,10 @@ def main():
     invoke("get_disclosures", product="home_loan", topics=["rate", "promo", "installment"])
     # Demo chủ động lấy gói thẻ; agent thật chỉ gọi nếu khách có nhu cầu.
     invoke("get_card_offer", income=100_000_000, segment=customer["data"]["segment"])
-    invoke("send_summary", customer_id=customer_id, channel="zalo",
+    invoke("send_summary", channel="zalo",
            fact_ids=[fact["fact_id"] for fact in promotions["facts"] + installment["facts"]])
-    invoke("schedule_callback", customer_id=customer_id, time="2026-11-02T14:00:00+07:00")
-    print(f"\nĐã chạy {len(bank.get_tool_calls())}/{len(get_tool_definitions())} tool; chỉ gửi tin và hẹn lịch GIẢ LẬP.")
+    invoke("schedule_callback", time="2026-11-02T14:00:00+07:00")
+    print(f"\nĐã chạy {len(bank.get_tool_calls())}/{len(get_tool_definitions(context=context))} tool; chỉ gửi tin và hẹn lịch GIẢ LẬP.")
 
 
 if __name__ == "__main__":

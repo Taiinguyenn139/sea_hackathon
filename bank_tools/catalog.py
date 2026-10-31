@@ -2,6 +2,8 @@
 
 from copy import deepcopy
 
+from .auth import can_use
+
 
 def _field(kind, description, **constraints):
     return {"type": kind, "description": description, **constraints}
@@ -9,7 +11,7 @@ def _field(kind, description, **constraints):
 
 PRODUCT = _field("string", "Mã sản phẩm", enum=["home_loan", "personal_loan", "credit_card"])
 LOAN = {**PRODUCT, "enum": ["home_loan", "personal_loan"]}
-SEGMENT = _field("string", "Phân khúc lấy từ crm_lookup", enum=["mass", "priority"])
+SEGMENT = _field("string", "Phân khúc dùng để tính thử theo bảng giá công khai; không chứng minh khách thuộc phân khúc đó", enum=["mass", "priority"])
 CHANNEL = _field("string", "Kênh liên hệ", enum=["hotline", "zalo", "web"])
 AMOUNT = _field("integer", "Số tiền VND, không dùng chuỗi như '2 tỷ'", minimum=1, maximum=100_000_000_000)
 TERM = _field("integer", "Kỳ hạn theo THÁNG, không phải năm", minimum=1, maximum=600)
@@ -30,9 +32,7 @@ def _tool(name, description, properties, required):
 
 
 _DEFINITIONS = [
-    _tool("crm_lookup", "Tra khách hàng giả lập bằng mã khách, CIF hoặc external_id. Không xác minh danh tính; chưa được tiết lộ hồ sơ trước xác minh.", {
-        "identifier": _field("string", "cus_001, 0048213 hoặc demo:hoa:zalo"),
-    }, ["identifier"]),
+    _tool("crm_lookup", "Chỉ sau đăng nhập: lấy hồ sơ của chính khách trong phiên. Backend tự truyền customer_id; không tra khách khác bằng tên/CIF/định danh.", {}, []),
     _tool("get_rate", "Lấy lãi suất chuẩn và biên độ còn hiệu lực theo sản phẩm, số tiền, tháng và phân khúc. Không cộng biên độ vào standard_rate.", {
         "product": LOAN, "amount": AMOUNT, "term": TERM, "segment": SEGMENT,
     }, ["product", "amount", "term", "segment"]),
@@ -58,20 +58,18 @@ _DEFINITIONS = [
         "product": PRODUCT,
         "topics": _field("array", "Ít nhất một chủ đề", minItems=1, items={"type": "string", "enum": ["rate", "installment", "fee", "promo"]}),
     }, ["product", "topics"]),
-    _tool("send_summary", "Chỉ GIẢ LẬP gửi tóm tắt; không gọi Zalo hay SMS. Chỉ nhận fact còn hiệu lực đã được instance này phát ra. Caller chịu trách nhiệm xác minh, phân quyền, đúng khách hàng.", {
-        "customer_id": _field("string", "Mã khách hàng đã được caller xác minh"),
+    _tool("send_summary", "Sau đăng nhập HOẶC xác minh danh tính: GIẢ LẬP gửi tóm tắt cho chính khách trong phiên. Backend tự truyền customer_id. Chỉ nhận fact hợp lệ trong ngày; không gọi Zalo hay SMS.", {
         "channel": CHANNEL,
         "fact_ids": _field("array", "Các fact đã dùng trong câu trả lời", minItems=1, items={"type": "string"}),
-    }, ["customer_id", "channel", "fact_ids"]),
-    _tool("schedule_callback", "Chỉ GIẢ LẬP ghi lịch gọi lại, không gửi thông báo. Hỏi khách xác nhận thời gian trước khi gọi.", {
-        "customer_id": _field("string", "Mã khách hàng"),
+    }, ["channel", "fact_ids"]),
+    _tool("schedule_callback", "Sau đăng nhập HOẶC xác minh danh tính: GIẢ LẬP ghi lịch cho chính khách trong phiên. Backend tự truyền customer_id. Không gửi thông báo; hỏi khách xác nhận thời gian trước khi gọi.", {
         "time": _field("string", "ISO 8601 có múi giờ, ví dụ 2026-11-02T14:00:00+07:00", format="date-time"),
-    }, ["customer_id", "time"]),
+    }, ["time"]),
 ]
 
 TOOL_NAMES = frozenset(tool["name"] for tool in _DEFINITIONS)
 
 
-def get_tool_definitions():
-    """Trả bản sao danh sách {name, description, parameters}, không phụ thuộc SDK."""
-    return deepcopy(_DEFINITIONS)
+def get_tool_definitions(*, context=None):
+    """Ẩn tool chưa đủ quyền: khách ẩn danh 6, đã verify 8, đã login 9."""
+    return deepcopy([tool for tool in _DEFINITIONS if can_use(tool["name"], context)])

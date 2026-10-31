@@ -7,7 +7,7 @@ không mô tả chính sách hay báo giá của một ngân hàng đang hoạt 
 
 | File trong `bank_tools/fixtures/` | Dùng cho |
 | --- | --- |
-| `customers.yaml` | `crm_lookup`; kiểm tra khách tồn tại khi gửi/hẹn |
+| `customers.yaml` | `crm_lookup` của khách đã login; kiểm tra khách tồn tại khi gửi/hẹn sau login/verify |
 | `rates.yaml` | `get_rate`; nguồn lãi chuẩn cho `calc_installment` |
 | `promotions.yaml` | `get_active_promotions`; nguồn lãi ưu đãi cho `calc_installment` |
 | `card_products.yaml` | `get_card_offer` |
@@ -48,7 +48,9 @@ Trong YAML và khi gọi tool, dùng **số nguyên VND**.
 | `cus_009` | Đặng Mỹ Anh | mass | 25 | 2 | hotline |
 | `cus_010` | Ngô Tuấn Kiệt | mass | 6 | 0 | web |
 
-Ví dụ liên kết đa kênh: `demo:hoa:hotline` và `demo:hoa:zalo` đều trỏ về
+Backend/module định danh của nhóm có thể dùng các identity link để ánh xạ
+khách trước khi tạo AuthContext; agent không được gọi CRM để tự tra liên kết
+khi chưa đăng nhập. Ví dụ liên kết đa kênh: `demo:hoa:hotline` và `demo:hoa:zalo` đều trỏ về
 `cus_001`, CIF `0048213`. CIF được ghi thành chuỗi để giữ số 0 đầu.
 Dữ liệu xác minh danh tính do nhóm khác cung cấp; các fixture này không chứa ngày sinh.
 
@@ -123,6 +125,8 @@ bank_tools chỉ thực hiện phần tra cứu và tính toán, không tự x�
 
 Demo chạy đủ 9 tool trong `examples/demo.py` dùng khách An (`cus_002`),
 thu nhập 100 triệu và trả nợ hiện hữu 10 triệu/tháng, để đi qua nhánh phù hợp.
+Demo tạo AuthContext đăng nhập giả lập ở backend để gọi đủ 9 tool; không có
+chức năng login/verify thật. Sau verify nhưng chưa login, agent chỉ thấy 8 tool.
 
 ## Sửa hoặc bổ sung dữ liệu
 
