@@ -1,0 +1,65 @@
+.phone-login {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+.phone-login-heading {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.phone-login-heading > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.phone-login p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.phone-login label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.phone-login input {
+  width: 100%;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+}
+.phone-login-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.phone-login-actions .button {
+  white-space: normal;
+}
+.phone-continuation {
+  margin-bottom: 12px;
+}
+.phone-context {
+  margin-top: 14px;
+}
+.phone-context summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+@media (max-width: 600px) {
+  .phone-login {
+    padding: 14px;
+  }
+  .phone-login-actions {
+    flex-direction: column;
+  }
+}
