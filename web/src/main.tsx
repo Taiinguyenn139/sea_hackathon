@@ -34,7 +34,7 @@ function App() {
       </a>
       <aside className="sidebar">
         <a
-          href="/chat"
+          href={page === "chat" ? "#home" : "/chat#home"}
           className="brand"
           aria-label="Ngân hàng Bankwise — hỗ trợ khách hàng"
         >
@@ -49,7 +49,7 @@ function App() {
           <nav aria-label="Điều hướng chính">
             <a
               className={page === "chat" ? "nav-item active" : "nav-item"}
-              href="/chat"
+              href={page === "chat" ? "#home" : "/chat#home"}
               aria-label="Hỗ trợ trực tuyến"
               aria-current={page === "chat" ? "page" : undefined}
             >
