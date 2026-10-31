@@ -92,6 +92,7 @@ class Harness:
                 "INSERT INTO sessions(id,customer_id,channel,external_id,mode,token_hash,created_at) VALUES(?,?,?,?,?,?,?)",
                 (sid, profile, channel, external_id or sid, mode, token_hash(token), now()),
             )
+            c.execute("INSERT INTO session_playbooks VALUES(?,?)", (sid, self.db.setting("playbook", "v1")))
             if phone_authenticated:
                 c.execute("INSERT INTO phone_sessions VALUES(?,?)", (sid, profile))
         return {
@@ -316,6 +317,7 @@ class Harness:
         for sid in ids:
             self.engine.checkpointer.delete_thread(sid)
         tables = [
+            "session_playbooks",
             "sessions",
             "phone_sessions",
             "phone_challenges",

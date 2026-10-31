@@ -4,10 +4,8 @@ import sqlite3
 import threading
 from datetime import date, timedelta
 from decimal import Decimal
-from pathlib import Path
 from typing import TypedDict
 
-import yaml
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
@@ -129,13 +127,16 @@ class Engine:
         if session.get("verified", False):
             return True
         customer = session["customer_id"]
-        return bool(self.db.one(
-            "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
-            (customer, session.get("channel"), session.get("external_id")),
-        ) or self.db.one(
-            "SELECT session_id FROM phone_sessions WHERE session_id=? AND customer_id=?",
-            (session.get("id"), customer),
-        ))
+        return bool(
+            self.db.one(
+                "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
+                (customer, session.get("channel"), session.get("external_id")),
+            )
+            or self.db.one(
+                "SELECT session_id FROM phone_sessions WHERE session_id=? AND customer_id=?",
+                (session.get("id"), customer),
+            )
+        )
 
     def run(self, session, text, turn_id):
         with self.lock(session["customer_id"]):
@@ -297,16 +298,17 @@ class Engine:
         }
 
     def select_cards(self, s):
-        version = self.db.setting("playbook", "v1")
-        path = Path(__file__).parent.parent / "playbooks" / (version + ".yaml")
-        if not path.is_file():
-            raise RuntimeError("Configured playbook unavailable")
-        book = yaml.safe_load(path.read_text())
+        from harness.sales import book as load_book
+
+        pinned = self.db.one("SELECT version FROM session_playbooks WHERE session_id=?", (s["session"]["id"],))
+        version = pinned["version"] if pinned else "v1"
+        book = load_book(self.db, version)
         candidates = book.get("cards", {}).get(s["plan"].get("objection"), {}).get("retail", [])
         if not candidates:
+            candidates = book.get("stages", {}).get(s["plan"].get("stage"), {}).get("retail", [])
+        if not candidates:
             return {"cards": []}
-        index = int(ident("", [s["session"]["id"], version]), 16) % len(candidates)
-        return {"cards": [candidates[index]]}
+        return {"cards": [candidates[0]]}
 
     def call_tools(self, s):
         p, known, session = s["plan"], s["known"], s["session"]
@@ -330,7 +332,9 @@ class Engine:
             return {
                 "facts": facts,
                 "tool_calls": [],
-                "action_notes": ["Anh/chị vui lòng gửi số điện thoại khớp hồ sơ demo trong phiên chat để xem thông tin cá nhân hoặc gặp chuyên viên."],
+                "action_notes": [
+                    "Anh/chị vui lòng gửi số điện thoại khớp hồ sơ demo trong phiên chat để xem thông tin cá nhân hoặc gặp chuyên viên."
+                ],
             }
         if p["callback"]:
             if "schedule_callback" not in available:
@@ -436,6 +440,19 @@ class Engine:
         }
 
     def rules_draft(self, s):
+        reply = self._rules_draft(s)
+        if (
+            s["session"].get("verified")
+            and not s["tool_error"]
+            and not s["unsuitable"]
+            and not s.get("confirmations")
+            and not s.get("action_notes")
+        ):
+            for card in s.get("cards", []):
+                reply += " " + card["text"]
+        return reply
+
+    def _rules_draft(self, s):
         if s["tool_error"]:
             return "Hệ thống ngân hàng đang gián đoạn. Anh/chị có thể thử lại hoặc yêu cầu gặp chuyên viên."
         if s["unsuitable"]:
@@ -488,8 +505,6 @@ class Engine:
                     reply += f" Sau ưu đãi {ph('installment_after')} mỗi tháng."
             elif ph("installment_standard"):
                 reply += f" Trả góp minh họa {ph('installment_standard')} mỗi tháng."
-        for card in s.get("cards", []):
-            reply += " " + card["text"]
         return reply
 
     def draft(self, s):

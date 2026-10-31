@@ -29,7 +29,7 @@ def agreement(scores: list[int], labels: list[int]) -> dict[str, float | int | N
 
 def judge(turns: list[dict], agent_model: str | None = None) -> dict[str, Any]:
     endpoint, model, key = (os.environ.get(name) for name in ("JUDGE_API_URL", "JUDGE_MODEL", "JUDGE_API_KEY"))
-    if not all((endpoint, model, key)):
+    if not endpoint or not model or not key:
         return {"status": "skipped", "reason": "Judge endpoint/model/key not configured"}
     if model == agent_model:
         raise ValueError("Judge model must differ from agent model")
