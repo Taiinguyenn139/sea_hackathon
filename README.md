@@ -25,6 +25,10 @@ uv run uvicorn harness.api:app --host 127.0.0.1 --port 8000
 Backend `rules` chạy không cần API key. Telegram và backend LLM cần credential thật
 qua kho secret, không đưa giá trị vào Git hoặc chat.
 
+[Cấu hình Telegram](docs/telegram.md): tạo bot, nạp credential và đăng ký webhook.
+Khách mới có hồ sơ riêng và chat ngay; liên kết hồ sơ demo là tùy chọn. Script kiểm tra kết
+nối và đăng ký webhook mà không in credential.
+
 ## Kiểm tra và build
 
 ```sh

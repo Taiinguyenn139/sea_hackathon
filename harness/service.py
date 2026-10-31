@@ -21,8 +21,36 @@ class Harness:
         self.settings = settings
         self.engine = Engine(db, settings)
 
+    def telegram_customer(self, target, name):
+        """Resolve an explicit bank link or create a private prospect identity."""
+        with self.db.transaction() as c:
+            link = c.execute(
+                "SELECT customer_id FROM identity_links WHERE channel='telegram' AND external_id=?", (target,)
+            ).fetchone()
+            if link:
+                return link["customer_id"]
+            customer = ident("guest_", ["telegram", target])
+            display_name = name.strip()[:100] if isinstance(name, str) and name.strip() else "Khách Telegram"
+            c.execute(
+                "INSERT OR IGNORE INTO guest_customers VALUES(?,?,?,?,?)",
+                (customer, "telegram", target, display_name, now()),
+            )
+            return customer
+
+    def can_chat(self, session):
+        # A channel-owned prospect can discuss their own needs without claiming
+        # a bank identity. Existing bank profiles still require verification.
+        return bool(session["verified"]) or self.db.one(
+            "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
+            (session["customer_id"], session["channel"], session["external_id"]),
+        ) is not None
+
     def new_session(self, profile, mode="harness", channel="web", external_id=None):
-        if profile not in {p["id"] for p in FIXTURES["customers"]}:
+        guest = channel == "telegram" and self.db.one(
+            "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
+            (profile, channel, external_id),
+        ) is not None
+        if profile not in {p["id"] for p in FIXTURES["customers"]} and not guest:
             raise HTTPException(400, "Unknown demo profile")
         self.engine.memory.flush(profile)
         sid = "s_" + secrets.token_hex(12)
@@ -31,7 +59,12 @@ class Harness:
             "INSERT INTO sessions(id,customer_id,channel,external_id,mode,token_hash,created_at) VALUES(?,?,?,?,?,?,?)",
             (sid, profile, channel, external_id or sid, mode, token_hash(token), now()),
         )
-        return {"session_id": sid, "session_token": token, "identity_status": "unverified", "brief": {"redacted": True}}
+        return {
+            "session_id": sid,
+            "session_token": token,
+            "identity_status": "guest" if guest else "unverified",
+            "brief": {"redacted": True},
+        }
 
     def session(self, sid):
         session = self.db.one("SELECT * FROM sessions WHERE id=?", (sid,))
@@ -76,7 +109,7 @@ class Harness:
                 return json.loads(existing["result"])
             if session["status"] != "active":
                 raise HTTPException(409, "Session is waiting for staff or ended")
-            if not session["verified"]:
+            if not self.can_chat(session):
                 return {
                     "session_id": sid,
                     "reply": "Để tiếp tục, anh/chị vui lòng xác minh ngày sinh trong bước xác minh.",
@@ -126,7 +159,7 @@ class Harness:
 
     def handoff(self, sid, reason):
         session = self.session(sid)
-        if not session["verified"]:
+        if not self.can_chat(session):
             raise HTTPException(403, "Verify identity first")
         previous = self.db.one(
             "SELECT * FROM handoffs WHERE session_id=? AND status!='completed' ORDER BY created_at DESC LIMIT 1", (sid,)

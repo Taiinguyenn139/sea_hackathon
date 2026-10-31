@@ -55,48 +55,48 @@ class Dispatcher:
                 target = str(message["chat"]["id"])
                 text = message["text"]
                 try:
-                    link = self.db.one(
-                        "SELECT * FROM identity_links WHERE channel=? AND external_id=?", ("telegram", target)
+                    customer = self.harness.telegram_customer(target, message.get("from", {}).get("first_name"))
+                    session = self.db.one(
+                        "SELECT * FROM sessions WHERE channel='telegram' AND external_id=? AND customer_id=? "
+                        "AND status!='ended' ORDER BY created_at DESC,rowid DESC LIMIT 1",
+                        (target, customer),
                     )
-                    if not link:
-                        self.reply(
-                            row["id"],
-                            target,
-                            "Đây là bot demo ngân hàng hư cấu. Quản trị viên cần liên kết tài khoản demo trước khi tiếp tục.",
+                    command = text.strip().split(maxsplit=1)[0].split("@", 1)[0] if text.strip() else ""
+                    start = command == "/start"
+                    previous = self.db.setting("telegram_last:" + target, 0)
+                    stamp = message.get("date", 0)
+                    late = bool(stamp and stamp < previous)
+                    if start and not late and session and session["status"] == "active":
+                        self.harness.engine.memory.flush(customer)
+                        self.db.execute("UPDATE sessions SET status='ended' WHERE id=?", (session["id"],))
+                        session = None
+                    if not session:
+                        created = self.harness.new_session(customer, "harness", "telegram", target)
+                        session = self.harness.session(created["session_id"])
+                    if late:
+                        reply = "Tin nhắn đến trễ so với cuộc trao đổi hiện tại. Anh/chị vui lòng gửi lại thông tin cần cập nhật để em xác nhận."
+                    elif not self.harness.can_chat(session):
+                        dob = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text)
+                        if dob:
+                            result = self.harness.verify(session, dob[1], "telegram:" + target)
+                            reply = (
+                                "Đã xác minh. Anh/chị cần tư vấn sản phẩm nào?"
+                                if result["identity_status"] == "verified"
+                                else "Chưa thể xác minh. Anh/chị vui lòng kiểm tra lại thông tin."
+                            )
+                        else:
+                            reply = "Để tiếp tục demo, vui lòng xác minh ngày sinh theo định dạng năm-tháng-ngày."
+                    elif session["status"] == "waiting_human":
+                        reply = "Chuyên viên đang tiếp nhận yêu cầu. Em sẽ tiếp tục khi chuyên viên hoàn tất."
+                    elif start:
+                        reply = (
+                            "Chào anh/chị! Em có thể tư vấn vay mua nhà, vay tiêu dùng và thẻ tín dụng. "
+                            "Anh/chị muốn tìm hiểu sản phẩm nào?"
                         )
                     else:
-                        session = self.db.one(
-                            "SELECT * FROM sessions WHERE channel='telegram' AND external_id=? AND status!='ended' ORDER BY created_at DESC LIMIT 1",
-                            (target,),
-                        )
-                        if text.strip() == "/start" and session and session["status"] == "active":
-                            self.harness.engine.memory.flush(session["customer_id"])
-                            self.db.execute("UPDATE sessions SET status='ended' WHERE id=?", (session["id"],))
-                            session = None
-                        if not session:
-                            created = self.harness.new_session(link["customer_id"], "harness", "telegram", target)
-                            session = self.harness.session(created["session_id"])
-                        previous = self.db.setting("telegram_last:" + target, 0)
-                        stamp = message.get("date", 0)
-                        if stamp and stamp < previous:
-                            reply = "Tin nhắn đến trễ so với cuộc trao đổi hiện tại. Anh/chị vui lòng gửi lại thông tin cần cập nhật để em xác nhận."
-                        elif not session["verified"]:
-                            dob = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text)
-                            if dob:
-                                result = self.harness.verify(session, dob[1], "telegram:" + target)
-                                reply = (
-                                    "Đã xác minh. Anh/chị cần tư vấn sản phẩm nào?"
-                                    if result["identity_status"] == "verified"
-                                    else "Chưa thể xác minh. Anh/chị vui lòng kiểm tra lại thông tin."
-                                )
-                            else:
-                                reply = "Để tiếp tục demo, vui lòng xác minh ngày sinh theo định dạng năm-tháng-ngày."
-                        elif session["status"] == "waiting_human":
-                            reply = "Chuyên viên đang tiếp nhận yêu cầu. Em sẽ tiếp tục khi chuyên viên hoàn tất."
-                        else:
-                            reply = self.harness.message(session["id"], text, row["id"])["reply"]
-                        self.reply(row["id"], target, reply)
-                        self.db.set("telegram_last:" + target, max(previous, stamp))
+                        reply = self.harness.message(session["id"], text, row["id"])["reply"]
+                    self.reply(row["id"], target, reply)
+                    self.db.set("telegram_last:" + target, max(previous, stamp))
                     self.db.execute("UPDATE provider_events SET status='processed',error=NULL WHERE id=?", (row["id"],))
                 except HTTPException as e:
                     self.reply(row["id"], target, str(e.detail))
