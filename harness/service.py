@@ -372,7 +372,7 @@ class Harness:
                     c.execute(
                         "INSERT INTO turns VALUES(?,?,?,?,?,?,?)", (turn, sid, client_id, text, None, None, now())
                     )
-                    if self.can_chat(session) and conversation_intent(text) != "profile_name":
+                    if self.can_chat(session) and conversation_intent(text) not in ("profile_name", "needs_recall"):
                         self.engine.memory.enqueue(c, turn, session["customer_id"], sid, session["channel"], text)
             current = self.specialist.current(sid)
             human = requests_human(text)

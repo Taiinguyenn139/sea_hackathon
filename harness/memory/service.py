@@ -4,7 +4,7 @@ import time
 from bank_tools.service import canonical, ident
 from harness.customer_profile import customer_profile
 from harness.llm import ExtractionSuggestion, LLMUnavailable, json_completion
-from harness.memory.prompts import EXTRACTION_INSTRUCTION
+from harness.memory.prompts import DEMO_HISTORY_INSTRUCTION, EXTRACTION_INSTRUCTION
 from harness.memory.rules import corrects, extract
 
 
@@ -200,7 +200,47 @@ class Memory:
             "UPDATE facts SET status=CASE WHEN source_type='bank_tool' THEN 'expired' ELSE 'stale' END WHERE customer_id=? AND valid_until IS NOT NULL AND valid_until<? AND status='active'",
             (customer, date),
         )
-        return self.db.all("SELECT * FROM facts WHERE customer_id=? ORDER BY observed_at,id", (customer,))
+        live = self.db.all("SELECT * FROM facts WHERE customer_id=? ORDER BY observed_at,id", (customer,))
+        if self.settings and self.settings.demo_phone_identity:
+            from harness.demo_history import initial_facts
+
+            if self.settings.llm_backend == "openai":
+                return self.llm_demo_facts(customer, date, live) + live
+            return initial_facts(customer, date, live) + live
+        return live
+
+    def llm_demo_facts(self, customer, date, live):
+        from harness.demo_history import filter_live, history
+
+        messages = history(customer, date)
+        if not messages:
+            return []
+        cache_key = ident("demo_llm_", [customer, date, messages, self.settings.openai_model, DEMO_HISTORY_INSTRUCTION])
+        extraction = self.db.setting(cache_key)
+        if extraction is None:
+            extraction = json_completion(
+                self.settings, DEMO_HISTORY_INSTRUCTION, {"history": messages},
+                schema=ExtractionSuggestion, purpose="extract_demo_history",
+            )
+            if extraction is None:
+                raise LLMUnavailable("missing_demo_extraction")
+            self.db.set(cache_key, extraction)
+        baseline = [{
+            "id": ident("dh_", [customer, cache_key, fact["key"], fact["value"]]),
+            "customer_id": customer, "key": fact["key"], "value": fact["value"], "unit": fact["unit"],
+            "source_type": "demo_history", "source_ref": messages[-1]["source_ref"].split("#")[0] + "#llm",
+            "source_text": fact["source_text"], "channel": "demo_history", "observed_at": date,
+            "valid_until": None, "status": "conflicted" if fact["operation"] == "conflict" else "active",
+            "confidence": 0.95,
+        } for fact in extraction["facts"]]
+        return filter_live(baseline, live)
+
+    def demo_history(self, customer):
+        if not self.settings or not self.settings.demo_phone_identity:
+            return []
+        from harness.demo_history import history
+
+        return history(customer, self.db.setting("clock"))
 
     def profile(self, customer):
         return customer_profile(self.db, customer)
@@ -226,7 +266,8 @@ class Memory:
             "cif": profile["cif"],
             "phone": phone["phone_e164"] if phone else profile.get("phone"),
             "facts": facts,
-            "needs": [f for f in facts if f["source_type"] == "customer" and f["status"] == "active"],
+            "needs": [f for f in facts if f["source_type"] in ("customer", "demo_history") and f["status"] == "active"],
+            "demo_history": self.demo_history(customer),
             "conflicts": [f for f in facts if f["status"] == "conflicted"],
             "quotes": [f for f in facts if f["source_type"] == "bank_tool"],
             "warnings": [f for f in facts if f["status"] in ("expired", "stale", "conflicted")],

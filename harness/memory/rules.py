@@ -14,14 +14,24 @@ def extract(text):
     elif any(x in low for x in ["thẻ", "credit_card"]):
         slots["product"] = ("credit_card", "")
     previous_money_end = 0
-    for match in re.finditer(r"(-?\d+(?:[.,]\d+)?)\s*(tỷ|triệu|nghìn|trieu|ty)", low):
-        value = (
-            Decimal(match[1].replace(",", "."))
-            * {"tỷ": 10**9, "ty": 10**9, "triệu": 10**6, "trieu": 10**6, "nghìn": 1000}[match[2]]
-        )
+    for match in re.finditer(
+        r"(?<![\d.,])(-?(?:\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?))\s*(tỷ|triệu|nghìn|trieu|ty|đồng|vnd)\b", low,
+    ):
+        raw, currency = match[1], match[2]
+        if currency in ("đồng", "vnd"):
+            if not re.fullmatch(r"-?(?:\d{1,3}(?:[.,]\d{3})+|\d+)", raw):
+                continue
+            value = Decimal(raw.replace(".", "").replace(",", ""))
+        else:
+            if raw.count(".") + raw.count(",") > 1:
+                raw = raw.replace(".", "").replace(",", "")
+            value = Decimal(raw.replace(",", ".")) * {
+                "tỷ": 10**9, "ty": 10**9, "triệu": 10**6, "trieu": 10**6, "nghìn": 1000,
+            }[currency]
         before = low[max(previous_money_end, match.start() - 120) : match.start()]
         previous_money_end = match.end()
-        cues = {"income": ["thu nhập", "lương"], "debt": ["nợ", "trả nợ"], "property_value": ["giá nhà", "giá trị"]}
+        cues = {"income": ["thu nhập", "lương"], "debt": ["nợ", "trả nợ"],
+                "property_value": ["giá nhà", "giá trị", "căn nhà", "và nhà"]}
         nearest = [(before.rfind(cue), key) for key, words in cues.items() for cue in words if cue in before]
         key = max(nearest)[1] if nearest else "amount"
         slots[key] = (str(value.quantize(Decimal(1))), "đồng")
@@ -38,6 +48,8 @@ def extract(text):
         slots["objection"] = ("need_spouse", "")
     if any(x in low for x in ["gọi lại", "hẹn", "liên hệ lại"]):
         slots["commitment"] = ("Khách yêu cầu liên hệ lại", "")
+    if re.search(r"\btôi (?:sẽ |quyết định |muốn )?(?:hoãn|dừng kế hoạch|chưa vay|không vay nữa)\b", low):
+        slots["loan_status"] = ("tạm hoãn kế hoạch vay", "")
     return slots
 
 

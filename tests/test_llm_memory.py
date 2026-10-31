@@ -35,7 +35,7 @@ def setup(tmp_path, monkeypatch):
             result = {"category": "safe"}
         elif "Trích xuất memory" in instruction:
             extractions.append(payload)
-            result = answers.get(payload["text"], {"facts": []})
+            result = answers.get(payload.get("text", "demo_history"), {"facts": []})
             if result == "unavailable":
                 return httpx.Response(503)
         elif "Phân loại" in instruction:
@@ -179,3 +179,20 @@ def test_model_controls_conflict_and_replacement_and_ignores_hypotheticals(setup
         say(client, session, "Nếu lương tăng 90tr thì sao?", "hypothetical")
         assert drafts[-1]["known"]["income"] == "65000000"
         assert drafts[-1]["memory_result"] == {"saved": True, "facts": []}
+
+
+def test_demo_baseline_also_uses_llm_and_is_cached_without_overwriting_live_values(setup):
+    settings, answers, extractions, drafts = setup
+    answers["demo_history"] = {"facts": [fact("100000000", source="lịch sử mẫu")]}
+    answers["Lương hiện tại 65tr"] = {"facts": [fact()]}
+    with TestClient(create_app(settings)) as client:
+        first = login(client, "0900000002")
+        assert any(f["key"] == "income" and f["value"] == "100000000" for f in first["brief"]["needs"])
+        assert len([x for x in extractions if "history" in x]) == 1
+        second = login(client, "0900000002")
+        assert second["brief"]["customer_id"] == first["brief"]["customer_id"]
+        assert len([x for x in extractions if "history" in x]) == 1
+        say(client, first, "Lương hiện tại 65tr", "live")
+        say(client, second, "Lương tôi bao nhiêu?", "recall")
+        assert drafts[-1]["known"]["income"] == "65000000"
+        assert len([f for f in drafts[-1]["facts"].values() if f["key"] == "income"]) == 1

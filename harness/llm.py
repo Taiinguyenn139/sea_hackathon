@@ -31,13 +31,13 @@ class PlanSuggestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     stage: Literal["discover", "quote", "objection", "followup", "apply"]
     objection: Literal["rate_high", "need_spouse"] | None = None
-    intent: Literal["advice", "greeting", "loan_catalog", "product_catalog", "acknowledgement", "profile_name", "memory_recall"] = "advice"
-    recall_keys: list[Literal["product", "amount", "income", "debt", "property_value", "term", "objection", "commitment"]] = Field(default_factory=list, max_length=8)
+    intent: Literal["advice", "greeting", "loan_catalog", "product_catalog", "acknowledgement", "profile_name", "needs_recall", "memory_recall"] = "advice"
+    recall_keys: list[Literal["product", "amount", "income", "debt", "property_value", "term", "objection", "commitment", "loan_status"]] = Field(default_factory=list, max_length=9)
 
 
 class MemoryFact(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    key: Literal["product", "amount", "income", "debt", "property_value", "term", "objection", "commitment"]
+    key: Literal["product", "amount", "income", "debt", "property_value", "term", "objection", "commitment", "loan_status"]
     value: str = Field(min_length=1, max_length=1000)
     unit: Literal["đồng", "tháng", ""]
     operation: Literal["replace", "conflict"]
@@ -64,7 +64,7 @@ class MemoryFact(BaseModel):
 
 class ExtractionSuggestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    facts: list[MemoryFact] = Field(max_length=8)
+    facts: list[MemoryFact] = Field(max_length=9)
 
     @model_validator(mode="after")
     def unique_fields(self):
