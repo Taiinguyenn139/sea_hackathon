@@ -4,8 +4,7 @@ const session = {
   session_id: "delivery-session",
   session_token: "delivery-capability",
   identity_status: "unverified",
-  user_id: null,
-  status: "active",
+  demo_profile: "hoa",
 };
 const reply = {
   session_id: session.session_id,
@@ -25,23 +24,20 @@ async function mockChat(
   messages: (route: Route) => Promise<void>,
   history?: (route: Route) => Promise<void>,
 ) {
-  if (history)
-    await page.addInitScript(
-      (saved) =>
-        sessionStorage.setItem("bankwise-chat-session", JSON.stringify(saved)),
-      session,
-    );
+  await page.addInitScript(
+    (saved) =>
+      sessionStorage.setItem("bankwise-chat-session", JSON.stringify(saved)),
+    session,
+  );
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api", "");
-    if (path === "/sessions") {
-      expect(route.request().postDataJSON()).toEqual({ mode: "harness" });
-      return route.fulfill({ json: session });
-    }
-    if (path === `/sessions/${session.session_id}`)
-      return route.fulfill({ json: session });
+    if (path === "/demo/profiles")
+      return route.fulfill({
+        json: { profiles: [{ id: "hoa", name: "Nguyễn Thị Hoa" }] },
+      });
     if (path.endsWith("/turns"))
       return history ? history(route) : route.fulfill({ json: { items: [] } });
-    if (path.endsWith("/messages")) return messages(route);
+    if (path.endsWith("/messages/stream")) return messages(route);
     return route.fulfill({
       status: 404,
       json: { detail: "Unexpected request" },
@@ -62,7 +58,10 @@ for (const width of [375, 1440]) {
         "Điều kiện vay mua nhà?",
       );
       await response.ready;
-      await route.fulfill({ json: reply });
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: `event: result\ndata: ${JSON.stringify(reply)}\n\n`,
+      });
     });
     await page.goto("/chat#conversation");
     const composer = composerFor(page);
@@ -114,7 +113,10 @@ test("failed messages stay visible and retry reuses the ID without losing a new 
         status: 503,
         json: { detail: "Dịch vụ tạm thời chưa sẵn sàng." },
       });
-    return route.fulfill({ json: reply });
+    return route.fulfill({
+      contentType: "text/event-stream",
+      body: `event: result\ndata: ${JSON.stringify(reply)}\n\n`,
+    });
   });
   await page.goto("/chat#conversation");
   const composer = composerFor(page);
@@ -145,7 +147,10 @@ test("Shift+Enter and IME composition keep text; Enter submits once", async ({
   const texts: string[] = [];
   await mockChat(page, async (route) => {
     texts.push(route.request().postDataJSON().text);
-    return route.fulfill({ json: reply });
+    return route.fulfill({
+      contentType: "text/event-stream",
+      body: `event: result\ndata: ${JSON.stringify(reply)}\n\n`,
+    });
   });
   await page.goto("/chat#conversation");
   const composer = composerFor(page);
@@ -181,7 +186,10 @@ test("restoring a long mobile conversation keeps the composer visible and preven
     page,
     async (route) => {
       requests += 1;
-      return route.fulfill({ json: reply });
+      return route.fulfill({
+        contentType: "text/event-stream",
+        body: `event: result\ndata: ${JSON.stringify(reply)}\n\n`,
+      });
     },
     async (route) => {
       await history.ready;

@@ -2,9 +2,11 @@
 
 import asyncio
 import json
+import queue
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, date, datetime
@@ -13,7 +15,7 @@ from typing import Annotated, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import Field
 
 from bank_tools.service import FIXTURES
@@ -36,6 +38,7 @@ from harness.schemas import (
     VerifyInput,
 )
 from harness.service import Harness, token_hash
+from harness.streaming import stream_to
 
 
 class ClockInput(Input):
@@ -153,9 +156,14 @@ def create_app(settings=None):
             worker_task.cancel()
             with suppress(asyncio.CancelledError):
                 await worker_task
+            # Disconnected clients may still have a bounded completion in flight.
+            # Drain it before closing the event loop so its receipt is durable.
+            if app.state.stream_tasks:
+                await asyncio.gather(*tuple(app.state.stream_tasks), return_exceptions=True)
 
     app = FastAPI(title="Memory Harness", version="0.1.0", lifespan=lifespan)
     app.state.harness = harness
+    app.state.stream_tasks = set()
 
     @app.exception_handler(LLMUnavailable)
     async def llm_unavailable(request: Request, exc: LLMUnavailable):
@@ -185,7 +193,10 @@ def create_app(settings=None):
             return JSONResponse({"detail": "Invalid content length"}, status_code=400)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Cache-Control"] = "no-store"
+        response.headers["Cache-Control"] = (
+            "no-store, no-transform" if response.headers.get("content-type", "").startswith("text/event-stream")
+            else "no-store"
+        )
         return response
 
     def bearer(request):
@@ -301,22 +312,100 @@ def create_app(settings=None):
     def verify(sid: str, body: VerifyInput, request: Request):
         return harness.verify(owner(sid, request), body.phone, request.client.host if request.client else "unknown")
 
+    def message_result(sid, body, source):
+        response = harness.message(
+            sid, body.text, body.client_message_id, source
+        )
+        if not input_blocked(response) and harness.identity_status(harness.session(sid)) == "identified":
+            try:
+                response = {**response, "brief": harness.engine.memory.brief(harness.session(sid)["customer_id"])}
+            except LLMUnavailable:
+                response = {**response, "brief": {"redacted": True}}
+        return response
+
+    def input_blocked(response):
+        return any(e.get("stage") == "input" and e["action"] == "block" for e in response["guard_events"])
+
     @app.post("/sessions/{sid}/messages")
     def message(sid: str, body: MessageInput, request: Request, tasks: BackgroundTasks):
         owner(sid, request)
-        response = harness.message(
-            sid, body.text, body.client_message_id, request.client.host if request.client else "unknown"
-        )
-        if not any(e.get("stage") == "input" and e["action"] == "block" for e in response["guard_events"]):
-            if harness.identity_status(harness.session(sid)) == "identified":
-                try:
-                    response = {**response, "brief": harness.engine.memory.brief(harness.session(sid)["customer_id"])}
-                except LLMUnavailable:
-                    response = {**response, "brief": {"redacted": True}}
+        response = message_result(sid, body, request.client.host if request.client else "unknown")
+        if not input_blocked(response):
             tasks.add_task(flush_memory, harness.session(sid)["customer_id"])
         if hasattr(app.state, "dispatcher"):
             tasks.add_task(app.state.dispatcher.send_pending)
         return response
+
+    @app.post("/sessions/{sid}/messages/stream")
+    def message_stream(sid: str, body: MessageInput, request: Request):
+        owner(sid, request)
+        source = request.client.host if request.client else "unknown"
+        events: queue.Queue = queue.Queue(maxsize=32)
+        disconnected = threading.Event()
+
+        def send(kind, data):
+            if disconnected.is_set():
+                return
+            try:
+                events.put_nowait((kind, data))
+            except queue.Full:
+                # Snapshots supersede earlier snapshots. Keep the worker bounded
+                # even when a browser stops consuming, retaining the final receipt.
+                with suppress(queue.Empty):
+                    events.get_nowait()
+                events.put_nowait((kind, data))
+
+        def work():
+            try:
+                with stream_to(send):
+                    response = message_result(sid, body, source)
+                # message_result persists the idempotent receipt before this event.
+                send("result", response)
+                if not input_blocked(response):
+                    flush_memory(harness.session(sid)["customer_id"])
+                if hasattr(app.state, "dispatcher"):
+                    app.state.dispatcher.send_pending()
+            except HTTPException as exc:
+                send("error", {"message": exc.detail, "status": exc.status_code})
+            except LLMUnavailable:
+                send("error", {"message": DEFAULT_REPLY, "status": 503})
+            except (RuntimeError, sqlite3.Error, ValueError, KeyError, TypeError):
+                llm_logger.error('llm_stream {"status":"request_failed"}')
+                send("error", {"message": "Yêu cầu chưa hoàn tất. Vui lòng thử lại.", "status": 500})
+
+        async def body_events():
+            # Continue bounded generation/persistence after disconnect so retrying
+            # a message ID never repeats already-completed bank side effects.
+            task = asyncio.create_task(asyncio.to_thread(work))
+            app.state.stream_tasks.add(task)
+
+            def finished(completed):
+                app.state.stream_tasks.discard(completed)
+                if not completed.cancelled() and completed.exception():
+                    llm_logger.error('llm_stream {"status":"worker_failed"}')
+
+            task.add_done_callback(finished)
+            try:
+                yield 'event: status\ndata: {"stage":"preparing"}\n\n'
+                while True:
+                    try:
+                        kind, data = await asyncio.to_thread(events.get, True, 1)
+                    except queue.Empty:
+                        if task.done():
+                            yield 'event: error\ndata: {"message":"Yêu cầu chưa hoàn tất. Vui lòng thử lại.","status":500}\n\n'
+                            break
+                        yield ": keep-alive\n\n"
+                        continue
+                    yield "event: " + kind + "\ndata: " + json.dumps(data, ensure_ascii=False) + "\n\n"
+                    if kind in ("result", "error"):
+                        break
+            finally:
+                disconnected.set()
+
+        return StreamingResponse(
+            body_events(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+        )
 
     @app.post("/sessions/{sid}/handoff")
     def handoff(sid: str, body: HandoffInput, request: Request):
