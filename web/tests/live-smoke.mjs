@@ -59,21 +59,35 @@ try {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(`${base}/chat`);
-  await page.getByRole("button", { name: "Bắt đầu", exact: true }).click();
-  await expect(page.locator('input[type="date"], #dob')).toHaveCount(0);
-  await page
-    .getByRole("textbox", { name: "Tin nhắn cho trợ lý" })
-    .fill("0900000001");
-  const identityReply = page.waitForResponse(
+  await expect(
+    page.locator('input[type="date"], #dob, #demo-profile'),
+  ).toHaveCount(0);
+  const bootstrap = page.waitForResponse(
     (response) =>
-      response.url().endsWith("/messages") &&
+      response.url().endsWith("/sessions") &&
       response.request().method() === "POST",
   );
+  await page
+    .getByRole("textbox", { name: "Tin nhắn cho trợ lý" })
+    .fill("Điều kiện vay mua nhà là gì?");
   await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
-  expect((await (await identityReply).json()).identity_status).toBe("verified");
-  await expect(
-    page.getByRole("button", { name: "Gặp chuyên viên", exact: true }),
-  ).toBeEnabled();
+  const session = await (await bootstrap).json();
+  await expect(page.locator(".from-assistant")).toHaveCount(1);
+  // This is a deterministic rules smoke, not a test of the model choosing a
+  // verify_identity function. Establish the verified fixture explicitly.
+  const fixtureVerification = await fetch(
+    `${base}/sessions/${session.session_id}/verify`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.session_token}`,
+      },
+      body: JSON.stringify({ phone: "0900000001" }),
+    },
+  );
+  expect(fixtureVerification.ok).toBe(true);
+  expect((await fixtureVerification.json()).identity_status).toBe("verified");
   await page
     .getByRole("textbox", { name: "Tin nhắn cho trợ lý" })
     .fill(
@@ -82,6 +96,9 @@ try {
   await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
   await expect(page.locator(".from-assistant")).toHaveCount(2);
   await expect(page.locator(".from-assistant").last()).toContainText("7,1%");
+  await expect(
+    page.getByRole("button", { name: "Gặp chuyên viên", exact: true }),
+  ).toBeEnabled();
   await page.screenshot({
     path: join(output, "chat-verified.png"),
     fullPage: true,
@@ -139,7 +156,9 @@ try {
     fullPage: true,
   });
   await page.goto(`${base}/chat`);
-  await page.getByRole("button", { name: "Tiếp tục trò chuyện", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Tiếp tục trò chuyện", exact: true })
+    .click();
   await page.waitForFunction(
     () =>
       !document.querySelector('textarea[aria-label="Tin nhắn cho trợ lý"]')
@@ -148,7 +167,7 @@ try {
   );
   if (errors.length) throw new Error(`Runtime errors: ${errors.join("; ")}`);
   console.log(
-    "PASS live backend/browser: bootstrap, phone claim in chat, sourced reply, reload transcript, handoff, staff login, trace dialog, completion, callback complete, benchmark empty, customer resume.",
+    "PASS rules backend/browser with explicit fixture verification (not an LLM tool-choice test): anonymous bootstrap, public chat, sourced reply, reload transcript, handoff, staff login, trace dialog, completion, callback complete, benchmark empty, customer resume.",
   );
 } catch (error) {
   console.error(error);

@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 
 from harness.api import create_app
 from harness.config import Settings
+from harness.db import Database
+from harness.memory.service import Memory
 
 
 @pytest.fixture
@@ -216,8 +218,53 @@ def test_conflicted_live_field_cannot_fall_back_to_seed(client):
         {"amount": "1800000000", "income": "80000000"},
     ),
     ("Tôi vay 4000000000 VND", {"amount": "4000000000"}),
+    ("Thu nhập 1,5 đồng", {}),
 ])
 def test_explicit_currency_and_scaled_amounts(text, expected):
     from harness.memory.service import extract
 
     assert {k: v[0] for k, v in extract(text).items()} == expected
+
+
+@pytest.mark.parametrize("backend,preferred,legacy,source", [
+    ("rules", None, True, "demo_history"),
+    ("rules", True, True, "dataset_history"),
+    ("openai", None, True, "dataset_history"),
+    ("openai", True, True, "dataset_history"),
+    ("openai", False, True, None),
+    ("rules", False, False, None),
+])
+def test_history_entrypoints_select_one_source_and_respect_openai_opt_out(tmp_path, backend, preferred, legacy, source):
+    settings = Settings(
+        llm_backend=backend, identity_history_enabled=preferred, demo_phone_identity=legacy,
+        openai_key="test-only", openai_model="primary", openai_backup_model="backup",
+    )
+    db = Database(str(tmp_path / "history-modes.sqlite3"))
+    memory = Memory(db, settings)
+    brief = memory.brief("+84900000002", flush=False)
+    if source == "dataset_history":
+        assert len(brief["history"]) == 9 and not brief["demo_history"]
+        assert all(fact["source_origin"] == source for fact in brief["facts"])
+        assert len({fact["key"] for fact in brief["needs"]}) == len(brief["needs"])
+    elif source == "demo_history":
+        assert len(brief["demo_history"]) == 9 and not brief["history"]
+        assert all(fact["source_type"] == source for fact in brief["facts"])
+    else:
+        assert brief["facts"] == brief["history"] == brief["demo_history"] == []
+    if source:
+        assert next(fact["value"] for fact in brief["needs"] if fact["key"] == "amount") == "4000000000"
+    assert memory.brief("minh", flush=False) == brief
+    assert not db.all("SELECT * FROM facts") and not db.all("SELECT * FROM callbacks")
+
+
+def test_preferred_history_does_not_restore_old_loan_after_runtime_product_change(tmp_path):
+    db = Database(str(tmp_path / "new-product.sqlite3"))
+    memory = Memory(db, Settings(llm_backend="rules", identity_history_enabled=True, demo_phone_identity=True))
+    with db.transaction() as connection:
+        memory.enqueue(connection, "card-request", "minh", "web-session", "web", "Tôi xác nhận nhu cầu mới mở thẻ tín dụng")
+    memory.flush("minh", allow_llm=False)
+    brief = memory.brief("0900000002", flush=False)
+    needs = {fact["key"]: fact["value"] for fact in brief["needs"]}
+    assert needs["product"] == "credit_card"
+    assert not {"amount", "term", "property_value", "loan_status"} & needs.keys()
+    assert not brief["demo_history"] and len(brief["history"]) == 9

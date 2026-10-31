@@ -17,13 +17,14 @@ ROOT = Path(__file__).resolve().parent.parent
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="memory-harness-eval-") as folder:
         env = os.environ.copy()
-        for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "OPENAI_API_KEY", "OPENAI_MODEL"):
+        for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BACKUP_MODEL"):
             env.pop(name, None)
         env.update(
             ADMIN_TOKEN=secrets.token_urlsafe(32),
             STAFF_PASSWORD=secrets.token_urlsafe(32),
             HARNESS_DB=str(Path(folder) / "harness.sqlite3"),
             LLM_BACKEND="rules",
+            IDENTITY_HISTORY_ENABLED="false",
             AI_SPECIALIST_ENABLED="false",
         )
         with socket.socket() as reservation:

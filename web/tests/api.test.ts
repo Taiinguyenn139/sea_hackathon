@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  createChatSession,
   normalizeTurns,
   request,
   streamReply,
@@ -22,6 +23,26 @@ describe("API boundary", () => {
     expect(options.credentials).toBe("include");
     expect(options.headers["X-CSRF-Token"]).toBe("csrf-value");
     expect(options.headers.Authorization).toBeUndefined();
+  });
+  it("creates a neutral chat session without selecting a customer or sending credentials", async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          session_id: "anonymous",
+          session_token: "capability",
+          user_id: null,
+          identity_status: "unverified",
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const session = await createChatSession();
+    const [url, options] = fetch.mock.calls[0];
+    expect(url).toMatch(/\/sessions$/);
+    expect(JSON.parse(options.body)).toEqual({ mode: "harness" });
+    expect(options.headers.Authorization).toBeUndefined();
+    expect(session.user_id).toBeNull();
+    expect(session.identity_status).toBe("unverified");
   });
   it("reports authorization failures without treating error JSON as successful data", async () => {
     vi.stubGlobal(
@@ -77,12 +98,26 @@ describe("API boundary", () => {
 });
 
 it("restores specialist-only events without fabricating customer messages", () => {
-  const turns = normalizeTurns({ items: [
-    { id: "welcome", text: "", reply: "Đã tiếp nhận hồ sơ.", responder: "ai_specialist" },
-    { id: "next", text: "Cảm ơn", reply: "Em tiếp tục hỗ trợ.", responder: "assistant" },
-  ] });
+  const turns = normalizeTurns({
+    items: [
+      {
+        id: "welcome",
+        text: "",
+        reply: "Đã tiếp nhận hồ sơ.",
+        responder: "ai_specialist",
+      },
+      {
+        id: "next",
+        text: "Cảm ơn",
+        reply: "Em tiếp tục hỗ trợ.",
+        responder: "assistant",
+      },
+    ],
+  });
   expect(turns.map((t) => [t.role, t.responder])).toEqual([
-    ["assistant", "ai_specialist"], ["user", undefined], ["assistant", "assistant"],
+    ["assistant", "ai_specialist"],
+    ["user", undefined],
+    ["assistant", "assistant"],
   ]);
 });
 
@@ -115,6 +150,22 @@ describe("streaming replies", () => {
     vi.stubGlobal("fetch", fetch);
     return fetch;
   }
+  it("keeps specialist role metadata separate from text snapshots and the final receipt", async () => {
+    const final = { ...result, responder: "ai_specialist" };
+    stubStream(
+      `event: metadata\ndata: {"responder":"ai_specialist"}\n\nevent: text\ndata: {"text":"Xin chào."}\n\nevent: result\ndata: ${JSON.stringify(final)}\n\n`,
+    );
+    const received: ReplyStreamEvent[] = [];
+    expect(
+      await streamReply(session, "Chào", "specialist-id", (event) =>
+        received.push(event),
+      ),
+    ).toEqual(final);
+    expect(received).toEqual([
+      { type: "metadata", responder: "ai_specialist" },
+      { type: "text", text: "Xin chào." },
+    ]);
+  });
   it("decodes fragmented Unicode and CRLF snapshots before the terminal receipt", async () => {
     const fetch = stubStream(
       `: heartbeat\r\n\r\nevent: status\r\ndata: {"stage":"drafting"}\r\n\r\nevent: text\r\ndata: {"text":"Xin chào."}\r\n\r\nevent: result\r\ndata: ${JSON.stringify(result)}\r\n\r\n`,

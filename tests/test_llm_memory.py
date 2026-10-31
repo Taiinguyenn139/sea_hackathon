@@ -19,7 +19,7 @@ def fact(value="65000000", key="income", operation="replace", source="65tr"):
 def setup(tmp_path, monkeypatch):
     settings = Settings(db_path=str(tmp_path / "llm.sqlite"), llm_backend="openai", openai_key="test-key",
                         openai_model="primary", openai_backup_model="backup", demo_phone_identity=True,
-                        telegram_secret="test-secret", telegram_token="")
+                        telegram_secret="test-secret", telegram_token="", identity_history_enabled=False)
     answers, extractions, drafts = {}, [], []
 
     def forbidden(*args, **kwargs):
@@ -29,27 +29,34 @@ def setup(tmp_path, monkeypatch):
         monkeypatch.setattr(target, forbidden)
 
     async def post(self, url, **kwargs):
-        instruction, payload = [m["content"] for m in kwargs["json"]["messages"]]
-        payload = json.loads(payload)
-        if "INPUT_SECURITY_CLASSIFIER" in instruction:
-            result = {"category": "safe"}
-        elif "Trích xuất memory" in instruction:
-            extractions.append(payload)
-            result = answers.get(payload.get("text", "demo_history"), {"facts": []})
-            if result == "unavailable":
-                return httpx.Response(503)
-        elif "Phân loại" in instruction:
-            result = {"stage": "discover", "objection": None}
-            if payload["text"] == "Lương tôi bao nhiêu?":
-                result.update(intent="memory_recall", recall_keys=["income"])
-        else:
+        messages = kwargs["json"]["messages"]
+        instruction = messages[0]["content"]
+        if "BACKEND_CONTEXT_JSON:\n" in instruction:
+            payload = json.loads(instruction.split("BACKEND_CONTEXT_JSON:\n", 1)[1])
             drafts.append(payload)
-            income = next((f for f in payload["facts"].values() if f["key"] == "income"), None)
-            result = {"draft": "Thu nhập là {fact:" + income["id"] + "}." if income else payload["rules_draft"]}
+            income = next((f for f in payload["facts"].values()
+                           if f["key"] == "income" and f["status"] == "active"), None)
+            result = {"draft": "Thu nhập là {fact:" + income["id"] + "}." if income
+                      else "Anh/chị chưa có mức thu nhập thống nhất trong hồ sơ. Vui lòng xác nhận lại."}
+        else:
+            payload = json.loads(messages[1]["content"])
+            if "INPUT_SECURITY_CLASSIFIER" in instruction:
+                result = {"category": "safe"}
+            else:
+                assert "Trích xuất memory" in instruction, "OpenAI advice must use native function-call context"
+                extractions.append(payload)
+                result = answers.get(payload.get("text", "demo_history"), {"facts": []})
+                if result == "unavailable":
+                    return httpx.Response(503)
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(result)}, "finish_reason": "stop"}]})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", post)
     return settings, answers, extractions, drafts
+
+
+def known(payload):
+    return {f["key"]: f["value"] for f in payload["facts"].values()
+            if f["status"] == "active" and f["source_type"] != "profile"}
 
 
 def login(client, phone="0901234567", mode="harness"):
@@ -71,11 +78,13 @@ def say(client, session, text, key, stream=False):
     return response.json()
 
 
-def tg(client, number, text):
+def tg(client, number, text=None, contact=None):
     response = client.post("/webhooks/telegram", headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
                            json={"update_id": number, "message": {
                                "date": 1000 + number, "chat": {"id": 111, "type": "private"},
-                               "from": {"id": 111, "first_name": "Test"}, "text": text,
+                               "from": {"id": 111, "first_name": "Test"},
+                               **({"text": text} if text is not None else {}),
+                               **({"contact": {"user_id": 111, "phone_number": contact}} if contact else {}),
                            }})
     assert response.status_code == 200
     db = client.app.state.harness.db
@@ -95,12 +104,12 @@ def test_shorthand_update_and_short_confirmation_cross_channels_and_restart(setu
     })
     with TestClient(create_app(settings)) as client:
         session = login(client)
-        telegram = tg(client, 1, "0901234567")
+        telegram = tg(client, 1, contact="0901234567")
         tg(client, 2, "Thu nhập 47 triệu")
         if update_on_web:
             first = say(client, session, "Mức thu nhập hiện tại của tôi là 65tr / tháng", "update", stream=True)
             tg(client, 3, "Lương tôi bao nhiêu?")
-            assert drafts[-1]["known"]["income"] == "65000000"
+            assert known(drafts[-1])["income"] == "65000000"
             before = len(extractions)
             assert say(client, session, "Mức thu nhập hiện tại của tôi là 65tr / tháng", "update") == first
             assert len(extractions) == before
@@ -121,7 +130,7 @@ def test_shorthand_update_and_short_confirmation_cross_channels_and_restart(setu
         assert any(p.get("extraction", {}).get("facts") == [fact()] for p in stored)
         other = login(client, "0901234568")
         say(client, other, "Lương tôi bao nhiêu?", "other")
-        assert drafts[-1]["known"] == {}
+        assert known(drafts[-1]) == {}
         assert extractions[-1]["remembered_facts"] == []
     with TestClient(create_app(settings)) as client:
         session = login(client)
@@ -138,10 +147,9 @@ def test_all_llm_modes_use_structured_values_without_rule_parsing(setup, mode):
         session = login(client, mode=mode)
         assert "65 triệu" in say(client, session, "Lương sáu mươi lăm củ nhé", "income")["reply"]
         assert "65 triệu" in say(client, session, "Lương tôi bao nhiêu?", "recall")["reply"]
-        assert drafts[-1]["known"]["income"] == "65000000"
-        assert drafts[-1]["intent"] == "memory_recall"
-        assert "{fact:" in drafts[-1]["rules_draft"]
-        assert "giá trị căn nhà" not in drafts[-1]["rules_draft"]
+        assert known(drafts[-1])["income"] == "65000000"
+        assert drafts[-1]["memory_result"]["saved"] is True
+        assert "giá trị căn nhà" not in say(client, session, "Lương tôi bao nhiêu?", "recall-again")["reply"]
 
 
 @pytest.mark.parametrize("answer", ["unavailable", {"facts": [fact("65tr")]}, {"spans": ["Thu nhập 45 triệu"]}])
@@ -173,26 +181,44 @@ def test_model_controls_conflict_and_replacement_and_ignores_hypotheticals(setup
         say(client, session, "Thu nhập 47 triệu", "first")
         # Even on the same channel, the LLM can mark a genuine conflict.
         say(client, session, "Có người ghi 53tr, tôi chưa chắc", "conflict")
-        assert "income" not in drafts[-1]["known"]
+        assert "income" not in known(drafts[-1])
         assert drafts[-1]["memory_result"]["facts"][0]["operation"] == "conflict"
         say(client, session, "Xác nhận 65tr đó", "confirm")
         say(client, session, "Nếu lương tăng 90tr thì sao?", "hypothetical")
-        assert drafts[-1]["known"]["income"] == "65000000"
+        assert known(drafts[-1])["income"] == "65000000"
         assert drafts[-1]["memory_result"] == {"saved": True, "facts": []}
 
 
-def test_demo_baseline_also_uses_llm_and_is_cached_without_overwriting_live_values(setup):
+def test_preferred_dataset_baseline_keeps_provenance_and_live_values_take_priority(setup):
     settings, answers, extractions, drafts = setup
-    answers["demo_history"] = {"facts": [fact("100000000", source="lịch sử mẫu")]}
+    settings.identity_history_enabled = True
     answers["Lương hiện tại 65tr"] = {"facts": [fact()]}
     with TestClient(create_app(settings)) as client:
         first = login(client, "0900000002")
-        assert any(f["key"] == "income" and f["value"] == "100000000" for f in first["brief"]["needs"])
-        assert len([x for x in extractions if "history" in x]) == 1
+        baseline = [f for f in first["brief"]["needs"] if f.get("source_origin") == "dataset_history"]
+        values = {f["key"]: f["value"] for f in baseline}
+        assert values["income"] == "100000000" and values["amount"] == "4000000000" and values["term"] == "300"
+        assert all(f["source_ref"] and f["source_at"] for f in baseline)
+        history = [row for row in first["brief"]["history"] if row["source_origin"] == "dataset_history"]
+        assert len(history) == 9
+        assert extractions == []  # Canonical fixture inputs do not invoke a second LLM baseline extractor.
         second = login(client, "0900000002")
         assert second["brief"]["customer_id"] == first["brief"]["customer_id"]
-        assert len([x for x in extractions if "history" in x]) == 1
+        assert {f["id"] for f in baseline} <= {f["id"] for f in second["brief"]["needs"]}
+        assert extractions == []
         say(client, first, "Lương hiện tại 65tr", "live")
         say(client, second, "Lương tôi bao nhiêu?", "recall")
-        assert drafts[-1]["known"]["income"] == "65000000"
-        assert len([f for f in drafts[-1]["facts"].values() if f["key"] == "income"]) == 1
+        assert known(drafts[-1])["income"] == "65000000"
+        income = [f for f in drafts[-1]["facts"].values() if f["key"] == "income"]
+        assert len(income) == 1 and income[0]["source_origin"] == "runtime"
+        assert not any("history" in request for request in extractions)
+
+
+def test_openai_history_opt_out_does_not_reenable_legacy_demo_baseline(setup):
+    settings, _, extractions, _ = setup
+    assert settings.demo_phone_identity and settings.identity_history_enabled is False
+    with TestClient(create_app(settings)) as client:
+        session = login(client, "0900000002")
+        assert session["brief"]["needs"] == []
+        assert session["brief"]["demo_history"] == []
+        assert extractions == []

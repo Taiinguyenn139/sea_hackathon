@@ -21,11 +21,11 @@ def client(tmp_path):
 
 
 def session(c, profile="hoa", mode="harness", channel=None):
-    route = "/admin/sessions" if channel else "/sessions"
+    route = "/admin/sessions"
     body = {"demo_profile": profile, "mode": mode}
     if channel:
         body["channel"] = channel
-    r = c.post(route, headers=ADMIN if channel else {}, json=body)
+    r = c.post(route, headers=ADMIN, json=body)
     assert r.status_code == 200, r.text
     d = r.json()
     return d["session_id"], {"Authorization": "Bearer " + d["session_token"]}
@@ -68,9 +68,12 @@ def test_verify_limit(client):
 
 
 @pytest.mark.parametrize("verified", [False, True])
-def test_new_conversation_keeps_identity_but_isolates_transcript_and_capability(client, verified):
-    sid, auth = session(client)
-    _, other = session(client, "minh")
+def test_new_public_conversation_is_anonymous_and_isolates_transcript_and_capability(client, verified):
+    original = client.post("/sessions", json={}).json()
+    sid = original["session_id"]
+    auth = {"Authorization": "Bearer " + original["session_token"]}
+    stranger = client.post("/sessions", json={}).json()
+    other = {"Authorization": "Bearer " + stranger["session_token"]}
     if verified:
         verify(client, sid, auth)
     send(client, sid, auth, "Tôi muốn tìm hiểu vay mua nhà.")
@@ -81,7 +84,9 @@ def test_new_conversation_keeps_identity_but_isolates_transcript_and_capability(
     new = result.json()
     new_auth = {"Authorization": "Bearer " + new["session_token"]}
     assert new["session_id"] != sid
-    assert new["identity_status"] == ("verified" if verified else "unverified")
+    assert new["identity_status"] == "unverified"
+    assert new["user_id"] is None and new["brief"] == {"redacted": True}
+    assert client.app.state.harness.session(new["session_id"])["customer_id"] == "anon_" + new["session_id"]
     assert client.get(f"/sessions/{new['session_id']}/turns", headers=new_auth).json()["items"] == []
     assert len(client.get(f"/sessions/{sid}/turns", headers=auth).json()["items"]) == 1
     assert client.get(f"/sessions/{sid}", headers=auth).json()["status"] == "active"
@@ -380,7 +385,9 @@ def test_telegram_first_message_is_processed_and_customers_are_isolated(client):
     assert not any(f["key"] == "income" for f in memory.brief(other)["needs"])
     assert not memory.brief("hoa")["needs"]
     # Public web sessions cannot claim a Telegram prospect by guessing its ID.
-    assert client.post("/sessions", json={"demo_profile": customer}).status_code == 400
+    neutral = client.post("/sessions", json={"demo_profile": customer}).json()
+    assert neutral["user_id"] is None and neutral["brief"] == {"redacted": True}
+    assert client.app.state.harness.session(neutral["session_id"])["customer_id"].startswith("anon_")
     telegram_message(client, 3, "/start hoa", chat_id=222)
     h = client.app.state.harness
     assert h.db.one("SELECT * FROM identity_links WHERE external_id='222'")["customer_id"] == other
@@ -611,6 +618,15 @@ def test_optional_llm_schema_fallback_and_structured_extraction(client, monkeypa
 
     async def fake_post(self, url, **kwargs):
         instruction = kwargs["json"]["messages"][0]["content"]
+        if "tools" in kwargs["json"] and not any(m["role"] == "tool" for m in kwargs["json"]["messages"]):
+            return httpx.Response(200, json={"choices": [{"finish_reason": "tool_calls", "message": {"tool_calls": [
+                {"id": "promos", "type": "function", "function": {
+                    "name": "get_active_promotions", "arguments": json.dumps({"product": "home_loan", "channel": "web"}),
+                }},
+                {"id": "disclosures", "type": "function", "function": {
+                    "name": "get_disclosures", "arguments": json.dumps({"product": "home_loan", "topics": ["rate", "promo"]}),
+                }},
+            ]}}]}, request=httpx.Request("POST", url))
         if "INPUT_SECURITY_CLASSIFIER" in instruction:
             result = {"category": "safe"}
         elif "Phân loại" in instruction:
@@ -632,7 +648,7 @@ def test_optional_llm_schema_fallback_and_structured_extraction(client, monkeypa
     sid, a = session(client)
     verify(client, sid, a)
     r = send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm. Thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ")
-    assert "999" not in r["reply"] and "7,1" in r["reply"]
+    assert "999" not in r["reply"] and "xác nhận" in r["reply"]
     assert any(e["guard_id"] == "G1" for e in r["guard_events"])
     brief = client.get("/customers/hoa/brief", headers=ADMIN).json()
     assert not any(f["value"] == "999000000" for f in brief["facts"])
@@ -820,7 +836,7 @@ def test_candidate_preflight_recovers_valid_completing_handoff(tmp_path, monkeyp
 def test_tool_registry_and_trusted_verification(client):
     sid, auth = session(client)
     tools = client.get(f"/sessions/{sid}/tools", headers=auth).json()["tools"]
-    assert len(tools) == 6
+    assert len(tools) == 7 and "verify_identity" in {tool["name"] for tool in tools}
     assert all("as_of" in tool["parameters"]["required"] for tool in tools)
     result = send(client, sid, auth, "Ưu đãi vay mua nhà hiện tại?", "public")
     assert "7,1" in result["reply"]
@@ -831,12 +847,12 @@ def test_tool_registry_and_trusted_verification(client):
     assert denied["error"].startswith("authentication_required:")
     verify(client, sid, auth)
     tools = client.get(f"/sessions/{sid}/tools", headers=auth).json()["tools"]
-    assert len(tools) == 8
+    assert len(tools) == 9
     assert "crm_lookup" not in {tool["name"] for tool in tools}
     assert all("customer_id" not in tool["parameters"]["properties"] for tool in tools)
     assert harness.engine.bank.call("crm_lookup", {"as_of": "2026-10-31"}, "hoa", sid)["error"].startswith("authentication_required:")
     client.post("/staff/login", json={"password": "staff-test"})
-    assert len(client.get(f"/sessions/{sid}/tools", headers=auth).json()["tools"]) == 8
+    assert len(client.get(f"/sessions/{sid}/tools", headers=auth).json()["tools"]) == 9
 
 
 def test_verified_summary_and_callback_are_durable_mocks(client):

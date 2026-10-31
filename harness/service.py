@@ -12,9 +12,11 @@ from bank_tools.service import canonical, ident, now
 from harness.agent.engine import Engine, conversation_intent, event
 from harness.agent.specialist import PROMPT_VERSION
 from harness.customer_profile import can_access_memory
-from harness.identity import extract_phone_claims, get_profile
+from harness.identity import extract_phone_claims, get_profile, normalize_phone, validate_own_phone_claim
 from harness.input_guard import inspect_input
-from harness.phone_identity import PhoneIdentity, normalize_phone
+from harness.llm import LLMUnavailable, completion_budget
+from harness.phone_identity import PhoneIdentity
+from harness.phone_identity import normalize_phone as normalize_legacy_phone
 from harness.specialist import Specialist, requests_human
 from harness.streaming import emit
 
@@ -33,6 +35,7 @@ class Harness:
         self.db = db
         self.settings = settings
         self.engine = Engine(db, settings)
+        self.engine.identity_handler = self.agent_verify
         self.phone_identity = PhoneIdentity(db)
         self.specialist = Specialist(self)
 
@@ -42,10 +45,15 @@ class Harness:
             link = c.execute(
                 "SELECT customer_id FROM identity_links WHERE channel='telegram' AND external_id=?", (target,)
             ).fetchone()
-            if link and (not get_profile(link["customer_id"]) or self.settings.demo_phone_identity and c.execute(
-                "SELECT customer_id FROM demo_phone_links WHERE customer_id=?", (link["customer_id"],)
-            ).fetchone()):
+            if link and (not get_profile(link["customer_id"]) or self.agent_fixture_link(target, link["customer_id"]) or (
+                self.settings.demo_phone_identity and c.execute(
+                    "SELECT customer_id FROM demo_phone_links WHERE customer_id=?", (link["customer_id"],)
+                ).fetchone()
+            )):
                 return link["customer_id"]
+            if link:
+                # An old admin fixture selector is not customer/channel proof.
+                c.execute("DELETE FROM identity_links WHERE channel='telegram' AND external_id=?", (target,))
             customer = ident("guest_", ["telegram", target])
             display_name = name.strip()[:100] if isinstance(name, str) and name.strip() else "Khách Telegram"
             c.execute(
@@ -54,10 +62,35 @@ class Harness:
             )
             return customer
 
+    def agent_fixture_link(self, target, customer):
+        profile = get_profile(customer)
+        return bool(profile and self.db.one(
+            "SELECT tc.id FROM tool_calls tc JOIN sessions s ON s.id=tc.session_id "
+            "JOIN session_identity_modes m ON m.session_id=s.id "
+            "WHERE tc.tool='verify_identity' AND s.channel='telegram' AND s.external_id=? "
+            "AND s.customer_id=? AND s.verified=1 AND m.kind='demo' "
+            "AND json_extract(tc.result,'$.data.verified')=1 "
+            "AND json_extract(tc.result,'$.data.user_id')=? LIMIT 1",
+            (target, customer, profile["user_id"]),
+        ))
+
     def can_chat(self, session):
         # A channel-owned prospect can discuss their own needs without claiming
         # a bank identity. Existing bank profiles still require verification.
         return can_access_memory(self.db, session)
+
+    def unbound_telegram_guest(self, session):
+        """Only a channel-owned prospect without any prior identity can bind."""
+        customer = session["customer_id"]
+        return not session["verified"] and session["channel"] == "telegram" and bool(self.db.one(
+            "SELECT id FROM guest_customers WHERE id=? AND channel='telegram' AND external_id=?",
+            (customer, session["external_id"]),
+        )) and not any((
+            self.db.one("SELECT customer_id FROM identity_links WHERE channel='telegram' AND external_id=?", (session["external_id"],)),
+            self.db.one("SELECT customer_id FROM phone_sessions WHERE session_id=?", (session["id"],)),
+            self.db.one("SELECT id FROM customer_profiles WHERE id=?", (customer,)),
+            self.db.one("SELECT customer_id FROM demo_phone_links WHERE customer_id=?", (customer,)),
+        ))
 
     def identity_status(self, session):
         if session["verified"]:
@@ -70,7 +103,7 @@ class Harness:
             ) else "guest"
         return "unverified"
 
-    def new_session(self, profile, mode="harness", channel="web", external_id=None):
+    def new_session(self, profile=None, mode="harness", channel="web", external_id=None):
         identity = get_profile(profile)
         if identity:
             profile = identity["id"]
@@ -87,7 +120,7 @@ class Harness:
             "SELECT customer_id FROM identity_links WHERE channel='telegram' AND external_id=? AND customer_id=?",
             (external_id, profile),
         ) is not None and self.db.one("SELECT customer_id FROM demo_phone_links WHERE customer_id=?", (profile,)) is not None
-        if not identity and not guest and not linked and not demo_link:
+        if profile is not None and not identity and not guest and not linked and not demo_link:
             raise HTTPException(400, "Unknown demo profile")
         result = self._create_session(profile, mode, channel, external_id, phone_authenticated=demo_link)
         if demo_link and identity:
@@ -111,7 +144,7 @@ class Harness:
     def demo_phone_session(self, raw_phone):
         if not self.settings.demo_phone_identity:
             raise HTTPException(404, "Demo phone entry is disabled")
-        phone = normalize_phone(raw_phone)
+        phone = normalize_legacy_phone(raw_phone)
         result = self._create_session(ident("demo_", [phone]))
         session = self._demo_phone_customer(self.session(result["session_id"]), phone)
         return {
@@ -129,18 +162,22 @@ class Harness:
             (external_id, profile, external_id),
         ):
             phone_authenticated = True
-        self.engine.memory.flush(profile)
+        if profile is not None:
+            self.engine.memory.flush(profile)
         sid = "s_" + secrets.token_hex(12)
         token = secrets.token_urlsafe(32)
+        profile = profile or "anon_" + sid
+        kind = "otp" if phone_authenticated else "anonymous" if profile.startswith("anon_") else "admin" if channel == "web" else "channel"
         with self.db.transaction() as c:
             c.execute(
                 "INSERT INTO sessions(id,customer_id,channel,external_id,mode,token_hash,created_at) VALUES(?,?,?,?,?,?,?)",
                 (sid, profile, channel, external_id or sid, mode, token_hash(token), now()),
             )
+            c.execute("INSERT INTO session_identity_modes VALUES(?,?)", (sid, kind))
             c.execute("INSERT INTO session_playbooks VALUES(?,?)", (sid, self.db.setting("playbook", "v1")))
             if phone_authenticated:
                 c.execute("INSERT INTO phone_sessions VALUES(?,?)", (sid, profile))
-        return {
+        result = {
             "session_id": sid,
             "status": "active",
             **self.specialist.metadata(sid),
@@ -149,6 +186,10 @@ class Harness:
             "identity_status": self.identity_status(self.session(sid)),
             "brief": self.engine.memory.brief(profile) if phone_authenticated else {"redacted": True},
         }
+        if phone_authenticated and (self.db.one("SELECT id FROM customer_profiles WHERE id=?", (profile,))
+                                    or self.db.one("SELECT customer_id FROM demo_phone_links WHERE customer_id=?", (profile,))):
+            result["telegram_url"] = "https://t.me/" + self.settings.telegram_bot_username
+        return result
 
     def session(self, sid):
         session = self.db.one("SELECT * FROM sessions WHERE id=?", (sid,))
@@ -157,68 +198,174 @@ class Harness:
         return session
 
     def new_conversation(self, previous):
-        """Start a separate transcript without ending a conversation or handoff."""
-        authenticated = bool(self.can_chat(previous))
-        result = self._create_session(
-            previous["customer_id"], previous["mode"], phone_authenticated=authenticated
-        )
-        if previous["verified"]:
-            self.db.execute("UPDATE sessions SET verified=1 WHERE id=?", (result["session_id"],))
-            result["identity_status"] = "verified"
-        if authenticated and (self.db.one("SELECT id FROM customer_profiles WHERE id=?", (previous["customer_id"],))
-                              or self.db.one("SELECT customer_id FROM demo_phone_links WHERE customer_id=?",
-                                             (previous["customer_id"],))):
-            result["telegram_url"] = "https://t.me/" + self.settings.telegram_bot_username
+        """Create a sibling transcript without ending the previous conversation.
+
+        A fresh public demo chat can choose another identity in the agent. A
+        capability to an OTP/channel-owned customer retains that customer's
+        independent continuity flow; neither path grants customer CRM login.
+        """
+        with self.engine.lock("session:" + previous["id"]):
+            previous = self.prepare_public_session(previous["id"])
+            mode = self.db.one("SELECT kind FROM session_identity_modes WHERE session_id=?", (previous["id"],))
+            kind = mode["kind"] if mode else "legacy"
+            if (kind == "legacy" and previous["channel"] == "web" and get_profile(previous["customer_id"])
+                    and not self.db.one("SELECT session_id FROM phone_sessions WHERE session_id=?", (previous["id"],))):
+                kind = "demo"
+            if kind in ("anonymous", "demo") or not self.can_chat(previous) and kind != "admin":
+                return self._create_session(None, previous["mode"])
+            if kind == "admin":
+                result = self._create_session(previous["customer_id"], previous["mode"])
+                if previous["verified"]:
+                    self.db.execute("UPDATE sessions SET verified=1 WHERE id=?", (result["session_id"],))
+                    result["identity_status"] = "verified"
+                    result["brief"] = self.engine.memory.brief(previous["customer_id"], flush=False)
+                return result
+            # Preserve the main branch's delegated capability for a channel or
+            # OTP identity. This does not run PhoneIdentity.bind or claim a new
+            # phone number, and cannot change customer_id.
+            return self._create_session(
+                previous["customer_id"], previous["mode"], phone_authenticated=bool(self.can_chat(previous)),
+            )
+
+    def prepare_public_session(self, sid):
+        """Detach legacy web preselection, retaining only its public transcript."""
+        with self.engine.lock("session:" + sid):
+            session = self.session(sid)
+            mode = self.db.one("SELECT kind FROM session_identity_modes WHERE session_id=?", (sid,))
+            otp = self.db.one("SELECT session_id FROM phone_sessions WHERE session_id=?", (sid,))
+            if (mode or otp or session["channel"] != "web" or session["verified"]
+                    or session["status"] != "active" or not get_profile(session["customer_id"])):
+                return session
+            with self.db.transaction() as c:
+                c.execute(
+                    "UPDATE sessions SET customer_id=? WHERE id=? AND verified=0 AND status='active'",
+                    ("anon_" + sid, sid),
+                )
+                c.execute("INSERT INTO session_identity_modes VALUES(?,?)", (sid, "anonymous"))
+                c.execute("DELETE FROM agent_runs WHERE session_id=?", (sid,))
+            self.engine.checkpointer.delete_thread(sid)
+            with self.engine.bank.lock:
+                for key in list(self.engine.bank.clients):
+                    if key[0] == sid:
+                        del self.engine.bank.clients[key]
+            return self.session(sid)
+
+    def _identity_result(self, operation_id, *, error=None):
+        return {
+            "tool_call_id": operation_id, "tool": "verify_identity", "as_of": self.db.setting("clock"),
+            "data": {"verified": False, "identity_status": "unverified", "user_id": None, "brief": {"redacted": True}},
+            "facts": [], "error": error,
+        }
+
+    def _complete_identity_brief(self, session_id, result):
+        if result["data"].get("verified") and result["data"].get("brief", {}).get("pending"):
+            session = self.session(session_id)
+            with self.engine.lock(session["customer_id"]):
+                result["data"]["brief"] = self.engine.memory.brief(session["customer_id"], flush=False)
+            self.db.execute("UPDATE tool_calls SET result=? WHERE id=?", (canonical(result), result["tool_call_id"]))
         return result
 
+    def agent_verify(self, session_id, phone, *, text, source, turn_id, operation_id):
+        """Tool handler: bind an anonymous fixture session from the current own claim."""
+        turn = self.db.one("SELECT session_id,text FROM turns WHERE id=?", (turn_id,))
+        if not turn or turn["session_id"] != session_id or turn["text"] != text:
+            return self._identity_result(operation_id, error="forbidden: identity claim must belong to this turn")
+        return self._identity_operation(session_id, phone, text, source, turn_id, operation_id)
+
+    def _identity_operation(self, sid, phone, text, source, turn_id, operation_id):
+        with self.engine.lock("session:" + sid):
+            # The normalized phone and current-message hash make a retry receipt
+            # specific to the original request, without storing plaintext phone arguments.
+            try:
+                canonical_phone = normalize_phone(phone)
+            except (TypeError, ValueError):
+                canonical_phone = str(phone)
+            request_hash = ident("identity_", [canonical_phone, text, turn_id])
+            previous = self.db.one("SELECT session_id,tool,args,result FROM tool_calls WHERE id=?", (operation_id,))
+            if previous:
+                args = json.loads(previous["args"])
+                if previous["session_id"] != sid or previous["tool"] != "verify_identity" or args.get("request_hash") != request_hash:
+                    return self._identity_result(operation_id, error="conflict: identity operation reused for another request")
+                return self._complete_identity_brief(sid, json.loads(previous["result"]))
+            session = self.session(sid)
+            result = self._identity_result(operation_id)
+            target = None
+            guest_binding = False
+            try:
+                if session["status"] != "active":
+                    raise ValueError("forbidden: identity session must be active")
+                normalized = validate_own_phone_claim(text, phone)
+                target = get_profile(normalized)
+                if not target:
+                    raise ValueError("identity_not_found: Chưa tìm thấy hồ sơ demo khớp số điện thoại.")
+                mode = self.db.one("SELECT kind FROM session_identity_modes WHERE session_id=?", (sid,))
+                mode = mode["kind"] if mode else "legacy"
+                bound = get_profile(session["customer_id"])
+                anonymous = mode == "anonymous" and session["customer_id"].startswith("anon_")
+                pinned = mode in ("admin", "channel", "legacy") and bound is not None
+                guest_binding = turn_id is not None and mode == "channel" and self.unbound_telegram_guest(session)
+                if session["verified"]:
+                    if not bound or bound["id"] != target["id"]:
+                        raise ValueError("identity_locked: Hồ sơ đã được nhận diện; hãy bắt đầu chat mới để dùng hồ sơ khác.")
+                elif not anonymous and not guest_binding and not (pinned and bound["id"] == target["id"]):
+                    raise ValueError("identity_mismatch: Không chuyển hồ sơ đã gắn hoặc hồ sơ OTP bằng lời khai phone demo.")
+            except (TypeError, ValueError) as exc:
+                result["error"] = str(exc)
+            current = time.time()
+            identity_key = session["customer_id"] if get_profile(session["customer_id"]) else "demo-phone:" + token_hash(canonical_phone)
+            with self.db.transaction() as c:
+                n = c.execute(
+                    "SELECT count(*) FROM auth_attempts WHERE at>? AND (identity=? OR source=?)",
+                    (current - 900, identity_key, source),
+                ).fetchone()[0]
+                if n >= 5:
+                    result["error"] = "rate_limited: Vui lòng thử nhận diện lại sau ít phút."
+                elif not session["verified"]:
+                    c.execute("INSERT INTO auth_attempts VALUES(?,?,?)", (identity_key, source, current))
+                if guest_binding and not self.unbound_telegram_guest(session):
+                    result["error"] = "identity_changed: Liên kết Telegram đã thay đổi; vui lòng thử lại."
+                if not result["error"]:
+                    changed = c.execute(
+                        "UPDATE sessions SET customer_id=?,verified=1 WHERE id=? AND customer_id=? AND status='active'",
+                        (target["id"], sid, session["customer_id"]),
+                    ).rowcount
+                    if not changed:
+                        result["error"] = "identity_changed: Phiên đã thay đổi; vui lòng thử lại."
+                    else:
+                        if guest_binding:
+                            c.execute("INSERT INTO identity_links VALUES('telegram',?,?)", (session["external_id"], target["id"]))
+                        c.execute("INSERT OR REPLACE INTO session_identity_modes VALUES(?,?)", (sid, "demo"))
+                        if turn_id is not None:
+                            self.engine.memory.enqueue(c, turn_id, target["id"], sid, session["channel"], text)
+                        c.execute("DELETE FROM auth_attempts WHERE identity=? AND source=? AND at=?", (identity_key, source, current))
+                        result["data"] = {
+                            "verified": True, "identity_status": "verified", "user_id": target["user_id"],
+                            "brief": {"redacted": True, "pending": True},
+                        }
+                c.execute("INSERT INTO tool_calls VALUES(?,?,?,?,?,?)", (
+                    operation_id, sid, "verify_identity",
+                    canonical({"phone": "[redacted]", "as_of": result["as_of"], "request_hash": request_hash}),
+                    canonical(result), now(),
+                ))
+            return self._complete_identity_brief(sid, result)
+
     def verify(self, session, phone, source):
-        # Refresh server state: a claim can never select or replace the bound
-        # customer, nor reopen an ended session.
-        session = self.session(session["id"])
-        if session["status"] == "ended":
-            raise HTTPException(409, "Session ended")
-        identity = session["customer_id"]
-        if session["verified"]:
-            return {
-                "identity_status": "verified",
-                "user_id": self.user_id(identity),
-                "brief": self.engine.memory.brief(identity),
-            }
-        current = time.time()
-        # The canonical runtime key makes aliases and phone formats share one
-        # customer-scoped limit, independently of the source/IP cap.
-        with self.db.transaction() as c:
-            n = c.execute(
-                "SELECT count(*) FROM auth_attempts WHERE at>? AND (identity=? OR source=?)",
-                (current - 900, identity, source),
-            ).fetchone()[0]
-            if n >= 5:
+        """Compatibility endpoint; new UI uses the agent tool inside chat."""
+        with self.engine.lock("session:" + session["id"]):
+            session = self.prepare_public_session(session["id"])
+            if session["status"] == "ended":
+                raise HTTPException(409, "Session ended")
+            operation_id = ident("tc_", [session["id"], "direct-identity", now()])
+            result = self._identity_operation(
+                session["id"], phone, "Số điện thoại của tôi là " + phone, source, None, operation_id,
+            )
+            if result["error"] and result["error"].startswith("rate_limited"):
                 raise HTTPException(429, "Vui lòng thử nhận diện lại sau ít phút.")
-            c.execute("INSERT INTO auth_attempts VALUES(?,?,?)", (identity, source, current))
-        result = self.engine.bank.call(
-            "verify_identity", {"phone": phone, "as_of": self.db.setting("clock")}, identity, session["id"]
-        )
-        if not result["data"].get("verified"):
-            return {
-                "identity_status": "unverified",
-                "user_id": None,
-                "brief": {"redacted": True},
-                "message": "Chưa thể nhận diện hồ sơ demo trong phiên này. Vui lòng kiểm tra số điện thoại.",
-                "tool_call_id": result["tool_call_id"],
-            }
-        with self.db.transaction() as c:
-            c.execute("DELETE FROM auth_attempts WHERE identity=? AND source=? AND at=?", (identity, source, current))
-            c.execute("UPDATE sessions SET verified=1 WHERE id=?", (session["id"],))
-        return {
-            "identity_status": "verified",
-            "user_id": self.user_id(identity),
-            "brief": self.engine.memory.brief(identity),
-            "tool_call_id": result["tool_call_id"],
-        }
+            return {**result["data"], "tool_call_id": result["tool_call_id"], "message": result["error"] or "Đã nhận diện hồ sơ demo."}
 
     def _demo_phone_customer(self, session, raw_phone):
         """Demo-only phone selection; never changes the contact/OTP ownership registry."""
-        phone = normalize_phone(raw_phone)
+        phone = normalize_legacy_phone(raw_phone)
         fixture = get_profile(phone)
         old_customer = session["customer_id"]
         with self.db.transaction() as c:
@@ -257,6 +404,7 @@ class Harness:
                 (customer, int(get_profile(customer) is not None), session["id"]),
             )
             c.execute("INSERT OR REPLACE INTO phone_sessions VALUES(?,?)", (session["id"], customer))
+            c.execute("INSERT OR REPLACE INTO session_identity_modes VALUES(?,?)", (session["id"], "legacy_demo"))
             if session["channel"] == "telegram":
                 c.execute(
                     "INSERT OR REPLACE INTO identity_links VALUES('telegram',?,?)", (session["external_id"], customer)
@@ -290,7 +438,13 @@ class Harness:
             )
             state = self.identity_status(session)
         else:
-            result = self.verify(session, phones[0], source)
+            receipt = self._identity_operation(
+                session["id"], phones[0], text, source, None,
+                ident("tc_", [session["id"], client_id, "legacy-identity"]),
+            )
+            if receipt["error"] and receipt["error"].startswith("rate_limited"):
+                raise HTTPException(429, "Vui lòng thử nhận diện lại sau ít phút.")
+            result = {**receipt["data"], "message": receipt["error"], "tool_call_id": receipt["tool_call_id"]}
             state = result["identity_status"]
             reply = (
                 "Đã nhận diện hồ sơ demo. Anh/chị có thể tiếp tục nhu cầu đã trao đổi; đây chưa phải đăng nhập khách hàng."
@@ -341,9 +495,13 @@ class Harness:
         return response
 
     def message(self, sid, text, client_id, source="web", *, input_checked=False):
+        with completion_budget(self.settings.agent_turn_budget_seconds):
+            return self._message(sid, text, client_id, source, input_checked=input_checked)
+
+    def _message(self, sid, text, client_id, source="web", *, input_checked=False):
         session = self.session(sid)
-        with self.engine.lock(session["customer_id"]):
-            session = self.session(sid)
+        with self.engine.lock("session:" + sid):
+            session = self.prepare_public_session(sid)
             existing = self.db.one("SELECT * FROM turns WHERE session_id=? AND client_id=?", (sid, client_id))
             if existing and existing["text"] != text:
                 raise HTTPException(409, "Message id already used for another message")
@@ -364,7 +522,10 @@ class Harness:
                     "status": session["status"],
                 }
             phones = extract_phone_claims(text)
-            if phones:
+            origin = self.db.one("SELECT kind FROM session_identity_modes WHERE session_id=?", (sid,))
+            if phones and self.settings.llm_backend == "rules" and (
+                self.settings.demo_phone_identity or origin and origin["kind"] in ("admin", "channel")
+            ):
                 return self._phone_message(session, text, client_id, existing, phones, source)
             turn = existing["id"] if existing else ident("t_", [sid, client_id])
             if not existing:
@@ -372,7 +533,9 @@ class Harness:
                     c.execute(
                         "INSERT INTO turns VALUES(?,?,?,?,?,?,?)", (turn, sid, client_id, text, None, None, now())
                     )
-                    if self.can_chat(session) and conversation_intent(text) not in ("profile_name", "needs_recall"):
+                    if self.can_chat(session) and conversation_intent(text) not in ("profile_name", "needs_recall") and not (
+                        self.settings.llm_backend == "openai" and self.unbound_telegram_guest(session)
+                    ):
                         self.engine.memory.enqueue(c, turn, session["customer_id"], sid, session["channel"], text)
             current = self.specialist.current(sid)
             human = requests_human(text)
@@ -381,22 +544,35 @@ class Harness:
                 if current["welcome_turn_id"] == turn:
                     return welcome
             if (not current and not human and self.settings.ai_specialist_enabled
-                    and self.can_chat(session) and self.engine.handoff_requested(text)):
+                    and self.identity_status(session) in ("verified", "identified")
+                    and self.engine.handoff_requested(text)):
                 return self.specialist.start(sid, text[:1000], "message:" + turn,
                                              input_checked=True, welcome_turn=turn)
             current = self.specialist.current(sid)
             engine = self.engine
             if current and not human:
                 if self.settings.llm_backend != "openai":
-                    from harness.llm import LLMUnavailable
                     raise LLMUnavailable("specialist_provider_unavailable")
                 session["specialist_id"] = current["handoff_id"]
                 engine = self.specialist.engine
             emit("metadata", responder=engine.responder)
-            state = engine.run(session, ("Gặp người thật: " + text) if human else text, turn)
+            engine_text = ("Gặp người thật: " + text) if human and self.settings.llm_backend != "openai" else text
+            state = engine.run(session, engine_text, turn, source=source)
+            session = self.session(sid)
+            if self.can_chat(session) and conversation_intent(text) not in ("profile_name", "needs_recall"):
+                with self.engine.lock(session["customer_id"]), self.db.transaction() as c:
+                    self.engine.memory.enqueue(c, turn, session["customer_id"], sid, session["channel"], text)
             if current and state.get("handoff_id"):
                 self.specialist.complete(sid, current["handoff_id"], next_handoff_id=state["handoff_id"])
-            response = self.turn_response(self.session(sid), state, engine.responder)
+            response = self.turn_response(session, state, engine.responder)
+            if self.can_chat(session) and conversation_intent(text) != "profile_name":
+                with self.engine.lock(session["customer_id"]):
+                    if self.identity_status(session) == "identified":
+                        try:
+                            self.engine.memory.flush(session["customer_id"])
+                        except LLMUnavailable:
+                            pass
+                    response["brief"] = self.engine.memory.brief(session["customer_id"], flush=False)
             with self.db.transaction() as c:
                 self.save_turn(c, session, turn, state, response)
             return response
@@ -446,7 +622,7 @@ class Harness:
         conn.execute("INSERT OR REPLACE INTO traces VALUES(?,?,?)", (turn, session["id"], canonical(trace)))
 
     def handoff(self, sid, reason):
-        with self.engine.lock(self.session(sid)["customer_id"]):
+        with self.engine.lock("session:" + sid), self.engine.lock(self.session(sid)["customer_id"]):
             return self._handoff(sid, reason)
 
     def _handoff(self, sid, reason):
@@ -500,6 +676,9 @@ class Harness:
             "specialist_handoffs",
             "session_playbooks",
             "sessions",
+            "agent_runs",
+            "agent_tool_receipts",
+            "session_identity_modes",
             "phone_sessions",
             "phone_challenges",
             "turns",

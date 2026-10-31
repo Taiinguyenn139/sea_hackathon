@@ -153,7 +153,7 @@ class Dispatcher:
                         markup = {"remove_keyboard": True}
                     elif session["status"] == "waiting_human":
                         reply = "Chuyên viên đang tiếp nhận yêu cầu. Em sẽ tiếp tục khi chuyên viên hoàn tất."
-                    elif not self.settings.demo_phone_identity and not self.db.one(
+                    elif self.settings.llm_backend != "openai" and not self.settings.demo_phone_identity and not self.db.one(
                         "SELECT id FROM customer_profiles WHERE id=?", (customer,)
                     ):
                         reply = (

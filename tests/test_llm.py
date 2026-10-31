@@ -66,21 +66,23 @@ def test_primary_success_never_calls_backup(monkeypatch, caplog):
     assert "test-only-secret" not in caplog.text and "customer-input" not in caplog.text
 
 
-def test_openai_draft_receives_current_message_and_conversational_intent(tmp_path, monkeypatch):
-    drafts = []
+def test_openai_agent_receives_current_greeting_and_catalog_without_forcing_a_quote(tmp_path, monkeypatch):
+    agent_requests = []
 
     async def post(self, url, **kwargs):
-        messages = kwargs["json"]["messages"]
+        request = kwargs["json"]
+        messages = request["messages"]
         instruction = messages[0]["content"]
-        payload = json.loads(messages[1]["content"])
         if "INPUT_SECURITY_CLASSIFIER" in instruction:
             return result({"category": "safe"})
-        if "Phân loại hội thoại" in instruction:
-            return result({"stage": "discover", "objection": None, "intent": "advice"})
         if "Trích xuất memory" in instruction:
             return result({"facts": []})
-        drafts.append(payload)
-        return result({"draft": payload["rules_draft"]})
+        assert request["tools"] and request["tool_choice"] == "auto"
+        current = [message["content"] for message in messages if message["role"] == "user"][-1]
+        agent_requests.append(current)
+        draft = ("Chào anh/chị! Anh/chị muốn tìm hiểu sản phẩm nào?" if current == "Hello"
+                 else "Em tư vấn vay mua nhà và vay tiêu dùng. Anh/chị muốn tìm hiểu loại nào?")
+        return result({"draft": draft})
 
     monkeypatch.setattr(httpx.AsyncClient, "post", post)
     app = create_app(configured(db_path=str(tmp_path / "conversation.sqlite3"), telegram_secret="test-webhook"))
@@ -92,8 +94,8 @@ def test_openai_draft_receives_current_message_and_conversational_intent(tmp_pat
                                   json={"text": text, "client_message_id": str(index)})
             assert response.status_code == 200
             assert "số tiền muốn vay" not in response.json()["reply"]
-    assert [payload["text"] for payload in drafts] == ["Hello", "Có những sản phẩm vay nào ???"]
-    assert [payload["intent"] for payload in drafts] == ["greeting", "loan_catalog"]
+        assert not app.state.harness.db.all("SELECT * FROM tool_calls")
+    assert agent_requests == ["Hello", "Có những sản phẩm vay nào ???"]
 
 
 @pytest.mark.parametrize("failure", ["timeout", "connection", "http", "schema", "json", "truncated"])
@@ -283,7 +285,7 @@ def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
         session = client.post("/sessions", json={"demo_profile": "hoa", "mode": "harness"}).json()
         sid = session["session_id"]
         auth = {"Authorization": "Bearer " + session["session_token"]}
-        assert client.post(f"/sessions/{sid}/verify", headers=auth, json={"phone": session["user_id"]}).status_code == 200
+        assert client.post(f"/sessions/{sid}/verify", headers=auth, json={"phone": "0900000001"}).status_code == 200
         settings.llm_backend = "openai"
         settings.openai_key = "test-only"
         settings.openai_model = "primary"
@@ -292,15 +294,14 @@ def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
         async def post(self, url, **kwargs):
             if "INPUT_SECURITY_CLASSIFIER" in kwargs["json"]["messages"][0]["content"]:
                 return result({"category": "safe"})
-            if "Phân loại" in kwargs["json"]["messages"][0]["content"]:
-                return result({"stage": "quote", "objection": None})
             if "Trích xuất memory" in kwargs["json"]["messages"][0]["content"]:
-                return result({"facts": [
-                    {"key": key, "value": value, "unit": unit, "operation": "replace", "source_text": "Vay mua nhà"}
-                    for key, value, unit in [("product", "home_loan", ""), ("amount", "2000000000", "đồng"),
-                                             ("term", "240", "tháng"), ("income", "45000000", "đồng"),
-                                             ("debt", "0", "đồng"), ("property_value", "3000000000", "đồng")]
-                ]})
+                return result({"facts": []})
+            if "tools" in kwargs["json"] and not any(m["role"] == "tool" for m in kwargs["json"]["messages"]):
+                return httpx.Response(200, json={"choices": [{"finish_reason": "tool_calls", "message": {"tool_calls": [
+                    {"id": "callback", "type": "function", "function": {
+                        "name": "schedule_callback", "arguments": '{"time":"2026-11-02T09:00:00+07:00"}',
+                    }},
+                ]}}]})
             return httpx.Response(503)
 
         monkeypatch.setattr(httpx.AsyncClient, "post", post)

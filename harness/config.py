@@ -17,6 +17,13 @@ class Settings:
     openai_model: str = field(default_factory=lambda: os.getenv("OPENAI_MODEL", ""))
     openai_backup_model: str = field(default_factory=lambda: os.getenv("OPENAI_BACKUP_MODEL", ""))
     llm_call_budget_seconds: float = field(default_factory=lambda: float(os.getenv("LLM_CALL_BUDGET_SECONDS", "20")))
+    identity_history_enabled: bool | None = field(default_factory=lambda: (
+        os.getenv("IDENTITY_HISTORY_ENABLED", "").lower() == "true"
+        if os.getenv("IDENTITY_HISTORY_ENABLED", "") else None
+    ))
+    agent_max_rounds: int = 8
+    agent_max_tool_calls: int = 12
+    agent_turn_budget_seconds: float = 60
     telegram_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     telegram_secret: str = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
     telegram_bot_username: str = os.getenv("TELEGRAM_BOT_USERNAME", "sea_bank_bot")
@@ -46,6 +53,10 @@ class Settings:
                 raise ValueError("Configured Telegram requires a strong webhook secret")
         if self.llm_backend not in ("rules", "openai"):
             raise ValueError("Unsupported LLM_BACKEND")
+        if self.identity_history_enabled is None:
+            self.identity_history_enabled = self.llm_backend == "openai"
+        if self.agent_max_rounds < 1 or self.agent_max_tool_calls < 1 or not 0 < self.agent_turn_budget_seconds <= 120:
+            raise ValueError("Agent limits must be positive and the turn budget at most 120 seconds")
         if not math.isfinite(self.llm_call_budget_seconds) or not 0 < self.llm_call_budget_seconds <= 120:
             raise ValueError("LLM_CALL_BUDGET_SECONDS must be between 0 and 120")
         if self.llm_backend == "openai":

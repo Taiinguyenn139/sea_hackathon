@@ -33,11 +33,18 @@ uv run uvicorn harness.api:app --host 127.0.0.1 --port 8000
 Backend `rules` chạy không cần API key. Telegram và backend LLM cần credential thật
 qua kho secret, không đưa giá trị vào Git hoặc chat.
 
+[Luồng agent chat](docs/AGENT_CHAT.md) bắt đầu trực tiếp từ tin nhắn đầu tiên,
+tự tạo phiên ẩn danh và để AI chọn gọi `verify_identity` khi khách cung cấp số
+điện thoại của mình. Không còn chọn hồ sơ hoặc nhập mã OTP trên màn chat chính.
+Để chạy luồng AI, cấu hình `LLM_BACKEND=openai`, `OPENAI_API_KEY`,
+`OPENAI_MODEL`, `OPENAI_BACKUP_MODEL` và `IDENTITY_HISTORY_ENABLED=true`
+trong `.env`; hai model phải khác nhau. `rules` dành cho kiểm tra offline, không chứng minh AI đã chọn tool.
+
 [Cấu hình Telegram](docs/telegram.md): tạo bot, nạp credential và đăng ký webhook.
-Khách mới chia sẻ số điện thoại trên Telegram rồi chat ngay. Trên web chỉ cần
-nhập cùng số để dùng chung ngữ cảnh, không cần OTP hay liên kết demo thủ công.
-Có thể bắt đầu từ kênh nào cũng được; đây là cơ chế truy cập đơn giản dành cho demo. Script kiểm tra kết
-nối và đăng ký webhook mà không in credential.
+Telegram có luồng chia sẻ contact riêng. Chat web chính nhận số ngay trong
+tin nhắn rồi để AI gọi tool nhận diện; các API đăng nhập bằng số vẫn được giữ
+cho tích hợp demo riêng. Đây là nhận diện demo, không thay thế đăng nhập ngân hàng.
+Script kiểm tra kết nối và đăng ký webhook không in credential.
 
 ## Chuyên viên tư vấn trong demo
 
@@ -61,7 +68,7 @@ LLM. Từng phản hồi giữ nhãn vai trò khi tải lại lịch sử.
   khi backend LLM còn khả dụng, hoặc kết thúc/chuyển người thật.
 
 Chuyên viên dùng chung input guard, quyền tool, kiểm tra nguồn số liệu và lưu ý
-bắt buộc. Lịch sử đưa vào planner/draft có ngân sách 16.000 ký tự JSON, ưu tiên
+bắt buộc. Lịch sử tư vấn có ngân sách 16.000 ký tự JSON, ưu tiên
 các lượt gần nhất; tin hiện tại và facts được truyền riêng. Lãi suất phải tra
 tools hiện tại, không lấy số cũ trong transcript làm báo giá mới.
 
@@ -86,7 +93,7 @@ SQLite tự tạo `specialist_sessions` và `specialist_handoffs`; không sửa 
 positional của bảng cũ. Dữ liệu cũ mặc định là trợ lý/handoff người thật.
 Checkpoint chuyên viên dùng thread riêng theo session và handoff. Preflight
 không gọi provider; yêu cầu đang tiếp nhận được thử lại ở request tiếp theo.
-Logs LLM phân biệt `specialist_plan`/`specialist_draft`; traces ghi phiên bản prompt.
+Luồng chuyên viên dùng metadata/prompt riêng để phân biệt vai trò; traces ghi phiên bản prompt.
 
 Các benchmark/playbook hiện có vẫn đánh giá luồng handoff người thật; sandbox
 playbook và `scripts/verify-dev.py` tắt specialist để giữ điều kiện so sánh.
@@ -99,8 +106,7 @@ credential thật hoặc database tư vấn.
 
 Chat lấy tên từ cùng nguồn hồ sơ với brief, sau khi kiểm tra quyền của phiên.
 Tên hồ sơ demo được ghi rõ là dữ liệu demo; tên hiển thị Telegram không được
-coi là tên đã xác minh tại ngân hàng. Chọn hồ sơ chưa nhận diện không cấp quyền
-đọc tên. Tin nhắn tự giới thiệu hoặc yêu cầu đổi cách xưng hô không ghi đè tên
+coi là tên đã xác minh tại ngân hàng. Phiên chưa nhận diện không được cấp quyền đọc tên. Tin nhắn tự giới thiệu hoặc yêu cầu đổi cách xưng hô không ghi đè tên
 hồ sơ. Hồ sơ chưa có tên và lỗi tra cứu tạm thời có thông báo khác nhau.
 
 Các câu hỏi tên trực tiếp như “Tôi tên gì?”, “Tên tôi là gì?” hoặc “Tôi là ai?”
@@ -118,25 +124,32 @@ Kiểm thử hồi quy: `uv run pytest -q tests/test_profile_context.py`.
 
 ## Lịch sử ban đầu cho demo
 
-Khi `DEMO_PHONE_IDENTITY=true`, các hồ sơ trong `identity_v1` có lịch sử ban đầu
-từ lời khách trong `journeys/*.json`. Backend đọc input đã kiểm tra schema,
-không đọc đáp án evaluator, không ghi các fact mẫu vào database và không tạo
-callback/handoff từ những yêu cầu cũ. Chỉ dùng các lời nói sau bước xác minh của
-phiên mẫu, không vượt ngày nghiệp vụ hiện tại. Quyền của phiên đang chạy vẫn
-được kiểm tra riêng trước khi đưa lịch sử vào context.
+Agent OpenAI dùng projector chuẩn `harness/memory/dataset_history.py` khi bật
+`IDENTITY_HISTORY_ENABLED=true`. Sau khi tool nhận diện thành công, brief kết
+hợp lời khách đã xác minh trong dataset với memory runtime của đúng người.
+Chỉ đọc input trước hoặc đúng ngày nghiệp vụ, không đọc oracle/đáp án assistant,
+không seed turn và không phát lại callback/handoff. Ví dụ An ở ngày 31/10/2026
+có 9 lời khách lịch sử, nhu cầu 4 tỷ/300 tháng, thu nhập 100 triệu, nợ 10 triệu
+và nhà 6 tỷ; phiên chưa xác minh không sửa các giá trị này.
 
-Fact lịch sử mang `source_type=demo_history` và nguồn file/message. Các giá trị
-chat mới thay thế từng trường tương ứng; một trường đang xung đột không được
-quay về giá trị mẫu. Đổi sản phẩm không mang theo số tiền/kỳ hạn của khoản vay
-mẫu trước đó. Tắt chế độ demo hoặc dùng `no_memory` thì agent không đọc lịch sử
-này. Brief có thêm `demo_history` và các nhu cầu mẫu được đánh dấu nguồn.
+Chế độ rules/demo legacy vẫn giữ `harness/demo_history.py` khi bật
+`DEMO_PHONE_IDENTITY=true` và tắt `IDENTITY_HISTORY_ENABLED`. Nó cung cấp lịch sử
+chỉ đọc và fact
+`source_type=demo_history`, nguồn file/message, cho `harness`/`full_history`;
+`no_memory` không đọc lịch sử mẫu. Backend không nạp legacy song song với
+projector agent, nên không lặp lịch sử hoặc thay baseline bằng bộ trích khác.
 
-Câu “Nhu cầu vay của tôi là gì?” dùng intent `needs_recall`, trả fact đã ghi
-nhận và ghi rõ dữ liệu demo, không tự gọi tool báo giá hay tạo hành động.
-Input guard vẫn chạy. Tiền VND có phân cách hàng nghìn được đọc đúng; câu hỏi,
-thời gian ưu đãi và giá trị bị phủ định trong journey không thay thế nhu cầu.
-Các trường hợp diễn đạt ngoài luật vẫn cần kiểm chứng; lịch sử mẫu là dữ liệu
-demo, không phải hồ sơ tín dụng thật. Kiểm thử: `uv run pytest -q tests/test_demo_history.py`.
+Fact mẫu không ghi vào database. Trong luồng legacy, trường runtime đã cập
+nhật hoặc đang conflict không được quay về giá trị mẫu; đổi sản phẩm không
+mang số tiền/kỳ hạn khoản vay cũ sang sản phẩm khác. Quyền của phiên đang chạy
+luôn được kiểm tra riêng: cờ xác minh trong file không cấp quyền cho người gọi.
+Nhắc lại nhu cầu dùng dữ liệu có nguồn, không tự báo giá; lãi suất/ưu đãi hiện
+hành phải lấy qua tool đúng ngày/kênh. Câu hỏi và giá trị giả định hoặc bị phủ
+định trong journey không tự trở thành nhu cầu mới. Đây là dữ liệu hư cấu,
+không phải hồ sơ tín dụng thật.
+
+Kiểm thử projector agent: `uv run pytest -q tests/test_dataset_callbrief.py`;
+kiểm thử legacy: `uv run pytest -q tests/test_demo_history.py`.
 
 ## Kiểm tra an toàn đầu vào
 
@@ -166,17 +179,19 @@ Guard trả `guard_events` với `stage=input`, `action=block` và câu trả l�
 không lặp lại dữ liệu bị chặn. Web chat không lưu turn bị chặn hoặc giữ
 `client_message_id` của turn đó; handoff trả HTTP 400 nếu reason bị chặn.
 Retry của turn đã hoàn tất không gọi lại classifier; Telegram retry cùng update
-cũng không phân loại lại. Với OpenAI, một turn tư vấn được chấp nhận, không có
-memory backlog, gọi LLM bốn lần theo thứ tự: input classifier, memory extraction,
-plan và draft. Memory của lượt hiện tại được commit trước khi soạn câu trả lời.
-Đầu vào bị luật chặn không gọi LLM; bị classifier chặn chỉ gọi classifier một lần.
-Đây là số bước logic: mỗi bước có thể gửi tối đa hai HTTP attempts khi primary
-thất bại và cần backup. Turn bình thường không backlog có tối đa tám attempts;
-riêng classifier có tối đa hai. Identity/brief có thể flush memory trước khi trả
-lời; các lượt đã có memory backlog cần tính thêm các job đó.
-Tin nhắn có số điện thoại cũng đi qua guard trước nhánh nhận diện; nhánh này
-không chạy plan/draft hoặc enqueue nhu cầu vào memory. Contact được chia sẻ qua
-nút Telegram tiếp tục dùng kiểm tra quyền sở hữu riêng, không gửi classifier.
+cũng không phân loại lại. Với OpenAI, số lần gọi model phụ thuộc các vòng agent
+và tool cần dùng; không còn cố định một bước plan rồi một bước draft. Mỗi lượt
+message có ngân sách đồng bộ chung 60 giây cho classifier, agent và các bước
+memory/handoff đồng bộ; agent có tối đa 8 vòng model và 12 lần thực thi tool.
+Mỗi lần gọi LLM chia ngân sách 20 giây cho primary/backup và chịu giới hạn thời
+gian chung còn lại. Job memory chạy nền sau response dùng ngân sách riêng;
+đây không phải bảo đảm chính xác thời gian truyền HTTP. Đầu vào bị luật chặn
+không gọi LLM; bị classifier chặn không vào agent.
+Tin nhắn có số điện thoại vẫn qua guard rồi được AI xem xét gọi
+`verify_identity`; backend kiểm tra số đó có phải lời tự khai trong lượt hiện
+tại hay không. Nhu cầu trong cùng tin nhắn được tiếp tục xử lý sau nhận diện.
+Contact được chia sẻ qua nút Telegram tiếp tục dùng kiểm tra quyền sở hữu riêng,
+không gửi classifier.
 
 Đây là phòng vệ nhiều lớp, chưa bảo đảm phát hiện mọi prompt injection hoặc mọi
 loại PII. Nội dung vượt qua luật được gửi tới classifier khi bật OpenAI; các luật
@@ -192,8 +207,8 @@ chữ tiếng Anh như `six percent`, `six point nine percent`, `twenty-one mont
 được kiểm tra bên cạnh các mẫu tiếng Việt. Cam kết bị chặn ghi reason
 `unsupported_approval_guarantee`; câu phủ định như “Em không thể cam kết phê
 duyệt khoản vay” vẫn hợp lệ. Nếu bản thay thế cũng không đạt, trả câu an toàn.
-Streaming dùng cùng phép kiểm tra trước khi phát từng đoạn hoàn chỉnh, nên các
-mẫu không đạt không được đưa ra bản xem trước. Các luật này chỉ bao phủ những
+Luồng agent kiểm tra toàn bộ phản hồi trước khi phát snapshot cuối qua SSE,
+nên nội dung không đạt không được đưa ra bản xem trước. Các luật này chỉ bao phủ những
 mẫu đã nhận diện, không thay thế đánh giá ngữ nghĩa cho mọi cách diễn đạt.
 
 ## Kiểm tra và build
@@ -309,7 +324,8 @@ hiện có; expected memory chỉ dành cho evaluator.
 điện thoại, 40 phiên trên 4 kênh, lời khách và đáp án riêng cho các tình huống
 hỏi người nhà, so ngân hàng và tiếp tục hội thoại sau khi đổi kênh. Backend dùng
 cùng nguồn identity để nhận diện số điện thoại gửi trong từng phiên chat demo;
-không yêu cầu ngày sinh và CRM vẫn cần đăng nhập riêng.
+AI nhận call brief từ lịch sử đầu vào đúng ngày và memory runtime sau khi tool
+nhận diện thành công. Không yêu cầu ngày sinh; CRM vẫn cần đăng nhập riêng.
 
 ## Deploy
 
@@ -329,18 +345,21 @@ alias `hoa`/`minh` được giữ để dùng tiếp memory cũ.
 
 ## Nhận diện cùng hồ sơ trên web và Telegram trong bản demo
 
-Demo GCP bật `DEMO_PHONE_IDENTITY=true`: nhập số điện thoại vào ô ở màn hình đầu
-trên web, bấm **Bắt đầu chat**; trên Telegram bấm Start và **Chia sẻ số điện thoại**
-hoặc nhập cùng số trong chat. Hai kênh dùng
-chung hồ sơ và memory, không cần OTP. `0901234567` và `+84 90 123 4567` là cùng
-một số. Số trong bộ mẫu nối vào hồ sơ có sẵn; số mới tạo hồ sơ demo riêng.
+Màn hình chat chính luôn cho nhập tin nhắn ngay, kể cả khi bật
+`DEMO_PHONE_IDENTITY=true`. Lần gửi đầu tạo phiên ẩn danh bằng
+`POST /sessions` với `{mode: "harness"}`. Khách gửi số điện thoại của mình ngay
+trong chat; AI quyết định gọi `verify_identity` và chỉ kết nối hồ sơ khi tool
+trả thành công. Không có ô nhập số riêng, bước chọn hồ sơ hoặc biểu mẫu OTP.
 
-Số nhập ở màn hình đầu không tạo tin nhắn. Mỗi phiên có transcript, bản nháp và
-luồng xử lý riêng; các phiên cùng hồ sơ vẫn đóng góp và đọc memory chung.
-Tạo phiên mới không sao chép hội thoại hoặc handoff của phiên trước. Muốn đổi sang số khác sau
-khi đã kết nối, mở phiên mới rồi nhập số khác. Chi tiết ở [Telegram](docs/telegram.md).
-Ngoài deployment demo, cấu hình mặc định tắt: Telegram yêu cầu chia sẻ contact;
-web dùng **Tiếp tục bằng số điện thoại**, không cần OTP.
+Mỗi phiên giữ transcript, bản nháp và handoff riêng. Trên web demo, tạo phiên
+mới mở một phiên ẩn danh để có thể nhận diện người khác; lịch sử phiên cũ vẫn
+còn. Các phiên đã kết nối cùng hồ sơ dùng chung memory theo quyền của backend.
+
+Backend vẫn giữ `POST /demo/phone/session` cho các tích hợp demo cũ khi bật
+flag và `POST /auth/phone/login` cho đăng nhập hội thoại bằng số không OTP;
+màn hình chat chính không gọi hai API này. Telegram có cơ chế chia sẻ contact
+riêng theo cấu hình demo; các endpoint OTP cũ vẫn tồn tại để tương thích. Nhận diện demo không thay thế đăng nhập khách hàng để dùng CRM.
+Chi tiết ở [Telegram](docs/telegram.md).
 
 Cập nhật rõ ràng như “Lương mới được tăng lên 53 triệu rồi” hoặc “Thu nhập hiện tại
 của tôi là 53 triệu” thay thế mức thu nhập cũ giữa các kênh. Nếu hai giá trị vẫn
@@ -370,8 +389,8 @@ không gọi model hoặc biến pending job thành dữ liệu do rule trích x
 không tham gia luồng OpenAI. Không đổi schema DB; hồ sơ và facts đã có được giữ.
 Không tự tái diễn giải các lượt cũ đã xử lý: khách gửi lại thông tin cần cập nhật.
 
-Ở chế độ OpenAI, cả dữ liệu nhu cầu khởi tạo từ journey demo cũng được LLM diễn giải
-và cache theo hồ sơ/ngày/nội dung nguồn; không đi qua bộ trích regex. Fact khách cập
-nhật trong phiên thật vẫn ưu tiên hơn baseline demo. Khởi tạo baseline có thể thêm
-một lần gọi LLM khi cache chưa có; lời hỏi lại thu nhập dùng intent `memory_recall`
-để trả thông tin đã nhớ, không buộc bổ sung các trường còn thiếu của khoản vay.
+Memory runtime trong luồng agent dùng schema có cấu trúc ở trên. Lịch sử fixture
+chuẩn vẫn do projector `dataset_history.py` cấp theo quyền/ngày và giữ nguồn,
+không nạp thêm bộ trích lịch sử legacy song song. Fact khách cập nhật vẫn ưu tiên
+hơn baseline. Khi khách hỏi lại thông tin đã nhớ, agent dùng facts trong context;
+không buộc bổ sung các trường khoản vay không liên quan chỉ để nhắc lại thu nhập.

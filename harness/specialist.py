@@ -50,7 +50,7 @@ class Specialist:
                     return json.loads(previous["start_result"])
             if session["status"] != "active":
                 raise HTTPException(409, "Session is waiting for staff or ended")
-            if not h.can_chat(session):
+            if h.identity_status(session) not in ("verified", "identified"):
                 raise HTTPException(403, "Verify identity first")
             current = self.current(sid)
             if current and (not previous or current["handoff_id"] != previous["handoff_id"]):

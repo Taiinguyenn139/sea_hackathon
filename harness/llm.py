@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Literal
 
 import httpx
@@ -14,6 +16,7 @@ from bank_tools.service import canonical
 
 DEFAULT_REPLY = "Hiện tại hệ thống tư vấn đang tạm gián đoạn. Anh/chị vui lòng thử lại sau ít phút."
 logger = logging.getLogger(__name__)
+_turn_deadline: ContextVar[float | None] = ContextVar("llm_turn_deadline", default=None)
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     logger.addHandler(logging.StreamHandler())
@@ -25,6 +28,22 @@ class LLMUnavailable(RuntimeError):
     def __init__(self, category="unavailable"):
         super().__init__(DEFAULT_REPLY)
         self.category = category
+
+
+def current_deadline():
+    return _turn_deadline.get()
+
+
+@contextmanager
+def completion_budget(seconds):
+    """Share one deadline across classifier, memory, agent and handoff calls."""
+    deadline = time.monotonic() + seconds
+    outer = current_deadline()
+    token = _turn_deadline.set(min(outer, deadline) if outer is not None else deadline)
+    try:
+        yield
+    finally:
+        _turn_deadline.reset(token)
 
 
 class PlanSuggestion(BaseModel):
@@ -78,10 +97,102 @@ class DraftSuggestion(BaseModel):
     draft: str = Field(min_length=1, max_length=7999)
 
 
+class AgentReply(DraftSuggestion):
+    handoff: bool = False
+
+
+class ToolFunction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=100)
+    arguments: str = Field(max_length=32000)
+
+
+class FunctionCall(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=200)
+    type: Literal["function"]
+    function: ToolFunction
+
+
+def _agent_result(choice):
+    """Validate provider messages before any proposed function can execute."""
+    message = choice["message"]
+    if choice.get("finish_reason") == "tool_calls":
+        calls = [FunctionCall.model_validate(call).model_dump() for call in message["tool_calls"]]
+        if not calls or len(calls) > 12 or len({call["id"] for call in calls}) != len(calls):
+            raise ValueError("Invalid tool batch")
+        for call in calls:
+            arguments = json.loads(call["function"]["arguments"])
+            if not isinstance(arguments, dict):
+                raise TypeError("Tool arguments must be an object")
+        return {"message": {"role": "assistant", "content": None, "tool_calls": calls}}
+    if choice.get("finish_reason", "stop") != "stop" or message.get("tool_calls"):
+        raise ValueError("Incomplete agent response")
+    reply = AgentReply.model_validate_json(message["content"]).model_dump()
+    return {"message": {"role": "assistant", "content": canonical(reply)}, **reply}
+
+
+def _model_family(model, families):
+    return any(model == family or model.startswith(family + "-") for family in families)
+
+
+def _responses_input(messages, model):
+    items = []
+    for message in messages:
+        replay = message.get("_response_items", {})
+        if message["role"] == "assistant" and replay.get("model") == model:
+            # Keep encrypted reasoning and its matching function-call items
+            # together when the same reasoning model resumes after a tool.
+            items.extend(replay["items"])
+        elif message["role"] == "tool":
+            items.append({"type": "function_call_output", "call_id": message["tool_call_id"],
+                          "output": message["content"]})
+        else:
+            if message.get("content") is not None:
+                items.append({"role": message["role"], "content": message["content"]})
+            for call in message.get("tool_calls", []):
+                items.append({"type": "function_call", "call_id": call["id"],
+                              "name": call["function"]["name"], "arguments": call["function"]["arguments"]})
+    return items
+
+
+def _responses_result(body, model):
+    if not isinstance(body, dict) or body.get("status") != "completed" or body.get("error") or body.get("incomplete_details"):
+        raise ValueError("Incomplete agent response")
+    output = body["output"]
+    if not isinstance(output, list) or any(not isinstance(item, dict) or item.get("type") not in ("reasoning", "function_call", "message") for item in output):
+        raise ValueError("Unsupported agent response item")
+    if any(item["type"] != "reasoning" and item.get("status", "completed") != "completed" for item in output):
+        raise ValueError("Incomplete agent response item")
+    calls = [{"id": item["call_id"], "type": "function",
+              "function": {"name": item["name"], "arguments": item["arguments"]}}
+             for item in output if item["type"] == "function_call"]
+    if calls:
+        result = _agent_result({"finish_reason": "tool_calls", "message": {"tool_calls": calls}})
+        result["message"]["_response_items"] = {"model": model, "items": output}
+        return result
+    content = []
+    for item in output:
+        if item["type"] == "message":
+            for part in item["content"]:
+                if part["type"] != "output_text":
+                    raise ValueError("Agent did not return text")
+                content.append(part["text"])
+    return _agent_result({"finish_reason": "stop", "message": {"content": "".join(content)}})
+
+
+def tool_completion(settings, messages, tools, *, deadline):
+    if settings.llm_backend != "openai":
+        raise LLMUnavailable("agent_requires_openai")
+    return asyncio.run(_completion(
+        settings, None, None, None, "agent_tools", messages=messages, tools=tools, turn_deadline=deadline,
+    ))
+
+
 def json_completion(settings, instruction, data, schema=None, *, purpose, on_delta=None):
     if not settings or settings.llm_backend != "openai":
         return None
-    return asyncio.run(_completion(settings, instruction, data, schema, purpose, on_delta))
+    return asyncio.run(_completion(settings, instruction, data, schema, purpose, on_delta=on_delta))
 
 
 def _record(purpose, model, attempt, status, started, category=None, usage=None, streamed=False):
@@ -157,9 +268,16 @@ async def _read_stream(response, on_delta):
     return {"choices": [{"message": {"content": raw}, "finish_reason": finish}], "usage": usage}
 
 
-async def _completion(settings, instruction, data, schema, purpose, on_delta):
+async def _completion(
+    settings, instruction, data, schema, purpose, messages=None, tools=None, turn_deadline=None, on_delta=None,
+):
     started = time.monotonic()
     deadline = started + settings.llm_call_budget_seconds
+    shared = current_deadline()
+    if shared is not None:
+        deadline = min(deadline, shared)
+    if turn_deadline is not None:
+        deadline = min(deadline, turn_deadline)
     models = (settings.openai_model, settings.openai_backup_model)
     category = "deadline"
     async with httpx.AsyncClient() as client:
@@ -176,19 +294,36 @@ async def _completion(settings, instruction, data, schema, purpose, on_delta):
             limit = remaining / (2 - index)
             try:
                 async with asyncio.timeout(limit):
+                    responses = tools is not None and _model_family(model, ("gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra"))
                     payload: dict = {
                         "model": model,
                         "messages": [
-                            {"role": "system", "content": instruction},
-                            {"role": "user", "content": canonical(data)},
+                            {key: value for key, value in message.items() if not key.startswith("_")}
+                            for message in messages
+                        ] if messages is not None else [
+                            {"role": "system", "content": instruction}, {"role": "user", "content": canonical(data)},
                         ],
                         "response_format": {"type": "json_object"},
                     }
+                    endpoint = "https://api.openai.com/v1/chat/completions"
+                    if responses:
+                        endpoint = "https://api.openai.com/v1/responses"
+                        payload = {
+                            "model": model, "input": _responses_input(messages, model), "store": False,
+                            "include": ["reasoning.encrypted_content"], "reasoning": {"effort": "low"},
+                            "text": {"format": {"type": "json_object"}},
+                        }
+                    elif tools is not None and _model_family(model, ("gpt-6-luna", "gpt-6-sol")):
+                        payload["reasoning_effort"] = "none"
+                    if tools:
+                        native_tools = ([{"type": "function", **tool, "strict": False} for tool in tools] if responses
+                                        else [{"type": "function", "function": tool} for tool in tools])
+                        payload.update(tools=native_tools, tool_choice="auto")
                     headers = {"Authorization": "Bearer " + settings.openai_key}
                     if on_delta:
                         payload.update(stream=True, stream_options={"include_usage": True})
                         async with client.stream(
-                            "POST", "https://api.openai.com/v1/chat/completions",
+                            "POST", endpoint,
                             headers=headers, json=payload, timeout=limit,
                         ) as response:
                             if response.is_success:
@@ -197,7 +332,7 @@ async def _completion(settings, instruction, data, schema, purpose, on_delta):
                                 await response.aread()
                     else:
                         response = await client.post(
-                            "https://api.openai.com/v1/chat/completions",
+                            endpoint,
                             headers=headers, json=payload, timeout=limit,
                         )
                         body = response.json() if response.is_success else None
@@ -209,16 +344,26 @@ async def _completion(settings, instruction, data, schema, purpose, on_delta):
                             except ValueError:
                                 delay = 0.0
                     else:
-                        choice = body["choices"][0]
-                        if choice.get("finish_reason", "stop") != "stop":
-                            raise ValueError("Incomplete completion")
-                        result = json.loads(choice["message"]["content"])
-                        if not isinstance(result, dict):
-                            raise ValueError("JSON object required")
-                        result = schema.model_validate(result).model_dump() if schema else result
+                        usage = body.get("usage")
+                        if responses:
+                            result = _responses_result(body, model)
+                            if isinstance(usage, dict):
+                                usage = {"prompt_tokens": usage.get("input_tokens"),
+                                         "completion_tokens": usage.get("output_tokens"), "total_tokens": usage.get("total_tokens")}
+                        elif tools is not None:
+                            choice = body["choices"][0]
+                            result = _agent_result(choice)
+                        else:
+                            choice = body["choices"][0]
+                            if choice.get("finish_reason", "stop") != "stop":
+                                raise ValueError("Incomplete completion")
+                            result = json.loads(choice["message"]["content"])
+                            if not isinstance(result, dict):
+                                raise ValueError("JSON object required")
+                            result = schema.model_validate(result).model_dump() if schema else result
                         _record(
                             purpose, model, attempt, "success", attempt_started,
-                            usage=body.get("usage"), streamed=on_delta is not None,
+                            usage=usage, streamed=on_delta is not None,
                         )
                         return result
             except (TimeoutError, httpx.TimeoutException):
