@@ -222,11 +222,16 @@ class BankTools:
             return {"task_id": key, "time": due}, []
         if tool == "send_summary":
             channel = a["channel"]
-            link = self.db.one("SELECT * FROM identity_links WHERE customer_id=? AND channel=?", (customer, channel))
+            link = self.db.one(
+                "SELECT * FROM identity_links WHERE customer_id=? AND channel=?", (customer, channel)
+            ) or self.db.one("SELECT external_id FROM guest_customers WHERE id=? AND channel=?", (customer, channel))
             if not link:
                 raise ValueError("channel identity not linked")
             verified = self.db.one(
-                "SELECT id FROM sessions WHERE customer_id=? AND channel=? AND verified=1", (customer, channel)
+                "SELECT s.id FROM sessions s LEFT JOIN guest_customers g ON g.id=s.customer_id "
+                "AND g.channel=s.channel AND g.external_id=s.external_id "
+                "WHERE s.id=? AND s.customer_id=? AND s.channel=? AND (s.verified=1 OR g.id IS NOT NULL)",
+                (session, customer, channel),
             )
             if not verified:
                 raise ValueError("channel not verified")

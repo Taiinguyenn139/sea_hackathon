@@ -158,11 +158,18 @@ class Memory:
         )
         return self.db.all("SELECT * FROM facts WHERE customer_id=? ORDER BY observed_at,id", (customer,))
 
-    def brief(self, customer):
-        self.flush(customer)
+    def profile(self, customer):
         from bank_tools.service import FIXTURES
 
-        profile = next(x for x in FIXTURES["customers"] if x["id"] == customer)
+        return next((x for x in FIXTURES["customers"] if x["id"] == customer), None) or self.db.one(
+            "SELECT id,name,NULL AS cif FROM guest_customers WHERE id=?", (customer,)
+        )
+
+    def brief(self, customer):
+        self.flush(customer)
+        profile = self.profile(customer)
+        if not profile:
+            raise ValueError("Unknown customer")
         facts = self.facts(customer)
         return {
             "redacted": False,
