@@ -82,8 +82,9 @@ def test_new_conversation_keeps_identity_but_isolates_transcript_and_capability(
     new_auth = {"Authorization": "Bearer " + new["session_token"]}
     assert new["session_id"] != sid
     assert new["identity_status"] == ("verified" if verified else "unverified")
-    assert client.get(f"/sessions/{new['session_id']}/turns", headers=new_auth).json()["items"] == []
-    assert len(client.get(f"/sessions/{sid}/turns", headers=auth).json()["items"]) == 1
+    opening = client.get(f"/sessions/{new['session_id']}/turns", headers=new_auth).json()["items"]
+    assert len(opening) == 1 and opening[0]["text"] == "" and opening[0]["reply"]
+    assert len(client.get(f"/sessions/{sid}/turns", headers=auth).json()["items"]) == 2
     assert client.get(f"/sessions/{sid}", headers=auth).json()["status"] == "active"
     assert client.get(f"/sessions/{new['session_id']}/turns", headers=auth).status_code == 403
     assert client.get(f"/sessions/{sid}/turns", headers=new_auth).status_code == 403
@@ -365,7 +366,7 @@ def test_telegram_new_customer_can_start_and_update_needs(client):
     telegram_message(client, 3, "Thu nhập chính xác 50 triệu")
     assert len(h.db.all("SELECT * FROM guest_customers")) == 1
     assert len(h.db.all("SELECT * FROM sessions WHERE status='active'")) == 1
-    assert len(h.db.all("SELECT * FROM turns")) == 2
+    assert len(h.db.all("SELECT * FROM turns WHERE text!=''")) == 2
 
 
 def test_telegram_first_message_is_processed_and_customers_are_isolated(client):
@@ -410,7 +411,7 @@ def test_telegram_legacy_bank_link_uses_private_onboarding(client):
                 json={"external_id": "111", "customer_id": "hoa"})
     customer, reply = telegram_message(client, 1, "/start")
     assert customer != "hoa" and "Chia sẻ số điện thoại" in reply
-    assert not client.app.state.harness.db.all("SELECT * FROM turns")
+    assert not client.app.state.harness.db.all("SELECT * FROM turns WHERE text!=''")
     share_telegram_phone(client, stamp=200)
     assert client.app.state.harness.db.one("SELECT * FROM identity_links WHERE external_id='111'")["customer_id"] != "hoa"
 
@@ -702,8 +703,8 @@ def test_handoff_bot_said_has_tool_provenance(client):
     send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ")
     response = client.post(f"/sessions/{sid}/handoff", headers=a, json={"reason": "Tư vấn hồ sơ"})
     assert response.status_code == 200
-    assert response.json()["bot_said"][0]["tool_call_ids"]
-    assert response.json()["bot_said"][0]["fact_ids"]
+    assert response.json()["bot_said"][1]["tool_call_ids"]
+    assert response.json()["bot_said"][1]["fact_ids"]
 
 
 def test_callback_uses_business_clock(client):

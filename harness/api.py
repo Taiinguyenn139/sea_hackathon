@@ -265,11 +265,11 @@ def create_app(settings=None):
 
     @app.post("/sessions")
     def create(body: SessionInput):
-        return harness.new_session(body.demo_profile, body.mode)
+        return harness.welcome(harness.new_session(body.demo_profile, body.mode))
 
     @app.post("/demo/phone/session")
     def demo_phone_session(body: PhoneLoginInput):
-        return harness.demo_phone_session(body.phone)
+        return harness.welcome(harness.demo_phone_session(body.phone))
 
     @app.get("/sessions/{sid}")
     def get_session(sid: str, request: Request):
@@ -288,16 +288,16 @@ def create_app(settings=None):
     @app.post("/auth/phone/login")
     def phone_demo_login(body: PhoneLoginInput):
         if settings.demo_phone_identity:
-            return harness.demo_phone_session(body.phone)
+            return harness.welcome(harness.demo_phone_session(body.phone))
         customer = harness.phone_identity.demo_customer(body.phone)
         result = harness._create_session(customer, phone_authenticated=True)
         result["telegram_url"] = "https://t.me/" + settings.telegram_bot_username
-        return result
+        return harness.welcome(result)
 
     @app.post("/sessions/{sid}/new")
     def new_conversation(sid: str, request: Request):
         # A session capability can create a sibling for the same identity only.
-        return harness.new_conversation(owner(sid, request))
+        return harness.welcome(harness.new_conversation(owner(sid, request)))
 
     @app.post("/auth/phone/start")
     def phone_start(body: PhoneLoginInput, request: Request, tasks: BackgroundTasks):
@@ -308,7 +308,7 @@ def create_app(settings=None):
 
     @app.post("/auth/phone/confirm")
     def phone_confirm(body: PhoneConfirmInput):
-        return harness.phone_session(body.challenge_id, body.code)
+        return harness.welcome(harness.phone_session(body.challenge_id, body.code))
 
     @app.get("/sessions/{sid}/turns")
     def turns(sid: str, request: Request, offset: int = 0, limit: int = 100):

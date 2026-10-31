@@ -20,7 +20,7 @@ for (const width of [375, 1440]) {
           return route.fulfill({ status: 422, json: { detail: "Số điện thoại không hợp lệ." } });
         const id = `chat-${starts}`;
         phones[id] = route.request().postDataJSON().phone;
-        turns[id] = [];
+        turns[id] = [{ id: `opening-${id}`, text: "", reply: "Chào anh/chị! Em là trợ lý Bankwise. Anh/chị cần hỗ trợ gì hôm nay?" }];
         return route.fulfill({ json: session(id) });
       }
       if (path.endsWith("/new")) { siblings++; return route.fulfill({ json: session("second") }); }
@@ -52,7 +52,8 @@ for (const width of [375, 1440]) {
     await expect(phone).toHaveCount(0);
     const composer = page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" });
     await expect(composer).toBeEnabled();
-    await expect(page.getByRole("log")).toHaveCount(0);
+    await expect(page.getByRole("log")).toContainText("Em là trợ lý Bankwise");
+    await expect(page.getByRole("log").locator(".from-user")).toHaveCount(0);
     expect(messages).toBe(0); // Phone entry is not a conversation message.
     await composer.fill("Tư vấn vay mua nhà");
     await composer.press("Enter");
@@ -81,14 +82,14 @@ for (const width of [375, 1440]) {
     await phone.fill("0912345678");
     await start.click();
     await expect(phone).toHaveCount(0);
-    await expect(page.getByRole("log")).toHaveCount(0);
+    await expect(page.getByRole("log").locator(".from-assistant")).toHaveCount(1);
     await expect(composer).toHaveValue("");
     await expect(composer).toBeEnabled();
     expect(phones["chat-3"]).toBe("0912345678");
     expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem("bankwise-chat-session")!).user_id)).toBe("0912345678");
     await page.reload();
     await expect(composer).toBeEnabled();
-    await expect(page.getByRole("log")).toHaveCount(0);
+    await expect(page.getByRole("log").locator(".from-assistant")).toHaveCount(1);
     await openHistory();
     await expect(history.locator(".history-row")).toHaveCount(2);
     await history.getByRole("button", { name: /Tư vấn vay mua nhà Có thể tiếp tục/ }).click();
@@ -100,7 +101,7 @@ for (const width of [375, 1440]) {
     await phone.fill("0901234567");
     await start.click();
     await expect(composer).toBeEnabled();
-    await expect(page.getByRole("log")).toHaveCount(0);
+    await expect(page.getByRole("log").locator(".from-assistant")).toHaveCount(1);
     expect(phones["chat-4"]).toBe("0901234567");
     expect(starts).toBe(4);
     expect(siblings).toBe(0);

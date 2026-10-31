@@ -103,6 +103,7 @@ def test_full_lifecycle_context_history_and_no_fake_customer_memory(setup):
     assert plan["known"]["income"] == "45000000"
     assert any(NEED in t["text"] for p in plan["context_parts"] if p["type"] == "current_session" for t in p["turns"])
     rows = client.get(f"/sessions/{sid}/turns", headers=auth).json()["items"]
+    assert rows.pop(0)["text"] == ""  # Assistant's opening precedes customer input.
     assert rows[0]["responder"] == "assistant"
     assert rows[1]["text"] == "" and rows[1]["responder"] == "ai_specialist"
     assert rows[2]["responder"] == "ai_specialist"
@@ -126,7 +127,7 @@ def test_natural_request_and_sse_role_before_text(setup):
     response = message(client, sid, auth, "Tôi muốn gặp chuyên viên, " + NEED, "natural").json()
     assert response["responder"] == "ai_specialist"
     assert "45 triệu" in response["reply"]
-    assert len(client.get(f"/sessions/{sid}/turns", headers=auth).json()["items"]) == 1
+    assert len(client.get(f"/sessions/{sid}/turns", headers=auth).json()["items"]) == 2
     stream = message(client, sid, auth, "Tôi muốn xem phương án", "stream", stream=True)
     assert stream.status_code == 200
     assert stream.text.index("event: metadata") < stream.text.index("event: text")

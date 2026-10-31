@@ -37,6 +37,12 @@ def auth(session):
     return {"Authorization": "Bearer " + session["session_token"]}
 
 
+def assert_opening(client, session):
+    turns = client.get(f"/sessions/{session['session_id']}/turns", headers=auth(session)).json()["items"]
+    assert len(turns) == 1 and turns[0]["text"] == "" and turns[0]["reply"]
+    assert turns[0]["responder"] == "assistant"
+
+
 def say(client, session, text, key):
     response = client.post(
         f"/sessions/{session['session_id']}/messages",
@@ -110,7 +116,7 @@ def test_telegram_to_web_preserves_guest_memory_and_new_conversations(client):
     assert new.status_code == 200
     sibling = new.json()
     assert sibling["brief"]["customer_id"] == tg["customer_id"]
-    assert client.get(f"/sessions/{sibling['session_id']}/turns", headers=auth(sibling)).json()["items"] == []
+    assert_opening(client, sibling)
     say(client, sibling, "Thu nhập chính xác 50 triệu", "new-income")
     restarted = telegram(client, 3, "/start")
     assert restarted["id"] != tg["id"]
@@ -188,17 +194,17 @@ def test_demo_mode_is_explicit_and_multiple_phone_claims_do_not_bind(client):
     assert not client.app.state.harness.db.all("SELECT * FROM demo_phone_links")
 
 
-def test_phone_entry_box_opens_empty_session_and_shared_memory(client):
+def test_phone_entry_box_opens_with_assistant_and_shared_memory(client):
     response = client.post("/demo/phone/session", json={"phone": "0901234567"})
     assert response.status_code == 200
     first = response.json()
     assert first["identity_status"] == "identified"
-    assert client.get(f"/sessions/{first['session_id']}/turns", headers=auth(first)).json()["items"] == []
+    assert_opening(client, first)
     say(client, first, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ", "need")
     second = client.post("/demo/phone/session", json={"phone": "+84 90 123 4567"}).json()
     assert second["session_id"] != first["session_id"]
     assert second["brief"]["customer_id"] == first["brief"]["customer_id"]
-    assert client.get(f"/sessions/{second['session_id']}/turns", headers=auth(second)).json()["items"] == []
+    assert_opening(client, second)
     streamed = client.post(
         f"/sessions/{second['session_id']}/messages/stream", headers=auth(second),
         json={"text": "Thu nhập chính xác 50 triệu", "client_message_id": "correct"},

@@ -711,8 +711,8 @@ export function CustomerChat() {
           {!isHome && !turns.length && !loading && !historyError && (
             <div className="conversation-empty">
               <span className="resume-icon"><MessageCircle size={26} /></span>
-              <h2>Bạn muốn trao đổi điều gì?</h2>
-              <p>Gửi câu hỏi để bắt đầu. Trợ lý đã sẵn sàng hỗ trợ bạn.</p>
+              <h2>Trợ lý Bankwise sẵn sàng hỗ trợ</h2>
+              <p>Anh/chị muốn tìm hiểu vay mua nhà, vay tiêu dùng hay thẻ tín dụng?</p>
             </div>
           )}
           {!isHome && loading && <Spinner label="Đang khôi phục hội thoại…" />}
@@ -802,7 +802,7 @@ export function CustomerChat() {
               </span>
             </div>
           )}
-          {verified && !waiting && !pending && turns.length > 0 && (
+          {verified && !waiting && !pending && turns.some((turn) => turn.role === "user") && (
             <div
               className="quick-prompts"
               aria-label="Gợi ý tiếp tục hội thoại"

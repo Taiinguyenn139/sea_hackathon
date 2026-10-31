@@ -105,7 +105,10 @@ def post(client, sid, headers, text, client_id="guard-test"):
 def assert_no_agent_writes(client):
     harness = client.app.state.harness
     for table in ("turns", "memory_jobs", "customer_sequences", "facts", "traces", "callbacks", "handoffs"):
-        assert not harness.db.all("SELECT * FROM " + table), table
+        # Session creation already wrote the assistant's opening; a blocked
+        # input must add no turn, receipt, or customer memory beyond that.
+        where = " WHERE client_id!='conversation-opening'" if table == "turns" else ""
+        assert not harness.db.all("SELECT * FROM " + table + where), table
     assert not harness.engine.cp_conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
 
 
@@ -200,7 +203,7 @@ def test_blocked_message_does_not_reserve_client_id(client):
     corrected = post(client, sid, headers, "Thu nhập 45 triệu")
     assert corrected.status_code == 200
     assert "guard_events" in corrected.json()
-    assert len(client.app.state.harness.db.all("SELECT * FROM turns")) == 1
+    assert len(client.app.state.harness.db.all("SELECT * FROM turns WHERE text!=''")) == 1
 
 
 @pytest.mark.parametrize("outcome,guard", [
@@ -362,4 +365,4 @@ def test_telegram_approved_message_runs_classifier_once(client, monkeypatch):
     dispatcher.accept(payload)
     dispatcher.replay()
     assert len(calls) == 4
-    assert len(harness.db.all("SELECT * FROM turns")) == 1
+    assert len(harness.db.all("SELECT * FROM turns WHERE text!=''")) == 1

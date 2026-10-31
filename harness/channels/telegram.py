@@ -102,6 +102,7 @@ class Dispatcher:
                 text = message.get("text", "")
                 contact = message.get("contact")
                 markup = None
+                opening_fact_ids = []
                 try:
                     customer = self.harness.telegram_customer(target, message.get("from", {}).get("first_name"))
                     session = self.db.one(
@@ -145,10 +146,11 @@ class Dispatcher:
                             created = self.harness._create_session(customer, channel="telegram", external_id=target,
                                                                    phone_authenticated=True)
                             session = self.harness.session(created["session_id"])
+                        opening, opening_fact_ids = self.harness.opening(session["id"])
                         reply = (
                             "Đã lưu số điện thoại và giữ lại thông tin anh/chị đã chia sẻ. "
-                            "Anh/chị có thể bắt đầu chat ngay: muốn tìm hiểu vay mua nhà, vay tiêu dùng hay thẻ tín dụng? "
-                            "Khi mở website, dùng cùng số điện thoại để tiếp tục ngữ cảnh này."
+                            "Khi mở website, dùng cùng số điện thoại để tiếp tục ngữ cảnh này.\n\n"
+                            + opening
                         )
                         markup = {"remove_keyboard": True}
                     elif session["status"] == "waiting_human":
@@ -182,10 +184,7 @@ class Dispatcher:
                         self.harness.handoff(session["id"], "Khách Telegram yêu cầu nhân viên thật")
                         reply = "Đã chuyển hồ sơ cho nhân viên tiếp nhận. Vui lòng chờ phản hồi."
                     elif start or command == "/phone":
-                        reply = (
-                            "Chào anh/chị! Em có thể tư vấn vay mua nhà, vay tiêu dùng và thẻ tín dụng. "
-                            "Anh/chị muốn tìm hiểu sản phẩm nào?"
-                        )
+                        reply, opening_fact_ids = self.harness.opening(session["id"])
                     else:
                         result = self.harness.message(
                             session["id"], text, row["id"], "telegram:" + target,
@@ -198,12 +197,16 @@ class Dispatcher:
                         customer = session["customer_id"]
                     if self.settings.demo_phone_identity and not late and not contact and session["status"] == "active" and (
                         start or command == "/phone" or new_session
-                    ):
+                    ) and (command == "/phone" or self.harness.identity_status(session) == "guest"):
                         reply += (
                             "\n\nBản demo: chia sẻ số điện thoại bằng nút bên dưới hoặc nhập số ngay trong chat. "
                             "Dùng cùng số trên web và Telegram để tiếp tục thông tin đã ghi nhớ, không cần mã xác nhận."
                         )
                         markup = PHONE_KEYBOARD
+                    if not late and session["status"] == "active" and (start or contact or command == "/phone"):
+                        self.harness.record_assistant_message(
+                            session["id"], "telegram-opening:" + row["id"], reply, opening_fact_ids,
+                        )
                     self.reply(row["id"], target, reply, markup)
                     self.db.set("telegram_last:" + target, max(previous, stamp))
                     self.db.execute("UPDATE provider_events SET status='processed',error=NULL WHERE id=?", (row["id"],))

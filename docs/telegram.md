@@ -14,10 +14,22 @@ Deployment GCP bật `DEMO_PHONE_IDENTITY=true`. Trên web, nhập số điện 
 - Transcript và danh sách phiên vẫn riêng. Đổi sang số khác sau khi đã kết nối
   cần mở phiên mới; hệ thống không chuyển memory của số cũ sang số mới.
 - `POST /demo/phone/session` nhận `{phone}`, mở phiên đã kết nối với transcript
-  trống. Số điện thoại không tạo một tin nhắn trong chat. Context hồ sơ dùng chung,
+  có lời mở đầu của bot. Số điện thoại không tạo một tin nhắn của khách trong chat. Context hồ sơ dùng chung,
   còn bản nháp, transcript, checkpoint và handoff độc lập theo phiên.
 - Liên kết contact/OTP cũ vẫn được nhận diện nếu số đã tồn tại. Memory đã ghi
   cho một hồ sơ khác trước khi nhập số không tự gộp vào hồ sơ vừa chọn.
+
+Bot chủ động hỏi nhu cầu ngay sau **Start** hoặc sau khi kết nối số điện thoại.
+Nếu khách đã trao đổi trước đó, lời chào nhắc các nhu cầu đang được ghi nhớ rồi
+hỏi muốn tiếp tục hay cập nhật. Khách đã kết nối được nhận diện lại khi `/start`,
+không cần gửi lại số. Thông tin mâu thuẫn cần xác nhận; không dùng báo giá cũ làm
+báo giá hiện tại. Lời mở đầu được lưu như tin của trợ lý, không tạo memory của khách;
+web tải lại hoặc Telegram gửi lại cùng update không nhân đôi lời chào.
+
+Theo [giới hạn Telegram](https://core.telegram.org/bots), bot không thể nhắn riêng
+cho người chưa từng bấm Start/gửi tin. Người dùng cần bấm **Start** lần đầu;
+sau đó không cần gõ câu hỏi để bot bắt đầu tư vấn. Hiện không gửi nhắc tự động
+theo lịch hoặc khi chỉ mở lại cửa sổ chat Telegram.
 
 Đây là cơ chế nhận diện dành cho demo. Biến cấu hình mặc định `false` ngoài
 deployment demo; khi tắt, Telegram yêu cầu chia sẻ contact và web dùng ô đăng nhập
