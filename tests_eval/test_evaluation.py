@@ -74,7 +74,7 @@ class EvaluationTests(unittest.TestCase):
             def call(self, path, data=None, token=None):
                 self.calls.append(path)
                 if path == "/admin/sessions":
-                    return {"session_id": "x", "session_token": "t"}
+                    return {"session_id": "x", "session_token": "t", "user_id": "0900000001"}
                 if path.endswith("/messages"):
                     return {"reply": "Xin chào"}
                 return {}

@@ -1,0 +1,276 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "identities": [
+    {
+      "user_id": "0900000001",
+      "phone": "0900000001",
+      "full_name": "Nguyễn Thị Hoa",
+      "date_of_birth": "1988-05-12",
+      "bank_customer_id": "cus_001",
+      "segment": "mass",
+      "runtime_profile": "hoa",
+      "channel_links": [
+        {
+          "channel": "web",
+          "external_id": "synthetic:0900000001:web"
+        },
+        {
+          "channel": "telegram",
+          "external_id": "synthetic:0900000001:telegram"
+        },
+        {
+          "channel": "zalo",
+          "external_id": "synthetic:0900000001:zalo"
+        },
+        {
+          "channel": "hotline",
+          "external_id": "synthetic:0900000001:hotline"
+        }
+      ]
+    },
+    {
+      "user_id": "0900000002",
+      "phone": "0900000002",
+      "full_name": "Trần Minh An",
+      "date_of_birth": "1992-08-20",
+      "bank_customer_id": "cus_002",
+      "segment": "priority",
+      "runtime_profile": "minh",
+      "channel_links": [
+        {
+          "channel": "web",
+          "external_id": "synthetic:0900000002:web"
+        },
+        {
+          "channel": "telegram",
+          "external_id": "synthetic:0900000002:telegram"
+        },
+        {
+          "channel": "zalo",
+          "external_id": "synthetic:0900000002:zalo"
+        },
+        {
+          "channel": "hotline",
+          "external_id": "synthetic:0900000002:hotline"
+        }
+      ]
+    },
+    {
+      "user_id": "0900000003",
+      "phone": "0900000003",
+      "full_name": "Lê Bảo Ngọc",
+      "date_of_birth": "1996-03-14",
+      "bank_customer_id": "cus_003",
+      "segment": "mass",
+      "runtime_profile": null,
+      "channel_links": [
+        {
+          "channel": "web",
+          "external_id": "synthetic:0900000003:web"
+        },
+        {
+          "channel": "telegram",
+          "external_id": "synthetic:0900000003:telegram"
+        },
+        {
+          "channel": "zalo",
+          "external_id": "synthetic:0900000003:zalo"
+        },
+        {
+          "channel": "hotline",
+          "external_id": "synthetic:0900000003:hotline"
+        }
+      ]
+    },
+    {
+      "user_id": "0900000004",
+      "phone": "0900000004",
+      "full_name": "Phạm Quốc Huy",
+      "date_of_birth": "1989-11-02",
+      "bank_customer_id": "cus_004",
+      "segment": "mass",
+      "runtime_profile": null,
+      "channel_links": [
+        {
+          "channel": "web",
+          "external_id": "synthetic:0900000004:web"
+        },
+        {
+          "channel": "telegram",
+          "external_id": "synthetic:0900000004:telegram"
+        },
+        {
+          "channel": "zalo",
+          "external_id": "synthetic:0900000004:zalo"
+        },
+        {
+          "channel": "hotline",
+          "external_id": "synthetic:0900000004:hotline"
+        }
+      ]
+    },
+    {
+      "user_id": "0900000005",
+      "phone": "0900000005",
+      "full_name": "Vũ Thu Hà",
+      "date_of_birth": "1985-07-27",
+      "bank_customer_id": "cus_005",
+      "segment": "priority",
+      "runtime_profile": null,
+      "channel_links": [
+        {
+          "channel": "web",
+          "external_id": "synthetic:0900000005:web"
+        },
+        {
+          "channel": "telegram",
+          "external_id": "synthetic:0900000005:telegram"
+        },
+        {
+          "channel": "zalo",
+          "external_id": "synthetic:0900000005:zalo"
+        },
+        {
+          "channel": "hotline",
+          "external_id": "synthetic:0900000005:hotline"
+        }
+      ]
+    },
+    {
+      "user_id": "0900000006",
+      "phone": "0900000006",
+      "full_name": "Đỗ Đức Nam",
+      "date_of_birth": "1991-01-19",
+      "bank_customer_id": "cus_006",
+      "segment": "mass",
+      "runtime_profile": null,
+      "channel_links": [
+        {
+          "channel": "web",
+          "external_id": "synthetic:0900000006:web"
+        },
+        {
+          "channel": "telegram",
+          "external_id": "synthetic:0900000006:telegram"
+        },
+        {
+          "channel": "zalo",
+          "external_id": "synthetic:0900000006:zalo"
+        },
+        {
+          "channel": "hotline",
+          "external_id": "synthetic:0900000006:hotline"
+        }
+      ]
+    },
+    {
+      "user_id": "0900000007",
+      "phone": "0900000007",
+      "full_name": "Bùi Khánh Linh",
+      "date_of_birth": "1997-12-06",
+      "bank_customer_id": "cus_007",
+      "segment": "mass",
+      "runtime_profile": null,
+      "channel_links": [
+        {
+          "channel": "web",
+          "external_id": "synthetic:0900000007:web"
+        },
+        {
+          "channel": "telegram",
+          "external_id": "synthetic:0900000007:telegram"
+        },
+        {
+          "channel": "zalo",
+          "external_id": "synthetic:0900000007:zalo"
+        },
+        {
+          "channel": "hotline",
+          "external_id": "synthetic:0900000007:hotline"
+        }
+      ]
+    },
+    {
+      "user_id": "0900000008",
+      "phone": "0900000008",
+      "full_name": "Hoàng Gia Bảo",
+      "date_of_birth": "1983-09-09",
+      "bank_customer_id": "cus_008",
+      "segment": "priority",
+      "runtime_profile": null,
+      "channel_links": [
+        {
+          "channel": "web",
+          "external_id": "synthetic:0900000008:web"
+        },
+        {
+          "channel": "telegram",
+          "external_id": "synthetic:0900000008:telegram"
+        },
+        {
+          "channel": "zalo",
+          "external_id": "synthetic:0900000008:zalo"
+        },
+        {
+          "channel": "hotline",
+          "external_id": "synthetic:0900000008:hotline"
+        }
+      ]
+    },
+    {
+      "user_id": "0900000009",
+      "phone": "0900000009",
+      "full_name": "Đặng Mỹ Anh",
+      "date_of_birth": "1994-04-23",
+      "bank_customer_id": "cus_009",
+      "segment": "mass",
+      "runtime_profile": null,
+      "channel_links": [
+        {
+          "channel": "web",
+          "external_id": "synthetic:0900000009:web"
+        },
+        {
+          "channel": "telegram",
+          "external_id": "synthetic:0900000009:telegram"
+        },
+        {
+          "channel": "zalo",
+          "external_id": "synthetic:0900000009:zalo"
+        },
+        {
+          "channel": "hotline",
+          "external_id": "synthetic:0900000009:hotline"
+        }
+      ]
+    },
+    {
+      "user_id": "0900000010",
+      "phone": "0900000010",
+      "full_name": "Ngô Tuấn Kiệt",
+      "date_of_birth": "1999-06-30",
+      "bank_customer_id": "cus_010",
+      "segment": "mass",
+      "runtime_profile": null,
+      "channel_links": [
+        {
+          "channel": "web",
+          "external_id": "synthetic:0900000010:web"
+        },
+        {
+          "channel": "telegram",
+          "external_id": "synthetic:0900000010:telegram"
+        },
+        {
+          "channel": "zalo",
+          "external_id": "synthetic:0900000010:zalo"
+        },
+        {
+          "channel": "hotline",
+          "external_id": "synthetic:0900000010:hotline"
+        }
+      ]
+    }
+  ]
+}

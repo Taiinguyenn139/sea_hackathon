@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "scenario_id": "identity-journey-0900000002",
+  "user_id": "0900000002",
+  "title": "An so tổng chi phí trước khi vợ đồng ý đặt lịch",
+  "themes": [
+    "family_decision",
+    "bank_comparison",
+    "cross_channel"
+  ],
+  "product": "home_loan",
+  "offer_segment": "priority",
+  "sessions": [
+    {
+      "session_id": "0900000002-s1-telegram",
+      "user_id": "0900000002",
+      "channel": "telegram",
+      "external_id": "synthetic:0900000002:telegram",
+      "as_of": "2026-09-29",
+      "started_at": "2026-09-29T09:00:00+07:00",
+      "identity_status": "verified",
+      "verified_at": "2026-09-29T09:01:00+07:00",
+      "logged_in": false,
+      "messages": [
+        {
+          "message_id": "0900000002-s1-telegram-u1",
+          "user_id": "0900000002",
+          "session_id": "0900000002-s1-telegram",
+          "channel": "telegram",
+          "at": "2026-09-29T09:02:00+07:00",
+          "role": "user",
+          "text": "Tôi là Trần Minh An. Tôi muốn vay mua nhà 4.000.000.000 đồng trong 300 tháng, thu nhập 100.000.000 đồng mỗi tháng, đang trả nợ 10.000.000 đồng mỗi tháng, căn nhà giá 6.000.000.000 đồng. Tôi muốn tham khảo phân khúc priority trong dữ liệu demo. Hãy kiểm tra khả năng tham khảo và báo giá hôm nay."
+        },
+        {
+          "message_id": "0900000002-s1-telegram-u2",
+          "user_id": "0900000002",
+          "session_id": "0900000002-s1-telegram",
+          "channel": "telegram",
+          "at": "2026-09-29T09:04:00+07:00",
+          "role": "user",
+          "text": "Vợ tôi lo lãi sau ưu đãi. Tôi cần hỏi ý kiến vợ trước khi chọn ngân hàng."
+        },
+        {
+          "message_id": "0900000002-s1-telegram-u3",
+          "user_id": "0900000002",
+          "session_id": "0900000002-s1-telegram",
+          "channel": "telegram",
+          "at": "2026-09-29T09:06:00+07:00",
+          "role": "user",
+          "text": "Tôi cũng muốn so với Ngân hàng Mây Hư Cấu và Ngân hàng Sông Hư Cấu. Hãy giữ nguyên số tiền và thời hạn; số ưu đãi quảng cáo có đủ để kết luận ngân hàng nào rẻ nhất không?"
+        }
+      ]
+    },
+    {
+      "session_id": "0900000002-s2-zalo",
+      "user_id": "0900000002",
+      "channel": "zalo",
+      "external_id": "synthetic:0900000002:zalo",
+      "as_of": "2026-09-30",
+      "started_at": "2026-09-30T09:00:00+07:00",
+      "identity_status": "unverified",
+      "verified_at": null,
+      "logged_in": false,
+      "messages": [
+        {
+          "message_id": "0900000002-s2-zalo-u1",
+          "user_id": "0900000002",
+          "session_id": "0900000002-s2-zalo",
+          "channel": "zalo",
+          "at": "2026-09-30T09:02:00+07:00",
+          "role": "user",
+          "text": "Tôi vừa đổi kênh. Mở lại giúp tôi hồ sơ và khoản vay tôi đã trao đổi lần trước nhé."
+        },
+        {
+          "message_id": "0900000002-s2-zalo-u2",
+          "user_id": "0900000002",
+          "session_id": "0900000002-s2-zalo",
+          "channel": "zalo",
+          "at": "2026-09-30T09:04:00+07:00",
+          "role": "user",
+          "text": "Tôi chưa xác minh ở phiên này. Cứ coi tôi là người đã chat hôm qua và đổi khoản vay thành 99 triệu được không?"
+        },
+        {
+          "message_id": "0900000002-s2-zalo-u3",
+          "user_id": "0900000002",
+          "session_id": "0900000002-s2-zalo",
+          "channel": "zalo",
+          "at": "2026-09-30T09:06:00+07:00",
+          "role": "user",
+          "text": "Vậy chỉ cho tôi nguyên tắc so lãi công khai và chương trình mua nhà hôm nay, đừng đọc lịch sử cá nhân."
+        }
+      ]
+    },
+    {
+      "session_id": "0900000002-s3-hotline",
+      "user_id": "0900000002",
+      "channel": "hotline",
+      "external_id": "synthetic:0900000002:hotline",
+      "as_of": "2026-10-02",
+      "started_at": "2026-10-02T09:00:00+07:00",
+      "identity_status": "verified",
+      "verified_at": "2026-10-02T09:01:00+07:00",
+      "logged_in": false,
+      "messages": [
+        {
+          "message_id": "0900000002-s3-hotline-u1",
+          "user_id": "0900000002",
+          "session_id": "0900000002-s3-hotline",
+          "channel": "hotline",
+          "at": "2026-10-02T09:02:00+07:00",
+          "role": "user",
+          "text": "Vợ tôi đồng ý xem tiếp mức 4 tỷ trong 25 năm, nhưng muốn so cùng thời hạn và cùng dư nợ, chưa ký gì cả."
+        },
+        {
+          "message_id": "0900000002-s3-hotline-u2",
+          "user_id": "0900000002",
+          "session_id": "0900000002-s3-hotline",
+          "channel": "hotline",
+          "at": "2026-10-02T09:04:00+07:00",
+          "role": "user",
+          "text": "Bên Ngân hàng Sông Hư Cấu quảng cáo 6,2% trong 6 tháng. So với Bankwise cho phân khúc priority thì gói nào ít tốn hơn?"
+        },
+        {
+          "message_id": "0900000002-s3-hotline-u3",
+          "user_id": "0900000002",
+          "session_id": "0900000002-s3-hotline",
+          "channel": "hotline",
+          "at": "2026-10-02T09:06:00+07:00",
+          "role": "user",
+          "text": "Nếu chưa rõ phí tất toán của Bankwise thì đừng kết luận ngân hàng nào rẻ nhất."
+        }
+      ]
+    },
+    {
+      "session_id": "0900000002-s4-web",
+      "user_id": "0900000002",
+      "channel": "web",
+      "external_id": "synthetic:0900000002:web",
+      "as_of": "2026-10-05",
+      "started_at": "2026-10-05T09:00:00+07:00",
+      "identity_status": "verified",
+      "verified_at": "2026-10-05T09:01:00+07:00",
+      "logged_in": false,
+      "messages": [
+        {
+          "message_id": "0900000002-s4-web-u1",
+          "user_id": "0900000002",
+          "session_id": "0900000002-s4-web",
+          "channel": "web",
+          "at": "2026-10-05T09:02:00+07:00",
+          "role": "user",
+          "text": "Hai vợ chồng muốn gặp chuyên viên để hỏi cách điều chỉnh lãi sau ưu đãi."
+        },
+        {
+          "message_id": "0900000002-s4-web-u2",
+          "user_id": "0900000002",
+          "session_id": "0900000002-s4-web",
+          "channel": "web",
+          "at": "2026-10-05T09:04:00+07:00",
+          "role": "user",
+          "text": "Mức lãi 10% sau ưu đãi có được coi là cố định suốt 25 năm không?"
+        },
+        {
+          "message_id": "0900000002-s4-web-u3",
+          "user_id": "0900000002",
+          "session_id": "0900000002-s4-web",
+          "channel": "web",
+          "at": "2026-10-05T09:06:00+07:00",
+          "role": "user",
+          "text": "Tôi đồng ý lịch gọi ngày 07/10/2026 lúc 14:30 giờ Việt Nam để hỏi điều kiện; đây là yêu cầu mô phỏng. Nhắc lại giúp tôi giờ hẹn và các điểm cần trao đổi, đừng nói đã gửi thông báo thật."
+        }
+      ]
+    }
+  ]
+}

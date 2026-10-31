@@ -19,6 +19,10 @@
     [
       "VND",
       3000000000
+    ],
+    [
+      "VND",
+      0
     ]
   ],
   "sessions": [
@@ -28,12 +32,13 @@
       "verify": true,
       "steps": [
         {
-          "text": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 5 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng.",
+          "text": "Tôi muốn vay mua nhà 2 tỷ đồng trong 20 năm, thu nhập 5 triệu đồng mỗi tháng, giá trị nhà 3 tỷ đồng. Không có nợ.",
           "reveals": [
             "amount",
             "term",
             "income",
-            "property_value"
+            "property_value",
+            "debt"
           ],
           "expect": {
             "no_bank_numbers": true

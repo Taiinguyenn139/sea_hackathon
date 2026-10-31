@@ -75,15 +75,17 @@ export function errorMessage(error: unknown): string {
 }
 export type Profile = {
   id?: string;
+  phone?: string;
+  runtime_profile?: string | null;
   key?: string;
   demo_profile?: string;
   name?: string;
   full_name?: string;
-  dob: string;
   label?: string;
 };
 export type ChatSession = {
   session_id: string;
+  user_id?: string;
   session_token: string;
   identity_status: string;
   brief?: Record<string, unknown>;
@@ -100,6 +102,8 @@ export type Turn = {
 };
 export type Reply = {
   reply: string;
+  identity_status?: string;
+  user_id?: string;
   brief?: Record<string, unknown>;
   used_fact_ids: string[];
   guard_events: unknown[];

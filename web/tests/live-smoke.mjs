@@ -1,11 +1,11 @@
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 const root = resolve(import.meta.dirname, "../..");
-const temp = await mkdtemp(join(tmpdir(), "mach-ui-integration-"));
+const temp = await mkdtemp(join(tmpdir(), "bankwise-ui-integration-"));
 const password = randomBytes(24).toString("hex");
 const port = process.env.LIVE_TEST_PORT ?? "8007";
 const base = `http://127.0.0.1:${port}`;
@@ -60,27 +60,40 @@ try {
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(`${base}/chat`);
   await page.getByRole("button", { name: "Bắt đầu", exact: true }).click();
-  await page.locator("#dob").fill("1988-05-12");
-  await page.getByRole("button", { name: "Xác minh", exact: true }).click();
+  await expect(page.locator('input[type="date"], #dob')).toHaveCount(0);
+  await page
+    .getByRole("textbox", { name: "Tin nhắn cho trợ lý" })
+    .fill("0900000001");
+  const identityReply = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/messages") &&
+      response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
+  expect((await (await identityReply).json()).identity_status).toBe("verified");
+  await expect(
+    page.getByRole("button", { name: "Gặp chuyên viên", exact: true }),
+  ).toBeEnabled();
   await page
     .getByRole("textbox", { name: "Tin nhắn cho trợ lý" })
     .fill(
       "Tôi muốn vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, nợ 0, giá nhà 3 tỷ.",
     );
   await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
-  await page.locator(".from-assistant").first().waitFor();
+  await expect(page.locator(".from-assistant")).toHaveCount(2);
+  await expect(page.locator(".from-assistant").last()).toContainText("7,1%");
   await page.screenshot({
     path: join(output, "chat-verified.png"),
     fullPage: true,
   });
   await page.reload();
-  await page.locator(".from-assistant").first().waitFor();
+  await expect(page.locator(".from-assistant")).toHaveCount(2);
   await page
     .getByRole("textbox", { name: "Tin nhắn cho trợ lý" })
-    .fill("Hẹn gọi lại cho tôi vào ngày mai.");
+    .fill("Hẹn gọi lại cho tôi vào ngày mai lúc 09:00.");
   await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
   await page.waitForFunction(
-    () => document.querySelectorAll(".from-assistant").length === 2,
+    () => document.querySelectorAll(".from-assistant").length === 3,
   );
   await page
     .getByRole("button", { name: "Gặp chuyên viên", exact: true })
@@ -134,7 +147,7 @@ try {
   );
   if (errors.length) throw new Error(`Runtime errors: ${errors.join("; ")}`);
   console.log(
-    "PASS live backend/browser: bootstrap, verify, sourced reply, reload transcript, handoff, staff login, trace dialog, completion, callback complete, benchmark empty, customer resume.",
+    "PASS live backend/browser: bootstrap, phone claim in chat, sourced reply, reload transcript, handoff, staff login, trace dialog, completion, callback complete, benchmark empty, customer resume.",
   );
 } catch (error) {
   console.error(error);

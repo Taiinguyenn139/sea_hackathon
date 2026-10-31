@@ -7,8 +7,9 @@ import time
 
 from fastapi import HTTPException
 
-from bank_tools.service import FIXTURES, canonical, ident, now
+from bank_tools.service import canonical, ident, now
 from harness.agent.engine import Engine, event
+from harness.identity import extract_phone_claims, get_profile
 from harness.phone_identity import PhoneIdentity
 
 
@@ -60,13 +61,23 @@ class Harness:
         return "unverified"
 
     def new_session(self, profile, mode="harness", channel="web", external_id=None):
+        identity = get_profile(profile)
+        if identity:
+            profile = identity["id"]
         guest = channel == "telegram" and self.db.one(
             "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
             (profile, channel, external_id),
         ) is not None
-        if profile not in {p["id"] for p in FIXTURES["customers"]} and not guest:
+        if not identity and not guest:
             raise HTTPException(400, "Unknown demo profile")
         return self._create_session(profile, mode, channel, external_id)
+
+    def user_id(self, customer):
+        profile = get_profile(customer)
+        if profile:
+            return profile["user_id"]
+        linked = self.db.one("SELECT phone_e164 FROM customer_profiles WHERE id=?", (customer,))
+        return linked["phone_e164"] if linked else None
 
     def phone_session(self, challenge, code):
         customer = self.phone_identity.confirm(challenge, code)
@@ -86,6 +97,7 @@ class Harness:
         return {
             "session_id": sid,
             "session_token": token,
+            "user_id": self.user_id(profile) if phone_authenticated or get_profile(profile) else None,
             "identity_status": self.identity_status(self.session(sid)),
             "brief": self.engine.memory.brief(profile) if phone_authenticated else {"redacted": True},
         }
@@ -96,33 +108,118 @@ class Harness:
             raise HTTPException(404, "Session not found")
         return session
 
-    def verify(self, session, dob, source):
+    def verify(self, session, phone, source):
+        # Refresh server state: a claim can never select or replace the bound
+        # customer, nor reopen an ended session.
+        session = self.session(session["id"])
         if session["status"] == "ended":
             raise HTTPException(409, "Session ended")
-        current = time.time()
         identity = session["customer_id"]
-        # Customer-scoped cap prevents parallel-session bypass; IP cap protects the verifier itself.
+        if session["verified"]:
+            return {
+                "identity_status": "verified",
+                "user_id": self.user_id(identity),
+                "brief": self.engine.memory.brief(identity),
+            }
+        current = time.time()
+        # The canonical runtime key makes aliases and phone formats share one
+        # customer-scoped limit, independently of the source/IP cap.
         with self.db.transaction() as c:
             n = c.execute(
                 "SELECT count(*) FROM auth_attempts WHERE at>? AND (identity=? OR source=?)",
                 (current - 900, identity, source),
             ).fetchone()[0]
             if n >= 5:
-                raise HTTPException(429, "Vui lòng thử xác minh lại sau ít phút.")
+                raise HTTPException(429, "Vui lòng thử nhận diện lại sau ít phút.")
             c.execute("INSERT INTO auth_attempts VALUES(?,?,?)", (identity, source, current))
-        result = self.engine.bank.call("verify_identity", {"dob": dob}, identity, session["id"])
+        result = self.engine.bank.call(
+            "verify_identity", {"phone": phone, "as_of": self.db.setting("clock")}, identity, session["id"]
+        )
         if not result["data"].get("verified"):
             return {
                 "identity_status": "unverified",
+                "user_id": None,
                 "brief": {"redacted": True},
-                "message": "Chưa thể xác minh thông tin.",
+                "message": "Chưa thể nhận diện hồ sơ demo trong phiên này. Vui lòng kiểm tra số điện thoại.",
+                "tool_call_id": result["tool_call_id"],
             }
         with self.db.transaction() as c:
             c.execute("DELETE FROM auth_attempts WHERE identity=? AND source=? AND at=?", (identity, source, current))
             c.execute("UPDATE sessions SET verified=1 WHERE id=?", (session["id"],))
-        return {"identity_status": "verified", "brief": self.engine.memory.brief(identity)}
+        return {
+            "identity_status": "verified",
+            "user_id": self.user_id(identity),
+            "brief": self.engine.memory.brief(identity),
+            "tool_call_id": result["tool_call_id"],
+        }
 
-    def message(self, sid, text, client_id):
+    def _phone_message(self, session, text, client_id, existing, phones, source):
+        """Handle fixture claims before the text reaches extraction or an LLM."""
+        tool_calls = []
+        if session["verified"]:
+            reply = "Phiên này đã nhận diện hồ sơ demo. Số điện thoại trong tin nhắn không thay đổi hồ sơ đang gắn."
+            state = "verified"
+        elif len(phones) != 1:
+            reply = "Anh/chị vui lòng gửi một số điện thoại duy nhất để nhận diện hồ sơ demo của phiên này."
+            state = self.identity_status(session)
+        elif not get_profile(session["customer_id"]):
+            # A guest's typed phone is not the channel-ownership proof used by
+            # PhoneIdentity.bind or the OTP flow; preserve that separate path.
+            reply = (
+                "Tin nhắn số điện thoại không tự liên kết hay chuyển hồ sơ. "
+                "Để tiếp tục hồ sơ trên website, hãy dùng nút chia sẻ số của chính anh/chị trên Telegram và mã xác nhận."
+            )
+            state = self.identity_status(session)
+        else:
+            result = self.verify(session, phones[0], source)
+            state = result["identity_status"]
+            reply = (
+                "Đã nhận diện hồ sơ demo. Anh/chị có thể tiếp tục nhu cầu đã trao đổi; đây chưa phải đăng nhập khách hàng."
+                if state == "verified" else result["message"]
+            )
+            if result.get("tool_call_id"):
+                call = self.db.one("SELECT result FROM tool_calls WHERE id=?", (result["tool_call_id"],))
+                if call:
+                    tool_calls.append(json.loads(call["result"]))
+        turn = existing["id"] if existing else ident("t_", [session["id"], client_id])
+        response = {
+            "session_id": session["id"],
+            "reply": reply,
+            "identity_status": state,
+            "user_id": self.user_id(session["customer_id"]) if state in ("verified", "identified") else None,
+            "used_fact_ids": [],
+            "guard_events": [event("G7", "demo_phone_identified" if state == "verified" else "identity_unverified", "identify")],
+            "handoff_id": None,
+        }
+        if state == "verified":
+            # Return the same bound profile as the direct verification endpoint,
+            # and persist its snapshot so message retries return one receipt.
+            response["brief"] = self.engine.memory.brief(session["customer_id"])
+        trace = {
+            "turn_id": turn,
+            "context_parts": [],
+            "facts": [],
+            "source_spans": [],
+            "guard_events": response["guard_events"],
+            "tool_calls": tool_calls,
+            "plan": {"stage": "identity", "action": "phone_claim"},
+            "business_as_of": self.db.setting("clock"),
+            "backend": self.settings.llm_backend,
+        }
+        # Persist the receipt before returning; retries with the same message ID
+        # reuse it and do not consume another verification attempt.
+        with self.db.transaction() as c:
+            if not existing:
+                c.execute(
+                    "INSERT INTO turns VALUES(?,?,?,?,?,?,?)",
+                    (turn, session["id"], client_id, text, reply, canonical(response), now()),
+                )
+            else:
+                c.execute("UPDATE turns SET reply=?,result=? WHERE id=?", (reply, canonical(response), turn))
+            c.execute("INSERT OR REPLACE INTO traces VALUES(?,?,?)", (turn, session["id"], canonical(trace)))
+        return response
+
+    def message(self, sid, text, client_id, source="web"):
         session = self.session(sid)
         with self.engine.lock(session["customer_id"]):
             session = self.session(sid)
@@ -133,24 +230,22 @@ class Harness:
                 return json.loads(existing["result"])
             if session["status"] != "active":
                 raise HTTPException(409, "Session is waiting for staff or ended")
-            if not self.can_chat(session):
-                return {
-                    "session_id": sid,
-                    "reply": "Để tiếp tục, anh/chị vui lòng xác minh ngày sinh trong bước xác minh.",
-                    "used_fact_ids": [],
-                    "guard_events": [event("G7", "identity_unverified", "verify")],
-                    "handoff_id": None,
-                }
+            phones = extract_phone_claims(text)
+            if phones:
+                return self._phone_message(session, text, client_id, existing, phones, source)
             turn = existing["id"] if existing else ident("t_", [sid, client_id])
             if not existing:
                 with self.db.transaction() as c:
                     c.execute(
                         "INSERT INTO turns VALUES(?,?,?,?,?,?,?)", (turn, sid, client_id, text, None, None, now())
                     )
-                    self.engine.memory.enqueue(c, turn, session["customer_id"], sid, session["channel"], text)
+                    if self.can_chat(session):
+                        self.engine.memory.enqueue(c, turn, session["customer_id"], sid, session["channel"], text)
             state = self.engine.run(session, text, turn)
             response = {
                 "session_id": sid,
+                "identity_status": self.identity_status(session),
+                "user_id": self.user_id(session["customer_id"]) if self.can_chat(session) else None,
                 "reply": state.get("reply", "Em đã tiếp nhận yêu cầu."),
                 "used_fact_ids": state.get("used_fact_ids", []),
                 "guard_events": state.get("guard_events", []),

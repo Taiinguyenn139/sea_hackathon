@@ -64,9 +64,10 @@ def main():
             (gate / "ready").touch()
             session = request("/sessions", {"mode": "harness", "demo_profile": "hoa"})
             sid, token = session["session_id"], session["session_token"]
-            request(f"/sessions/{sid}/verify", {"dob": "1988-05-12"}, token)
-            reply = request(f"/sessions/{sid}/messages", {"text": "Tôi muốn vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu", "client_message_id": "smoke-1"}, token)
-            assert "2 tỷ" in reply["reply"] and reply["used_fact_ids"]
+            verified = request(f"/sessions/{sid}/verify", {"phone": session["user_id"]}, token)
+            assert verified["identity_status"] == "verified"
+            reply = request(f"/sessions/{sid}/messages", {"text": "Tôi muốn vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ", "client_message_id": "smoke-1"}, token)
+            assert "2 tỷ" in reply["reply"] and "7,1" in reply["reply"] and reply["used_fact_ids"]
 
             def telegram(update_id, text=None, contact=None):
                 message = {"date": int(time.time()), "chat": {"id": 424242, "type": "private"},
@@ -101,7 +102,7 @@ income = c.execute("SELECT value FROM facts WHERE customer_id=? AND key='income'
 print(json.dumps({'customer': customer, 'reply': reply, 'income': income}))
 """))
 
-            telegram(100, "Tôi cần thẻ tín dụng, thu nhập 40 triệu")
+            telegram(100, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
             guest = guest_state()
             assert guest["customer"].startswith("guest_") and "100 triệu" in guest["reply"]
             docker("restart", name)

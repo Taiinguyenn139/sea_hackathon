@@ -7,6 +7,10 @@
     [
       "VND",
       30000000
+    ],
+    [
+      "VND",
+      0
     ]
   ],
   "sessions": [
@@ -16,9 +20,10 @@
       "verify": true,
       "steps": [
         {
-          "text": "Tôi muốn mở thẻ tín dụng, thu nhập 30 triệu đồng mỗi tháng.",
+          "text": "Tôi muốn mở thẻ tín dụng, thu nhập 30 triệu đồng mỗi tháng. Không có nợ.",
           "reveals": [
-            "income"
+            "income",
+            "debt"
           ],
           "expect": {
             "offer": true,
@@ -39,5 +44,6 @@
         }
       ]
     }
-  ]
+  ],
+  "card_income": 30000000
 }

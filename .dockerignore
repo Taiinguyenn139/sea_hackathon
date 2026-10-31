@@ -5,6 +5,8 @@
 !harness/**
 !bank_tools/
 !bank_tools/**
+!simulators/
+!simulators/**
 !eval/
 !eval/results/
 !eval/results/*.json
