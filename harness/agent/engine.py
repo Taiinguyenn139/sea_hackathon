@@ -96,7 +96,7 @@ def conversation_intent(text):
     listing = any(word in low for word in ["những", "các", "nào", "danh sách", "giới thiệu", "có gì"])
     if (catalog and listing) or re.search(r"\bvay (?:gì|nào)\b", low):
         # A question naming a specific product should retain its detailed advice flow.
-        specific = any(word in low for word in ["mua nhà", "tiêu dùng", "thẻ tín dụng"])
+        specific = any(word in low for word in ["mua nhà", "tiêu dùng", "thẻ tín dụng", "bảo hiểm"])
         if not specific:
             return "loan_catalog" if "vay" in low else "product_catalog"
     return "advice"
@@ -105,9 +105,9 @@ def conversation_intent(text):
 def has_approval_guarantee(draft):
     value = normalized(draft)
     patterns = (
-        r"\b(?:chac chan|cam ket|bao dam|dam bao)\b(?=[^.!?;]{0,60}\b(?:duyet|giai ngan|cho vay)\b)",
+        r"\b(?:chac chan|cam ket|bao dam|dam bao)\b(?=[^.!?;]{0,60}\b(?:duyet|giai ngan|cho vay|chi tra|boi thuong)\b)",
         (r"\b(?:guarantee(?:d|s)?|definitely|certainly)\b(?=[^.!?;]{0,60}"
-         r"\b(?:approved|approval|disbursed|funded)\b)"),
+         r"\b(?:approved|approval|disbursed|funded|payout|covered)\b)"),
     )
     for pattern in patterns:
         for match in re.finditer(pattern, value):
@@ -162,7 +162,8 @@ def format_fact(f):
 
     v = str(f["value"])
     if f.get("key") == "product":
-        return {"home_loan": "vay mua nhà", "personal_loan": "vay tiêu dùng", "credit_card": "thẻ tín dụng"}.get(v, v)
+        return {"home_loan": "vay mua nhà", "personal_loan": "vay tiêu dùng", "credit_card": "thẻ tín dụng",
+                "health_insurance": "bảo hiểm sức khỏe cá nhân"}.get(v, v)
     u = f.get("unit", "")
     if u in ("đồng", "VND"):
         d = Decimal(v)
@@ -449,6 +450,8 @@ class Engine:
         if handoff or any(x in low for x in ["gọi lại", "hẹn", "liên hệ lại", "gửi tóm tắt", "gửi tổng kết"]):
             intent = "advice"
         slots = ["income", "debt"] if product == "credit_card" else ["amount", "term", "income", "debt"]
+        if product == "health_insurance":
+            slots = []  # Public package information, not personalized underwriting.
         if product == "home_loan":
             slots.append("property_value")
         missing = [k for k in slots if k not in known]
@@ -481,7 +484,8 @@ class Engine:
         return result
 
     def select_cards(self, s):
-        if s["plan"].get("intent") in ("profile_name", "needs_recall"):
+        if (s["plan"].get("intent") in ("profile_name", "needs_recall")
+                or s["plan"].get("product") == "health_insurance"):
             return {"cards": []}
         from harness.sales import book as load_book
 
@@ -549,7 +553,12 @@ class Engine:
                     if not receipt["error"]:
                         notes.append("Đã tạo lịch gọi lại mô phỏng theo thời gian anh/chị yêu cầu.")
         quote = p.get("intent", "advice") == "advice" and not p["missing"] and not s.get("confirmations")
-        if quote or p["public_info"]:
+        if product == "health_insurance" and quote:
+            call("get_insurance_offer", {})
+            if not error:
+                ds = call("get_disclosures", {"product": product, "topics": ["fee", "coverage", "exclusions"]})
+                disclosures = [item["text"] for item in ds["data"].get("disclosures", [])]
+        elif product != "health_insurance" and (quote or p["public_info"]):
             if quote:
                 args = {
                     key: int(known[key])
@@ -683,7 +692,8 @@ class Engine:
         intent = s["plan"].get("intent", "advice")
         if intent == "greeting":
             return (
-                "Chào anh/chị! Em là trợ lý ngân hàng, có thể tư vấn vay mua nhà, vay tiêu dùng và thẻ tín dụng. "
+                "Chào anh/chị! Em là trợ lý ngân hàng, có thể tư vấn vay mua nhà, vay tiêu dùng, "
+                "thẻ tín dụng và bảo hiểm sức khỏe cá nhân. "
                 "Anh/chị muốn tìm hiểu sản phẩm nào?"
             )
         if intent == "loan_catalog":
@@ -693,7 +703,7 @@ class Engine:
             )
         if intent == "product_catalog":
             return (
-                "Em có thể tư vấn vay mua nhà, vay tiêu dùng và thẻ tín dụng. "
+                "Em có thể tư vấn vay mua nhà, vay tiêu dùng, thẻ tín dụng và bảo hiểm sức khỏe cá nhân. "
                 "Anh/chị đang quan tâm sản phẩm nào?"
             )
         if intent == "acknowledgement":
@@ -731,6 +741,13 @@ class Engine:
             if ph("promo_fee_waiver"):
                 return f"Ưu đãi công khai: miễn {ph('promo_fee_waiver')} phí trong {ph('promo_months')}."
             return "Hiện không có ưu đãi phù hợp trên kênh này. Anh/chị có thể bổ sung nhu cầu để em tư vấn."
+        if s["plan"]["product"] == "health_insurance":
+            return (
+                f"Gói bảo hiểm sức khỏe cá nhân minh họa có phí năm {ph('annual_premium')}, "
+                f"hạn mức quyền lợi năm {ph('coverage_limit')}, thời hạn {ph('policy_months')}. "
+                f"Thời gian chờ {ph('waiting_days')}; độ tuổi tham khảo từ {ph('min_age')} đến {ph('max_age')}. "
+                "Anh/chị muốn tìm hiểu thêm quyền lợi, loại trừ hay trao đổi với chuyên viên?"
+            )
         if s["plan"]["product"] == "credit_card":
             reply = f"Hạn mức thẻ tham khảo từ {ph('card_limit_min')} đến {ph('card_limit_max')}. Phí thường niên {ph('annual_fee')}."
         else:

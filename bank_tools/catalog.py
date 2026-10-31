@@ -9,8 +9,9 @@ def _field(kind, description, **constraints):
     return {"type": kind, "description": description, **constraints}
 
 
-PRODUCT = _field("string", "Mã sản phẩm", enum=["home_loan", "personal_loan", "credit_card"])
+PRODUCT = _field("string", "Mã sản phẩm", enum=["home_loan", "personal_loan", "credit_card", "health_insurance"])
 LOAN = {**PRODUCT, "enum": ["home_loan", "personal_loan"]}
+CREDIT = {**PRODUCT, "enum": ["home_loan", "personal_loan", "credit_card"]}
 SEGMENT = _field(
     "string",
     "Phân khúc dùng để tính thử theo bảng giá công khai; không chứng minh khách thuộc phân khúc đó",
@@ -74,6 +75,12 @@ _DEFINITIONS = [
         ["income", "segment"],
     ),
     _tool(
+        "get_insurance_offer",
+        "Tra gói bảo hiểm sức khỏe cá nhân demo còn hiệu lực: phí năm, hạn mức, thời hạn, thời gian chờ và độ tuổi. Không phải quyết định chấp nhận bảo hiểm hoặc bồi thường.",
+        {},
+        [],
+    ),
+    _tool(
         "calc_installment",
         "Tính trả góp đều, tối đa hai giai đoạn. Phải dùng fact lãi suất đã lấy trong cùng instance; nếu đổi lãi sau ưu đãi cần cả after_rate_fact_id. Không áp dụng cho thẻ.",
         {
@@ -93,7 +100,7 @@ _DEFINITIONS = [
         "check_suitability",
         "Sàng lọc minh họa theo thu nhập, tỷ lệ trả nợ tháng DTI và tỷ lệ vay/giá trị nhà LTV. Không phải phê duyệt. Vay cần amount+term; vay nhà cần property_value.",
         {
-            "product": PRODUCT,
+            "product": CREDIT,
             "income": MONEY,
             "debt": MONEY,
             "amount": AMOUNT,
@@ -111,7 +118,7 @@ _DEFINITIONS = [
                 "array",
                 "Ít nhất một chủ đề",
                 minItems=1,
-                items={"type": "string", "enum": ["rate", "installment", "fee", "promo"]},
+                items={"type": "string", "enum": ["rate", "installment", "fee", "promo", "coverage", "exclusions"]},
             ),
         },
         ["product", "topics"],
@@ -139,5 +146,5 @@ TOOL_NAMES = frozenset(tool["name"] for tool in _DEFINITIONS)
 
 
 def get_tool_definitions(*, context=None):
-    """Ẩn tool chưa đủ quyền: khách ẩn danh 6, đã verify 8, đã login 9."""
+    """Ẩn tool chưa đủ quyền: khách ẩn danh 7, đã verify 9, đã login 10."""
     return deepcopy([tool for tool in _DEFINITIONS if can_use(tool["name"], context)])

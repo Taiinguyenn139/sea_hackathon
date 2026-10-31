@@ -1,4 +1,10 @@
 disclosures:
+  health_insurance:
+    valid_from: '2026-01-01'
+    valid_until: '2026-12-31'
+    fee: Phí năm là số liệu minh họa của gói demo; phí thực tế và việc chấp nhận bảo hiểm cần được thẩm định, xác nhận trong hợp đồng.
+    coverage: Quyền lợi minh họa gồm điều trị nội trú do bệnh hoặc tai nạn, trong hạn mức năm và theo điều kiện hợp đồng. Không cam kết chấp nhận bảo hiểm hoặc bồi thường.
+    exclusions: Gói demo không gồm ngoại trú, nha khoa và thai sản; bệnh có sẵn và sự kiện xảy ra trong thời gian chờ thuộc loại trừ minh họa. Chuyên viên cần xác nhận điều khoản trước khi đăng ký.
   home_loan:
     valid_from: '2026-01-01'
     valid_until: '2026-12-31'

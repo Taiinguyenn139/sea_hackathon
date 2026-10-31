@@ -11,6 +11,7 @@ không mô tả chính sách hay báo giá của một ngân hàng đang hoạt 
 | `rates.yaml` | `get_rate`; nguồn lãi chuẩn cho `calc_installment` |
 | `promotions.yaml` | `get_active_promotions`; nguồn lãi ưu đãi cho `calc_installment` |
 | `card_products.yaml` | `get_card_offer` |
+| `insurance_products.yaml` | `get_insurance_offer` |
 | `suitability_rules.yaml` | `check_suitability` |
 | `disclosures.yaml` | `get_disclosures` |
 | `demo_scenarios.yaml` | Các ca hội thoại demo; không tự nạp vào BankTools |
@@ -21,9 +22,9 @@ bảng dữ liệu đầu vào riêng ngoài khách hàng và fact liên quan.
 
 ## Ngày gọi và hạn hiệu lực
 
-Cả 9 tool bắt buộc nhận `as_of="YYYY-MM-DD"`. Lãi suất, ưu đãi, gói thẻ,
+Cả 10 tool bắt buộc nhận `as_of="YYYY-MM-DD"`. Lãi suất, ưu đãi, gói thẻ, bảo hiểm,
 luật sàng lọc và disclosure được kiểm tra với `valid_from`/`valid_until`.
-Bảng lãi, gói thẻ và chính sách hiện có hạn trong năm 2026; chương trình
+Bảng lãi, gói thẻ, bảo hiểm và chính sách hiện có hạn trong năm 2026; chương trình
 ưu đãi có khoảng thời gian riêng. Ngày ngoài phạm vi không tự gia hạn dữ liệu.
 
 Fact để tính trả góp hoặc gửi tóm tắt phải được lấy trong cùng ngày gọi.
@@ -97,6 +98,23 @@ Hạn mức tối đa thực trả về bị chặn theo thu nhập; các mức 
 hạn mức đã duyệt. `fee_waiver_spend` là điều kiện chi tiêu năm của gói cơ sở;
 ưu đãi miễn phí theo chiến dịch được tra riêng.
 
+## Bảo hiểm sức khỏe cá nhân
+
+`health_insurance` có một gói **An Tâm Demo**, mã `HEALTH-PERSONAL-2026`.
+Phí năm 3 triệu VND, hạn mức quyền lợi nội trú 100 triệu VND/năm, thời hạn
+12 tháng, thời gian chờ 30 ngày, độ tuổi tham khảo 18–60. Hiệu lực dữ liệu:
+01/01–31/12/2026. Gói không gồm ngoại trú, nha khoa, thai sản; bệnh có sẵn và
+sự kiện trong thời gian chờ thuộc loại trừ minh họa.
+
+Tool chỉ tra thông tin công khai, không thu bệnh án hoặc kết luận chấp nhận
+bảo hiểm/bồi thường. `get_disclosures` cung cấp lưu ý phí, quyền lợi và loại trừ.
+Không dùng luật DTI/LTV hoặc tính lãi/trả góp cho bảo hiểm.
+
+Ba journey thực thi ở `simulators/scenarios/three-products/` bao gồm vay nhà,
+vay tiêu dùng và bảo hiểm: tư vấn, retry, tiếp tục web/Telegram và handoff.
+`tests/test_insurance.py` chạy các journey qua API với DB tạm và oracle độc lập;
+bao gồm các ca lỗi tool, ngày hết hạn, đầu vào nguy hiểm và giữ ngữ cảnh sản phẩm.
+
 ## Luật sàng lọc
 
 | Sản phẩm | Thu nhập tối thiểu/tháng | DTI tối đa | LTV tối đa | Lãi dùng để sàng lọc khoản trả |
@@ -123,10 +141,10 @@ Các ca này là dữ liệu dev/demo đã công khai, không phải tập đán
 Kết quả mong đợi có nhắc đến memory/agent để đội tích hợp kiểm tra; thư viện
 bank_tools chỉ thực hiện phần tra cứu và tính toán, không tự xử lý hội thoại.
 
-Demo chạy đủ 9 tool trong `examples/demo.py` dùng khách An (`cus_002`),
+Demo chạy đủ 10 tool trong `examples/demo.py` dùng khách An (`cus_002`),
 thu nhập 100 triệu và trả nợ hiện hữu 10 triệu/tháng, để đi qua nhánh phù hợp.
-Demo tạo AuthContext đăng nhập giả lập ở backend để gọi đủ 9 tool; không có
-chức năng login/verify thật. Sau verify nhưng chưa login, agent chỉ thấy 8 tool.
+Demo tạo AuthContext đăng nhập giả lập ở backend để gọi đủ 10 tool; không có
+chức năng login/verify thật. Sau verify nhưng chưa login, agent chỉ thấy 9 tool.
 
 ## Sửa hoặc bổ sung dữ liệu
 
@@ -137,7 +155,7 @@ chức năng login/verify thật. Sau verify nhưng chưa login, agent chỉ th�
 4. Mở instance mới để nạp dữ liệu đã sửa; instance cũ giữ snapshot fixture cũ.
 5. Chạy test và demo theo README; cập nhật kịch bản mong đợi nếu thay chính sách.
 
-Có thể truyền thư mục dữ liệu khác, nhưng cần đủ sáu file nguồn và giữ cùng schema:
+Có thể truyền thư mục dữ liệu khác, nhưng cần đủ bảy file nguồn và giữ cùng schema:
 
 ```python
 bank = BankTools(fixtures_dir="/duong/dan/fixtures")

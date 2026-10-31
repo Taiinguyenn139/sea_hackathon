@@ -63,7 +63,7 @@ class Scenario(Input):
     scenario_id: str = Field(pattern=r"^[a-zA-Z0-9_-]+$")
     profile: str = "hoa"
     dob: date
-    product: Literal["home_loan", "personal_loan", "credit_card"]
+    product: Literal["home_loan", "personal_loan", "credit_card", "health_insurance"]
     customer_claims: list[tuple[Literal["VND", "months", "%"], str | int | float]] = Field(default_factory=list)
     sessions: list[Session] = Field(min_length=1)
     loan: Loan | None = None

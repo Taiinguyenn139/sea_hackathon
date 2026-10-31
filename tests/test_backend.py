@@ -815,7 +815,7 @@ def test_candidate_preflight_recovers_valid_completing_handoff(tmp_path, monkeyp
 def test_tool_registry_and_trusted_verification(client):
     sid, auth = session(client)
     tools = client.get(f"/sessions/{sid}/tools", headers=auth).json()["tools"]
-    assert len(tools) == 6
+    assert len(tools) == 7
     assert all("as_of" in tool["parameters"]["required"] for tool in tools)
     result = send(client, sid, auth, "Ưu đãi vay mua nhà hiện tại?", "public")
     assert "7,1" in result["reply"]
@@ -826,12 +826,12 @@ def test_tool_registry_and_trusted_verification(client):
     assert denied["error"].startswith("authentication_required:")
     verify(client, sid, auth)
     tools = client.get(f"/sessions/{sid}/tools", headers=auth).json()["tools"]
-    assert len(tools) == 8
+    assert len(tools) == 9
     assert "crm_lookup" not in {tool["name"] for tool in tools}
     assert all("customer_id" not in tool["parameters"]["properties"] for tool in tools)
     assert harness.engine.bank.call("crm_lookup", {"as_of": "2026-10-31"}, "hoa", sid)["error"].startswith("authentication_required:")
     client.post("/staff/login", json={"password": "staff-test"})
-    assert len(client.get(f"/sessions/{sid}/tools", headers=auth).json()["tools"]) == 8
+    assert len(client.get(f"/sessions/{sid}/tools", headers=auth).json()["tools"]) == 9
 
 
 def test_verified_summary_and_callback_are_durable_mocks(client):

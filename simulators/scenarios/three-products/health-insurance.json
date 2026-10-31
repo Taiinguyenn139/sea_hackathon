@@ -1,0 +1,59 @@
+{
+  "scenario_id": "health-insurance-journey",
+  "profile": "hoa",
+  "dob": "1988-05-12",
+  "product": "health_insurance",
+  "customer_claims": [],
+  "sessions": [
+    {
+      "channel": "web",
+      "as_of": "2026-10-31",
+      "steps": [
+        {
+          "text": "Tôi muốn tìm hiểu phí và quyền lợi bảo hiểm sức khỏe cá nhân.",
+          "reveals": [
+            "product"
+          ],
+          "expect": {
+            "offer": true,
+            "offer_unit": "VND",
+            "forbidden_text": [
+              "chắc chắn được duyệt",
+              "chắc chắn được bồi thường"
+            ]
+          },
+          "duplicate": true
+        }
+      ]
+    },
+    {
+      "channel": "telegram",
+      "as_of": "2026-10-31",
+      "steps": [
+        {
+          "text": "Tôi muốn tiếp tục tư vấn sản phẩm lần trước.",
+          "expect": {
+            "offer": true,
+            "offer_unit": "VND",
+            "forbidden_text": [
+              "chắc chắn được duyệt",
+              "chắc chắn được bồi thường"
+            ]
+          }
+        },
+        {
+          "text": "Tôi muốn gặp chuyên viên để tìm hiểu điều kiện đăng ký.",
+          "stage": "apply",
+          "handoff": true,
+          "handoff_required": [
+            "reason",
+            "next_step",
+            "brief.customer_id",
+            "brief.needs",
+            "bot_said"
+          ]
+        }
+      ]
+    }
+  ]
+}

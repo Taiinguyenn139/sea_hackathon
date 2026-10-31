@@ -16,6 +16,7 @@ class AuthorizationTests(unittest.TestCase):
             "get_rate",
             "get_active_promotions",
             "get_card_offer",
+            "get_insurance_offer",
             "calc_installment",
             "check_suitability",
             "get_disclosures",
@@ -38,7 +39,7 @@ class AuthorizationTests(unittest.TestCase):
         self.assertEqual(result["facts"], [])
         json.dumps(result, allow_nan=False)
 
-    def test_catalog_matches_six_eight_nine_permission_groups(self):
+    def test_catalog_matches_seven_nine_ten_permission_groups(self):
         for context in (None, AuthContext(), self.identified_only):
             self.assertEqual({tool["name"] for tool in get_tool_definitions(context=context)}, self.public_names)
         verified = {tool["name"] for tool in get_tool_definitions(context=self.verified)}
@@ -53,7 +54,7 @@ class AuthorizationTests(unittest.TestCase):
             self.assertNotIn("identity_verified", properties)
             self.assertIn("as_of", tool["parameters"]["required"])
 
-    def test_all_six_public_tools_work_without_login_or_verification(self):
+    def test_all_public_tools_work_without_login_or_verification(self):
         rate = self.bank.call(
             "get_rate",
             {"product": "home_loan", "amount": 2_000_000_000, "term": 240, "segment": "mass", "as_of": self.day},
@@ -63,6 +64,7 @@ class AuthorizationTests(unittest.TestCase):
         cases = {
             "get_active_promotions": {"product": "home_loan", "channel": "zalo"},
             "get_card_offer": {"income": 45_000_000, "segment": "mass"},
+            "get_insurance_offer": {},
             "calc_installment": {
                 "amount": 2_000_000_000,
                 "term": 240,
@@ -155,7 +157,7 @@ class AuthorizationTests(unittest.TestCase):
         self.assertIsNone(first["error"])
         self.assert_denied(self.bank.call("crm_lookup", {"as_of": self.day}))
         self.assert_denied(self.bank.call("schedule_callback", self.private_arguments()["schedule_callback"]))
-        self.assertEqual(len(get_tool_definitions()), 6)
+        self.assertEqual(len(get_tool_definitions()), 7)
 
     def test_denied_call_does_not_consume_injected_fault_or_create_action(self):
         args = self.private_arguments()["schedule_callback"]

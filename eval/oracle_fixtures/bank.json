@@ -142,6 +142,49 @@
           12
         ]
       ]
+    },
+    {
+      "product": "health_insurance",
+      "valid_from": "2026-01-01",
+      "valid_until": "2026-12-31",
+      "channels": [
+        "web",
+        "telegram"
+      ],
+      "claims": [
+        [
+          "VND",
+          3000000
+        ],
+        [
+          "VND",
+          100000000
+        ],
+        [
+          "months",
+          12
+        ],
+        [
+          "days",
+          30
+        ],
+        [
+          "age_years",
+          18
+        ],
+        [
+          "age_years",
+          60
+        ]
+      ],
+      "values": {
+        "annual_premium": 3000000,
+        "coverage_limit": 100000000,
+        "policy_months": 12,
+        "waiting_days": 30,
+        "min_age": 18,
+        "max_age": 60
+      }
     }
   ]
 }
