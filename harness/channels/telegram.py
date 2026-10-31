@@ -9,6 +9,7 @@ import httpx
 from fastapi import HTTPException
 
 from bank_tools.service import canonical, ident
+from harness.input_guard import VERSION, inspect_input
 from harness.llm import DEFAULT_REPLY, LLMUnavailable
 
 PHONE_KEYBOARD = {
@@ -36,6 +37,8 @@ class Dispatcher:
             return
         text = message.get("text")
         contact = message.get("contact")
+        if text is not None and (not isinstance(text, str) or len(text) > 8000):
+            return
         if not (isinstance(text, str) and len(text) <= 8000) and not (
             isinstance(contact, dict) and isinstance(contact.get("phone_number"), str)
             and len(contact["phone_number"]) <= 64
@@ -44,11 +47,42 @@ class Dispatcher:
         if not isinstance(chat.get("id"), int):
             raise HTTPException(400, "Invalid chat")
         key = "telegram:" + str(payload["update_id"])
-        with self.db.transaction() as c:
-            c.execute(
-                "INSERT OR IGNORE INTO provider_events VALUES(?,?,?,?,?,?)",
-                (key, "telegram", canonical(payload), "pending", time.time(), None),
-            )
+        with self.lock:
+            if self.db.one("SELECT id FROM provider_events WHERE id=?", (key,)):
+                return
+            blocked = inspect_input(text, self.settings) if isinstance(text, str) else None
+            # Build our own envelope. Never trust client-supplied approval markers
+            # or persist extra Telegram fields that can contain sensitive text.
+            envelope = {
+                "update_id": payload["update_id"],
+                "input_guard_version": VERSION,
+                "message": {
+                    "date": message.get("date", 0),
+                    "text": "[blocked]" if blocked else text or "",
+                    "chat": {"id": chat["id"], "type": "private"},
+                },
+            }
+            if blocked:
+                envelope["guard_events"] = blocked["guard_events"]
+            else:
+                # Dedicated contact consent is handled by PhoneIdentity.bind,
+                # outside agent prompts. Keep only the fields that flow needs.
+                sender = message.get("from", {})
+                name = sender.get("first_name")
+                envelope["message"]["from"] = {
+                    "id": sender.get("id"), "first_name": name[:100] if isinstance(name, str) else "",
+                }
+                if isinstance(contact, dict):
+                    envelope["message"]["contact"] = {
+                        "phone_number": contact.get("phone_number"), "user_id": contact.get("user_id"),
+                    }
+            with self.db.transaction() as c:
+                c.execute(
+                    "INSERT INTO provider_events VALUES(?,?,?,?,?,?)",
+                    (key, "telegram", canonical(envelope), "processed" if blocked else "pending", time.time(), None),
+                )
+                if blocked:
+                    self.reply(key, str(chat["id"]), blocked["reply"])
 
     def reply(self, key, target, text, reply_markup=None):
         self.db.execute(
@@ -112,7 +146,10 @@ class Dispatcher:
                             "Anh/chị muốn tìm hiểu sản phẩm nào?"
                         )
                     else:
-                        reply = self.harness.message(session["id"], text, row["id"], "telegram:" + target)["reply"]
+                        reply = self.harness.message(
+                            session["id"], text, row["id"], "telegram:" + target,
+                            input_checked=payload.get("input_guard_version") == VERSION,
+                        )["reply"]
                     if self.harness.can_chat(session) and session["status"] == "active" and not contact and not late and (
                         start or command == "/phone" or new_session
                     ) and not self.db.one(

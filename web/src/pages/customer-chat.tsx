@@ -5,6 +5,8 @@ import {
   ArrowUp,
   Check,
   CheckCheck,
+  Clock3,
+  RotateCcw,
   CircleHelp,
   CreditCard,
   Home,
@@ -33,6 +35,10 @@ import { PhoneLogin } from "../phone-login";
 import { BriefView } from "../brief-view";
 const STORAGE = "bankwise-chat-session";
 const LEGACY_STORAGE = "mach-chat-session";
+type ChatTurn = Turn & {
+  clientId?: string;
+  delivery?: "sending" | "sent" | "failed";
+};
 function savedSession(): ChatSession | null {
   try {
     return JSON.parse(
@@ -72,7 +78,7 @@ export function CustomerChat() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profile, setProfile] = useState(savedSession()?.demo_profile ?? "hoa");
   const [phoneLogin, setPhoneLogin] = useState(false);
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
   const [streamStatus, setStreamStatus] = useState(
@@ -116,9 +122,13 @@ export function CustomerChat() {
     return () => window.removeEventListener("hashchange", syncView);
   }, []);
   useEffect(() => {
-    if (isHome) document.getElementById("chat-home-title")?.focus();
-    else input.current?.focus();
-  }, [isHome]);
+    if (isHome)
+      document
+        .getElementById("chat-home-title")
+        ?.focus({ preventScroll: true });
+    else if (!pending && !loading && !waiting)
+      input.current?.focus({ preventScroll: true });
+  }, [isHome, pending, loading, waiting]);
   useEffect(() => {
     if (!input.current) return;
     input.current.style.height = "auto";
@@ -205,6 +215,7 @@ export function CustomerChat() {
         method: "POST",
         body: { mode: "harness", demo_profile: profile },
       });
+      setLoading(true);
       save({ ...next, demo_profile: profile });
       setTurns([]);
       navigate("conversation");
@@ -226,12 +237,26 @@ export function CustomerChat() {
       return;
     const controller = new AbortController();
     activeStream.current = controller;
+    const message = text.trim();
+    const retrying = turns.some((turn) => turn.clientId === id);
     const assistantId = `stream:${id}`;
     const userId = `user:${id}`;
     setTurns((prev) => [
-      ...prev.filter((turn) => turn.id !== assistantId),
+      ...prev
+        .filter((turn) => turn.id !== assistantId)
+        .map((turn): ChatTurn =>
+          turn.clientId === id ? { ...turn, delivery: "sending" } : turn,
+        ),
       ...(!prev.some((turn) => turn.id === userId)
-        ? [{ id: userId, role: "user", text: text.trim() }]
+        ? [
+            {
+              id: userId,
+              clientId: id,
+              role: "user",
+              text: message,
+              delivery: "sending" as const,
+            },
+          ]
         : []),
       { id: assistantId, role: "assistant", text: "" },
     ]);
@@ -239,7 +264,7 @@ export function CustomerChat() {
     setStreamStatus("Trợ lý đang xử lý yêu cầu…");
     setError("");
     setLastFailed(null);
-    setDraft("");
+    if (!retrying) setDraft("");
     setPromptNotice("");
     try {
       const data = await streamReply(
@@ -273,7 +298,11 @@ export function CustomerChat() {
       if (controller.signal.aborted) return;
       setTurns((prev) =>
         prev.map((turn) =>
-          turn.id === assistantId ? { ...turn, text: data.reply } : turn,
+          turn.id === assistantId
+            ? { ...turn, text: data.reply }
+            : turn.clientId === id
+              ? { ...turn, delivery: "sent" }
+              : turn,
         ),
       );
       if (data.identity_status || data.user_id || data.handoff_id || data.brief)
@@ -287,7 +316,13 @@ export function CustomerChat() {
         });
     } catch (e) {
       if (controller.signal.aborted) return;
-      setTurns((prev) => prev.filter((turn) => turn.id !== assistantId));
+      setTurns((prev) =>
+        prev
+          .filter((turn) => turn.id !== assistantId)
+          .map((turn): ChatTurn =>
+            turn.clientId === id ? { ...turn, delivery: "failed" } : turn,
+          ),
+      );
       setError(errorMessage(e));
       setLastFailed({ text, id });
     } finally {
@@ -340,6 +375,7 @@ export function CustomerChat() {
       }
     }
     save(null);
+    setLoading(false);
     setTurns([]);
     setDraft("");
     setPromptNotice("");
@@ -562,11 +598,31 @@ export function CustomerChat() {
                       </div>
                       <div className="message-bubble">{turn.text}</div>
                       {turn.role === "user" && (
-                        <span className="delivered">
-                          <CheckCheck size={13} />{" "}
-                          {turn.id === `user:${lastFailed?.id}`
-                            ? "Chưa hoàn tất"
-                            : "Đã gửi"}
+                        <span
+                          className={`delivered ${turn.delivery === "failed" ? "delivery-failed" : ""}`}
+                        >
+                          {turn.delivery === "sending" ? (
+                            <>
+                              <Clock3 size={13} /> Đang gửi…
+                            </>
+                          ) : turn.delivery === "failed" ? (
+                            <>
+                              Chưa gửi được
+                              <button
+                                type="button"
+                                disabled={pending || loading || waiting}
+                                onClick={() =>
+                                  void send(turn.text, turn.clientId)
+                                }
+                              >
+                                <RotateCcw size={12} /> Gửi lại
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCheck size={13} /> Đã gửi
+                            </>
+                          )}
                         </span>
                       )}
                     </div>
@@ -574,7 +630,7 @@ export function CustomerChat() {
                 ))}
             </div>
           )}
-          {!isHome && pending && session && (
+          {!isHome && turns.some((turn) => turn.delivery === "sending") && (
             <div className="typing" role="status">
               <BrandMark small />
               <span className="typing-dots" aria-hidden="true">
@@ -646,6 +702,7 @@ export function CustomerChat() {
               <PhoneLogin
                 onCancel={() => setPhoneLogin(false)}
                 onSuccess={(next) => {
+                  setLoading(true);
                   save(next);
                   setTurns([]);
                   setPhoneLogin(false);
@@ -741,14 +798,16 @@ export function CustomerChat() {
                 }}
                 rows={2}
                 maxLength={4000}
-                disabled={!session || waiting || pending || loading}
+                disabled={!session || loading || waiting || pending}
                 aria-label="Tin nhắn cho trợ lý"
                 placeholder={
                   !session
                     ? "Bắt đầu phiên hỗ trợ để gửi tin nhắn…"
-                    : waiting
-                      ? "Chuyên viên sẽ tiếp nhận yêu cầu của bạn…"
-                      : "Nhập câu hỏi cần hỗ trợ…"
+                    : loading
+                      ? "Đang khôi phục hội thoại…"
+                      : waiting
+                        ? "Chuyên viên sẽ tiếp nhận yêu cầu của bạn…"
+                        : "Nhập câu hỏi cần hỗ trợ…"
                 }
               />
               <div className="composer-footer">
@@ -761,7 +820,7 @@ export function CustomerChat() {
                 <button
                   className="send-button"
                   disabled={
-                    !session || !draft.trim() || pending || waiting || loading
+                    !session || !draft.trim() || loading || pending || waiting
                   }
                   aria-label="Gửi tin nhắn"
                 >

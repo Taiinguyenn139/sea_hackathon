@@ -133,7 +133,7 @@ def test_sse_auth_guard_receipt_and_retry(tmp_path, monkeypatch, draft):
         calls.append(payload)
         if payload.get("stream"):
             return httpx.Response(200, stream=ProviderStream(draft))
-        value = {"stage": "discover", "objection": None} if "Phân loại" in payload["messages"][0]["content"] else {"spans": []}
+        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else ({"stage": "discover", "objection": None} if "Phân loại" in payload["messages"][0]["content"] else {"spans": []})
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}}]})
 
     mock_provider(monkeypatch, handler)
@@ -167,7 +167,13 @@ def test_sse_auth_guard_receipt_and_retry(tmp_path, monkeypatch, draft):
 
 def test_stream_exhaustion_returns_default_result(tmp_path, monkeypatch):
     config = settings(db_path=str(tmp_path / "failed.sqlite3"))
-    mock_provider(monkeypatch, lambda request: httpx.Response(503))
+    def handler(request):
+        payload = json.loads(request.content)
+        if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"]:
+            return httpx.Response(200, json={"choices": [{"message": {"content": '{"category":"safe"}'}}]})
+        return httpx.Response(503)
+
+    mock_provider(monkeypatch, handler)
     with TestClient(create_app(config)) as client:
         session = client.post("/sessions", json={"demo_profile": "hoa", "mode": "harness"}).json()
         response = client.post(f"/sessions/{session['session_id']}/messages/stream",
@@ -192,7 +198,7 @@ def test_socket_progress_disconnect_persists_without_replay(tmp_path, monkeypatc
         if payload.get("stream"):
             drafts.append(True)
             return httpx.Response(200, stream=PausedStream("Xin chào. Tôi có thể giúp bạn."))
-        value = {"stage": "discover"} if "Phân loại" in payload["messages"][0]["content"] else {"spans": []}
+        value = {"category": "safe"} if "INPUT_SECURITY_CLASSIFIER" in payload["messages"][0]["content"] else ({"stage": "discover"} if "Phân loại" in payload["messages"][0]["content"] else {"spans": []})
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}}]})
 
     mock_provider(monkeypatch, handler)
