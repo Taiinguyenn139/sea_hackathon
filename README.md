@@ -52,4 +52,5 @@ hiện có; expected memory chỉ dành cho evaluator.
 [Hướng dẫn GCP](docs/deployment.md) sở hữu cách cấu hình variables, OIDC/Secret Manager,
 kích hoạt workflow, xem log, kiểm tra URL và rollback. [Workflow](.github/workflows/deploy-gcp.yml)
 kiểm tra PR; sau merge vào `main`, chỉ deploy khi `GCP_DEPLOY_ENABLED=true` và môi trường
-`demo` đã được cấu hình. Chưa có public deployment được xác nhận.
+`demo` đã được cấu hình. URL demo nằm trong biến `APP_URL` của environment này;
+kiểm tra health và revision theo hướng dẫn vận hành để xác nhận phiên bản đang chạy.

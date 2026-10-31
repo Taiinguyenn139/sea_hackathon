@@ -36,20 +36,20 @@ function savedSession(): ChatSession | null {
 const suggestions = [
   {
     icon: Home,
-    title: "Một tổ ấm mới",
-    subtitle: "Tìm hiểu khoản vay mua nhà",
+    title: "Vay mua nhà",
+    subtitle: "Điều kiện và hồ sơ vay",
     message: "Tôi muốn tìm hiểu vay mua nhà.",
   },
   {
     icon: Wallet,
-    title: "Kế hoạch của riêng bạn",
-    subtitle: "Khám phá vay tiêu dùng",
+    title: "Vay tiêu dùng",
+    subtitle: "Tư vấn khoản vay cá nhân",
     message: "Tôi muốn tìm hiểu vay tiêu dùng.",
   },
   {
     icon: CreditCard,
-    title: "Chi tiêu chủ động",
-    subtitle: "Tìm chiếc thẻ tín dụng phù hợp",
+    title: "Thẻ tín dụng",
+    subtitle: "Thông tin và đăng ký thẻ",
     message: "Tôi muốn tìm hiểu thẻ tín dụng.",
   },
 ];
@@ -259,14 +259,14 @@ export function CustomerChat() {
   const chosenProfile = profiles.find((p) => p.id === profile);
   return (
     <div className="chat-layout">
-      <section className="chat-main" aria-label="Hội thoại tài chính">
+      <section className="chat-main" aria-label="Hỗ trợ khách hàng ngân hàng">
         <header className="chat-heading">
           <div className="assistant-identity">
             <BrandMark small />
             <div>
-              <h1>Trợ lý tài chính</h1>
+              <h1>Trợ lý ngân hàng</h1>
               <p>
-                <span className="status-dot" /> Đồng hành cùng kế hoạch của bạn
+                <span className="status-dot" /> Hỗ trợ trực tuyến
               </p>
             </div>
           </div>
@@ -294,17 +294,12 @@ export function CustomerChat() {
         <div className="conversation-scroll">
           {!turns.length && (
             <section className="welcome">
-              <div className="eyebrow">CHÀO BẠN, MÌNH LÀ MẠCH</div>
-              <h2>
-                Mỗi kế hoạch lớn
-                <br />
-                bắt đầu từ <span>một cuộc trò chuyện.</span>
-              </h2>
-              <p>
-                Cùng tìm giải pháp tài chính phù hợp với bạn.
-                <br className="desktop-break" /> Mình sẽ ghi nhớ để lần sau bạn
-                không phải bắt đầu lại.
-              </p>
+              <div className="welcome-symbol">
+                <BrandMark />
+              </div>
+              <div className="eyebrow">NGÂN HÀNG TÀI KHOA TUẤN</div>
+              <h2>Chúng tôi có thể hỗ trợ gì cho bạn?</h2>
+              <p>Vui lòng chọn dịch vụ hoặc nhập câu hỏi để được hỗ trợ.</p>
               <div className="suggestions">
                 {suggestions.map(({ icon: Icon, title, subtitle, message }) => (
                   <button
@@ -321,7 +316,9 @@ export function CustomerChat() {
               </div>
               <div className="privacy-note">
                 <ShieldCheck size={16} />
-                <span>Chỉ chia sẻ thông tin khi bạn đã sẵn sàng.</span>
+                <span>
+                  Không cung cấp mật khẩu, mã PIN hoặc OTP trong hội thoại.
+                </span>
               </div>
             </section>
           )}
@@ -336,7 +333,7 @@ export function CustomerChat() {
                   {turn.role !== "user" && <BrandMark small />}
                   <div>
                     <div className="message-label">
-                      {turn.role === "user" ? "Bạn" : "Mạch · Trợ lý tài chính"}
+                      {turn.role === "user" ? "Bạn" : "Trợ lý ngân hàng"}
                     </div>
                     <div className="message-bubble">{turn.text}</div>
                     {turn.role === "user" && (
@@ -352,7 +349,7 @@ export function CustomerChat() {
           {pending && session && (
             <div className="typing">
               <BrandMark small />
-              <Spinner label="Mạch đang xử lý…" />
+              <Spinner label="Trợ lý đang trả lời…" />
             </div>
           )}
           {waiting && (
@@ -361,8 +358,7 @@ export function CustomerChat() {
               <div>
                 <strong>Đang chờ chuyên viên tiếp nhận</strong>
                 <p>
-                  Thông tin trao đổi đã được chuyển cùng yêu cầu. Bạn không cần
-                  kể lại từ đầu.
+                  Yêu cầu của bạn đã được gửi. Vui lòng chờ chuyên viên hỗ trợ.
                 </p>
               </div>
             </div>
@@ -391,9 +387,9 @@ export function CustomerChat() {
           {!session && (
             <div className="onboarding-bar">
               <div>
-                <span className="mini-label">TRẢI NGHIỆM DEMO</span>
+                <span className="mini-label">THÔNG TIN KHÁCH HÀNG</span>
                 <label htmlFor="demo-profile">
-                  Chọn hồ sơ hư cấu để bắt đầu
+                  Chọn hồ sơ để bắt đầu hỗ trợ
                 </label>
               </div>
               <select
@@ -429,7 +425,7 @@ export function CustomerChat() {
               <div>
                 <strong>Xác minh trước khi tiếp tục</strong>
                 <label htmlFor="dob">
-                  Ngày sinh của hồ sơ demo
+                  Ngày sinh của khách hàng
                   {chosenProfile?.dob ? ` · ${chosenProfile.dob}` : ""}
                 </label>
               </div>
@@ -472,17 +468,17 @@ export function CustomerChat() {
               aria-label="Tin nhắn cho trợ lý"
               placeholder={
                 !session
-                  ? "Bắt đầu phiên để trò chuyện với Mạch…"
+                  ? "Bắt đầu phiên hỗ trợ để gửi tin nhắn…"
                   : !verified
                     ? "Xác minh hồ sơ để tiếp tục…"
                     : waiting
                       ? "Chuyên viên sẽ tiếp nhận yêu cầu của bạn…"
-                      : "Bạn đang ấp ủ kế hoạch gì?"
+                      : "Nhập câu hỏi cần hỗ trợ…"
               }
             />
             <div className="composer-footer">
               <span>
-                <LockKeyhole size={13} /> Một cuộc trò chuyện riêng tư
+                <LockKeyhole size={13} /> Ngân hàng Tài Khoa Tuấn
               </span>
               <button
                 className="send-button"
@@ -501,53 +497,63 @@ export function CustomerChat() {
       </section>
       <aside className="context-rail">
         <div className="rail-heading">
-          <span className="mini-label">CÙNG BẠN, TỪNG BƯỚC</span>
+          <span className="mini-label">TRUNG TÂM HỖ TRỢ</span>
           <div className="line-accent" />
         </div>
-        <h2>
-          Kế hoạch của bạn.
-          <br />
-          Một mạch liền nhau.
-        </h2>
-        <p className="rail-intro">
-          Dù bắt đầu ở đâu, cuộc trò chuyện vẫn tiếp nối đúng điều bạn quan tâm.
-        </p>
-        <div className="journey-list">
-          <div className={`journey-item ${session ? "done" : "current"}`}>
-            <span>{session ? <Check size={15} /> : "01"}</span>
-            <div>
-              <strong>Bắt đầu trò chuyện</strong>
-              <p>Chia sẻ mục tiêu của bạn</p>
-            </div>
-          </div>
-          <div
-            className={`journey-item ${verified ? "done" : session ? "current" : ""}`}
-          >
-            <span>{verified ? <Check size={15} /> : "02"}</span>
-            <div>
-              <strong>Xác minh hồ sơ</strong>
-              <p>Bảo vệ thông tin riêng tư</p>
-            </div>
-          </div>
-          <div className={`journey-item ${verified ? "current" : ""}`}>
-            <span>03</span>
-            <div>
-              <strong>Tìm giải pháp phù hợp</strong>
-              <p>Thông tin rõ ràng, có nguồn</p>
-            </div>
-          </div>
+        <h2>Dịch vụ ngân hàng</h2>
+        <div className="bank-services">
+          {[
+            {
+              icon: Wallet,
+              title: "Tài khoản & tiết kiệm",
+              message: "Tôi muốn tìm hiểu tài khoản và tiết kiệm.",
+            },
+            {
+              icon: CreditCard,
+              title: "Dịch vụ thẻ",
+              message: "Tôi cần hỗ trợ về dịch vụ thẻ.",
+            },
+            {
+              icon: Home,
+              title: "Sản phẩm vay",
+              message: "Tôi muốn được tư vấn về các sản phẩm vay.",
+            },
+          ].map(({ icon: Icon, title, message }) => (
+            <button key={title} onClick={() => selectPrompt(message)}>
+              <Icon size={19} />
+              <span>{title}</span>
+              <ArrowRight size={15} />
+            </button>
+          ))}
         </div>
-        <div className="rail-callout">
-          <ShieldCheck size={24} />
-          <h3>Hiểu bạn, nhớ đúng.</h3>
-          <p>
-            Thông tin cần xác nhận sẽ được hỏi lại. Ưu đãi được kiểm tra trước
-            khi tư vấn.
-          </p>
-          <div className="channel-list">
-            <span>Web</span>
-            <span>Telegram</span>
-          </div>
+        <div className="support-session">
+          <span className="mini-label">PHIÊN HỖ TRỢ</span>
+          <dl>
+            <div>
+              <dt>Khách hàng</dt>
+              <dd>
+                {chosenProfile?.name ??
+                  chosenProfile?.full_name ??
+                  "Chưa chọn hồ sơ"}
+              </dd>
+            </div>
+            <div>
+              <dt>Xác minh</dt>
+              <dd className={verified ? "session-verified" : ""}>
+                {verified ? "Đã xác minh" : "Chưa xác minh"}
+              </dd>
+            </div>
+            <div>
+              <dt>Trạng thái</dt>
+              <dd>
+                {waiting
+                  ? "Chờ chuyên viên"
+                  : session
+                    ? "Đang hỗ trợ"
+                    : "Chưa bắt đầu"}
+              </dd>
+            </div>
+          </dl>
         </div>
         <button
           className="human-help"
@@ -556,8 +562,8 @@ export function CustomerChat() {
         >
           <UserRound size={20} />
           <span>
-            <strong>Cần một người hỗ trợ?</strong>
-            <small>Kết nối với chuyên viên</small>
+            <strong>Liên hệ chuyên viên</strong>
+            <small>Hỗ trợ yêu cầu của bạn</small>
           </span>
           <ArrowRight size={17} />
         </button>
