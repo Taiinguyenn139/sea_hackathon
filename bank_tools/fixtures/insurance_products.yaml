@@ -1,0 +1,13 @@
+# Dữ liệu do dự án tự đặt để kiểm thử, không phải sản phẩm bảo hiểm thật.
+insurance_products:
+  - insurance_id: HEALTH-PERSONAL-2026
+    product: health_insurance
+    name: Bảo hiểm sức khỏe cá nhân An Tâm Demo
+    annual_premium: 3000000
+    coverage_limit: 100000000
+    policy_months: 12
+    waiting_days: 30
+    min_age: 18
+    max_age: 60
+    valid_from: '2026-01-01'
+    valid_until: '2026-12-31'

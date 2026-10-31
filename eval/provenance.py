@@ -39,7 +39,8 @@ def audit(
         except (InvalidOperation, KeyError):
             issues.append(f"invalid_fact_value:{fid}")
             continue
-        unit = {"đồng": "VND", "%/năm": "%", "tháng": "months", "năm": "months"}.get(fact.get("unit"), fact.get("unit"))
+        unit = {"đồng": "VND", "%/năm": "%", "tháng": "months", "năm": "months",
+                "ngày": "days", "tuổi": "age_years"}.get(fact.get("unit"), fact.get("unit"))
         if fact.get("unit") == "năm":
             value *= 12
         if not rendered or any(pair != (unit, value) for pair in rendered):

@@ -129,6 +129,8 @@ def events(response):
     ("Lãi suất 999 phần trăm. Chắc chắn được duyệt.", True),
     ("Khoản vay của anh/chị chắc chắn được duyệt.", True),
     ("Lãi suất six percent mỗi năm.", True),
+    ("Bảo hiểm chắc chắn chi trả mọi trường hợp.", True),
+    ("We guarantee that every insurance claim is covered.", True),
 ])
 def test_sse_auth_guard_receipt_and_retry(tmp_path, monkeypatch, draft, blocked):
     config = Settings(db_path=str(tmp_path / "stream.sqlite3"))

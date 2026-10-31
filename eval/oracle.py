@@ -35,7 +35,7 @@ def read_document(path: Path) -> dict[str, Any]:
 
 def numeric_claims(text: str) -> list[tuple[str, Decimal]]:
     """Extract typed financial claims, independent of backend renderer/facts."""
-    pattern = r"(?<![\w])([+-]?\d[\d.,]*)\s*(%|tỷ|triệu|nghìn|đồng|tháng|năm)"
+    pattern = r"(?<![\w])([+-]?\d[\d.,]*)\s*(%|tỷ|triệu|nghìn|đồng|tháng|năm|ngày|tuổi)"
     claims = []
     for match in re.finditer(pattern, text.casefold()):
         number, unit = match.groups()
@@ -54,6 +54,10 @@ def numeric_claims(text: str) -> list[tuple[str, Decimal]]:
             unit = "months"
         elif unit == "tháng":
             unit = "months"
+        elif unit == "ngày":
+            unit = "days"
+        elif unit == "tuổi":
+            unit = "age_years"
         claims.append((unit, value))
     return claims
 
@@ -87,6 +91,8 @@ class Oracle:
         if not rows:
             return {}
         row = rows[-1]
+        if product == "health_insurance":
+            return {key: Decimal(str(value)) for key, value in row["values"].items()}
         if product == "credit_card":
             return {
                 "card_limit_min": Decimal(10000000),

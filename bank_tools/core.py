@@ -17,7 +17,9 @@ import yaml
 from .auth import TOOL_ACCESS, AccessDenied, AuthContext, require_access
 from .catalog import TOOL_NAMES
 
-PRODUCTS = {"home_loan", "personal_loan", "credit_card"}
+LOAN_PRODUCTS = {"home_loan", "personal_loan"}
+CREDIT_PRODUCTS = LOAN_PRODUCTS | {"credit_card"}
+PRODUCTS = CREDIT_PRODUCTS | {"health_insurance"}
 CHANNELS = {"hotline", "zalo", "web", "telegram"}
 SEGMENTS = {"mass", "priority"}
 MAX_MONEY = 100_000_000_000
@@ -113,7 +115,8 @@ class BankTools:
         self._lock = RLock()
         root = Path(fixtures_dir) if fixtures_dir is not None else files("bank_tools").joinpath("fixtures")
         self._fixtures = {}
-        for name in ("customers", "rates", "promotions", "card_products", "suitability_rules", "disclosures"):
+        for name in ("customers", "rates", "promotions", "card_products", "insurance_products",
+                     "suitability_rules", "disclosures"):
             document = yaml.safe_load(root.joinpath(f"{name}.yaml").read_text(encoding="utf-8"))
             if not isinstance(document, dict) or name not in document:
                 raise ValueError(f"Invalid fixture file: {name}.yaml")
@@ -185,7 +188,8 @@ class BankTools:
                 identifiers.add(identifier)
             for link in customer["identity_links"]:
                 _choice(link["channel"], CHANNELS, "channel")
-        for group, id_key in (("rates", "rate_id"), ("promotions", "promo_id"), ("card_products", "card_id")):
+        for group, id_key in (("rates", "rate_id"), ("promotions", "promo_id"), ("card_products", "card_id"),
+                              ("insurance_products", "insurance_id")):
             ids = [row[id_key] for row in self._fixtures[group]]
             if len(ids) != len(set(ids)):
                 raise ValueError(f"Duplicate identifiers in {group}")
@@ -193,13 +197,13 @@ class BankTools:
                 if _date(row["valid_from"]) > _date(row["valid_until"]):
                     raise ValueError(f"Invalid date range in {group}")
         for row in self._fixtures["rates"]:
-            _choice(row["product"], PRODUCTS - {"credit_card"}, "product")
+            _choice(row["product"], LOAN_PRODUCTS, "product")
             _choice(row["segment"], SEGMENTS, "segment")
             _rate(row["standard_rate"])
             _rate(row["floating_margin"])
             self._validate_bands(row)
         for row in self._fixtures["promotions"]:
-            _choice(row["product"], PRODUCTS, "product")
+            _choice(row["product"], CREDIT_PRODUCTS, "product")
             if not row["channels"]:
                 raise ValueError("Promotion must have a channel")
             for channel in row["channels"]:
@@ -213,7 +217,17 @@ class BankTools:
             _integer(row["income_multiplier"], "income_multiplier", 1, 100)
             if row["card_limit_min"] > row["card_limit_max"]:
                 raise ValueError("Invalid card limit range")
-        for product in PRODUCTS:
+        for row in self._fixtures["insurance_products"]:
+            _choice(row["product"], {"health_insurance"}, "product")
+            if not isinstance(row["name"], str) or not row["name"].strip():
+                raise ValueError("Insurance name must not be empty")
+            for key in ("annual_premium", "coverage_limit"):
+                _integer(row[key], key, 1)
+            _integer(row["policy_months"], "policy_months", 1, 120)
+            _integer(row["waiting_days"], "waiting_days", 0, 365)
+            _integer(row["min_age"], "min_age", 0, 120)
+            _integer(row["max_age"], "max_age", row["min_age"], 120)
+        for product in CREDIT_PRODUCTS:
             rule = self._fixtures["suitability_rules"][product]
             disclosure = self._fixtures["disclosures"][product]
             for row in (rule, disclosure):
@@ -231,6 +245,12 @@ class BankTools:
                 text = disclosure[topic]
                 if not isinstance(text, str) or not text.strip():
                     raise ValueError("Disclosure text must not be empty")
+        disclosure = self._fixtures["disclosures"]["health_insurance"]
+        if _date(disclosure["valid_from"]) > _date(disclosure["valid_until"]):
+            raise ValueError("Invalid insurance disclosure date range")
+        for topic in ("fee", "coverage", "exclusions"):
+            if not isinstance(disclosure[topic], str) or not disclosure[topic].strip():
+                raise ValueError("Insurance disclosure text must not be empty")
 
     @staticmethod
     def _validate_bands(row):
@@ -327,7 +347,7 @@ class BankTools:
 
     @bank_tool
     def get_rate(self, product, amount, term, segment, *, as_of):
-        _choice(product, PRODUCTS - {"credit_card"}, "product")
+        _choice(product, LOAN_PRODUCTS, "product")
         _choice(segment, SEGMENTS, "segment")
         _integer(amount, "amount", 1)
         _integer(term, "term", 1, 600)
@@ -412,6 +432,19 @@ class BankTools:
             for key, value in values.items()
         ]
         return {"eligible": True, "card_id": row["card_id"], "approval_required": True}, specs
+
+    @bank_tool
+    def get_insurance_offer(self, *, as_of):
+        rows = [row for row in self._fixtures["insurance_products"] if self._active(row, as_of)]
+        if len(rows) != 1:
+            raise ValueError("no unique active insurance product")
+        row = rows[0]
+        units = {"annual_premium": "VND", "coverage_limit": "VND", "policy_months": "tháng",
+                 "waiting_days": "ngày", "min_age": "tuổi", "max_age": "tuổi"}
+        specs = [self._spec(key, row[key], unit, row["insurance_id"], row["valid_until"],
+                            product=row["product"]) for key, unit in units.items()]
+        return {"insurance_id": row["insurance_id"], "product": row["product"], "name": row["name"],
+                "underwriting_required": True, "mock": True}, specs
 
     @bank_tool
     def calc_installment(
@@ -502,7 +535,7 @@ class BankTools:
 
     @bank_tool
     def check_suitability(self, product, income, debt, amount=None, term=None, property_value=None, *, as_of):
-        _choice(product, PRODUCTS, "product")
+        _choice(product, CREDIT_PRODUCTS, "product")
         _integer(income, "income")
         _integer(debt, "debt")
         rule = self._rules(product, as_of)
@@ -553,7 +586,7 @@ class BankTools:
             raise ValueError("topics must be a nonempty list")
         selected = []
         for topic in topics:
-            _choice(topic, {"rate", "installment", "fee", "promo"}, "topic")
+            _choice(topic, set(disclosure) - {"valid_from", "valid_until"}, "topic")
             if topic not in selected:
                 selected.append(topic)
         return {"disclosures": [{"topic": topic, "text": disclosure[topic]} for topic in selected]}, []

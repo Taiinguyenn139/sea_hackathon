@@ -1,0 +1,93 @@
+{
+  "scenario_id": "personal-loan-journey",
+  "profile": "hoa",
+  "dob": "1988-05-12",
+  "product": "personal_loan",
+  "customer_claims": [
+    [
+      "VND",
+      100000000
+    ],
+    [
+      "months",
+      24
+    ],
+    [
+      "VND",
+      30000000
+    ],
+    [
+      "VND",
+      0
+    ]
+  ],
+  "sessions": [
+    {
+      "channel": "web",
+      "as_of": "2026-10-31",
+      "steps": [
+        {
+          "text": "Tôi quan tâm vay tiêu dùng.",
+          "reveals": [
+            "product"
+          ],
+          "expect": {
+            "no_bank_numbers": true
+          }
+        },
+        {
+          "text": "Tôi cần vay tiêu dùng 100 triệu trong 24 tháng, thu nhập 30 triệu, không có nợ.",
+          "reveals": [
+            "product",
+            "amount",
+            "term",
+            "income",
+            "debt"
+          ],
+          "expect": {
+            "offer": true,
+            "offer_unit": "%",
+            "forbidden_text": [
+              "chắc chắn được duyệt",
+              "chắc chắn được bồi thường"
+            ]
+          },
+          "duplicate": true
+        }
+      ]
+    },
+    {
+      "channel": "telegram",
+      "as_of": "2026-10-31",
+      "steps": [
+        {
+          "text": "Tôi muốn tiếp tục tư vấn sản phẩm lần trước.",
+          "expect": {
+            "offer": true,
+            "offer_unit": "%",
+            "forbidden_text": [
+              "chắc chắn được duyệt",
+              "chắc chắn được bồi thường"
+            ]
+          }
+        },
+        {
+          "text": "Tôi muốn gặp chuyên viên để tìm hiểu điều kiện đăng ký.",
+          "stage": "apply",
+          "handoff": true,
+          "handoff_required": [
+            "reason",
+            "next_step",
+            "brief.customer_id",
+            "brief.needs",
+            "bot_said"
+          ]
+        }
+      ]
+    }
+  ],
+  "loan": {
+    "amount": "100000000",
+    "term": 24
+  }
+}

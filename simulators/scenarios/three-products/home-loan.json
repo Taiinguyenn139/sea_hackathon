@@ -1,0 +1,98 @@
+{
+  "scenario_id": "home-loan-journey",
+  "profile": "hoa",
+  "dob": "1988-05-12",
+  "product": "home_loan",
+  "customer_claims": [
+    [
+      "VND",
+      2000000000
+    ],
+    [
+      "months",
+      240
+    ],
+    [
+      "VND",
+      45000000
+    ],
+    [
+      "VND",
+      3000000000
+    ],
+    [
+      "VND",
+      0
+    ]
+  ],
+  "sessions": [
+    {
+      "channel": "web",
+      "as_of": "2026-10-31",
+      "steps": [
+        {
+          "text": "Tôi quan tâm vay mua nhà.",
+          "reveals": [
+            "product"
+          ],
+          "expect": {
+            "no_bank_numbers": true
+          }
+        },
+        {
+          "text": "Tôi muốn vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, giá nhà 3 tỷ, không có nợ.",
+          "reveals": [
+            "product",
+            "amount",
+            "term",
+            "income",
+            "debt",
+            "property_value"
+          ],
+          "expect": {
+            "offer": true,
+            "offer_unit": "%",
+            "forbidden_text": [
+              "chắc chắn được duyệt",
+              "chắc chắn được bồi thường"
+            ]
+          },
+          "duplicate": true
+        }
+      ]
+    },
+    {
+      "channel": "telegram",
+      "as_of": "2026-10-31",
+      "steps": [
+        {
+          "text": "Tôi muốn tiếp tục tư vấn sản phẩm lần trước.",
+          "expect": {
+            "offer": true,
+            "offer_unit": "%",
+            "forbidden_text": [
+              "chắc chắn được duyệt",
+              "chắc chắn được bồi thường"
+            ]
+          }
+        },
+        {
+          "text": "Tôi muốn gặp chuyên viên để tìm hiểu điều kiện đăng ký.",
+          "stage": "apply",
+          "handoff": true,
+          "handoff_required": [
+            "reason",
+            "next_step",
+            "brief.customer_id",
+            "brief.needs",
+            "bot_said"
+          ]
+        }
+      ]
+    }
+  ],
+  "loan": {
+    "amount": "2000000000",
+    "term": 240
+  }
+}

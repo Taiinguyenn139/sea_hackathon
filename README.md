@@ -6,6 +6,36 @@ Bankwise là chatbot fintech dùng dữ liệu ngân hàng hư cấu, gồm web 
 console chuyên viên, benchmark và adapter Telegram. Backend FastAPI/SQLite;
 frontend React/Vite. Chạy một backend process để giữ hợp đồng SQLite/checkpoint.
 
+## Sản phẩm và kịch bản ba sản phẩm
+
+Mock hỗ trợ vay mua nhà (`home_loan`), vay tiêu dùng (`personal_loan`), thẻ tín
+dụng (`credit_card`) và bảo hiểm sức khỏe cá nhân (`health_insurance`). Gói
+**An Tâm Demo** có phí 3 triệu đồng/năm, hạn mức nội trú 100 triệu đồng/năm,
+thời hạn 12 tháng, thời gian chờ 30 ngày, độ tuổi tham khảo 18–60. Gói loại trừ
+ngoại trú, nha khoa, thai sản, bệnh có sẵn và sự kiện trong thời gian chờ.
+Toàn bộ số liệu là giả lập; việc chấp nhận bảo hiểm, phí thực tế và bồi thường
+cần thẩm định, điều khoản hợp đồng. Fixture có hiệu lực trong năm 2026.
+
+Bộ `simulators/scenarios/three-products/` gồm ba hành trình:
+
+| Sản phẩm | Hành trình và kết quả cần kiểm tra |
+| --- | --- |
+| Vay mua nhà | Hỏi khi thiếu số tiền; báo giá khoản 2 tỷ/20 năm với thu nhập 45 triệu, nhà 3 tỷ, không nợ; tiếp tục từ web sang Telegram và handoff. |
+| Vay tiêu dùng | Hỏi khi thiếu số tiền; báo giá khoản 100 triệu/24 tháng với thu nhập 30 triệu, không nợ; tiếp tục đa kênh và handoff. |
+| Bảo hiểm sức khỏe | Nêu phí, quyền lợi, thời gian chờ, tuổi và loại trừ từ tool; không hỏi slot vay hoặc tính trả góp; tiếp tục đa kênh và handoff. |
+
+Cả ba kiểm tra retry cùng message ID và provenance bằng oracle độc lập.
+Test bổ sung bao phủ lỗi tool, đầu vào OTP/prompt injection, ngày hết hạn,
+chuyển từ vay sang bảo hiểm và chặn lời cam kết bồi thường trong streaming.
+Chạy trên DB tạm tự tạo, không cần server hoặc API key:
+
+```sh
+uv run pytest -q tests/test_insurance.py tests/test_streaming.py
+```
+
+Có thể chạy evaluator với `--scenario-dir simulators/scenarios/three-products`.
+Evaluator có thao tác reset; chỉ trỏ tới backend localhost riêng dùng DB tạm.
+
 ## Các cuộc trò chuyện trên web
 
 - Sidebar liệt kê các phiên, đặt tên theo câu hỏi đầu tiên được chấp nhận; có tìm kiếm và đổi tên. Trên điện thoại dùng nút mở danh sách phiên trong header.
@@ -242,7 +272,7 @@ kiểm tra health và revision theo hướng dẫn vận hành để xác nhận
 
 ## Tools ngân hàng
 
-[Hướng dẫn tích hợp](docs/INTEGRATION.md) mô tả 9 tool từ nhánh tuannv, quyền truy cập,
+[Hướng dẫn tích hợp](docs/INTEGRATION.md) mô tả 10 tool ngân hàng và bảo hiểm, quyền truy cập,
 ngày gọi bắt buộc và adapter agent trên main. [Dữ liệu giả lập](docs/DATA.md) giải thích
 fixtures nghiệp vụ. Backend nhận diện phone demo dùng
 `simulators/datasets/identity_v1/identities.json` qua registry `harness/identity.py`;

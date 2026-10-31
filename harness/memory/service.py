@@ -11,11 +11,17 @@ from harness.llm import ExtractionSuggestion, LLMUnavailable, json_completion
 def extract(text):
     low = text.lower()
     slots = {}
-    if any(x in low for x in ["mua nhà", "vay nhà", "home_loan"]):
+    if any(x in low for x in ["bảo hiểm sức khỏe", "health_insurance"]):
+        slots["product"] = ("health_insurance", "")
+    elif any(x in low for x in ["mua nhà", "vay nhà", "home_loan"]):
         slots["product"] = ("home_loan", "")
     elif any(x in low for x in ["tiêu dùng", "personal_loan"]):
         slots["product"] = ("personal_loan", "")
-    elif any(x in low for x in ["thẻ", "credit_card"]):
+    elif any(x in low for x in ["thẻ tín dụng", "credit_card"]):
+        slots["product"] = ("credit_card", "")
+    elif "bảo hiểm" in low:
+        slots["product"] = ("health_insurance", "")
+    elif "thẻ" in low:
         slots["product"] = ("credit_card", "")
     previous_money_end = 0
     for match in re.finditer(r"(-?\d+(?:[.,]\d+)?)\s*(tỷ|triệu|nghìn|trieu|ty)", low):
@@ -27,6 +33,8 @@ def extract(text):
         previous_money_end = match.end()
         cues = {"income": ["thu nhập", "lương"], "debt": ["nợ", "trả nợ"], "property_value": ["giá nhà", "giá trị"]}
         nearest = [(before.rfind(cue), key) for key, words in cues.items() for cue in words if cue in before]
+        if not nearest and slots.get("product", (None,))[0] == "health_insurance":
+            continue  # A premium/benefit is not a requested loan amount.
         key = max(nearest)[1] if nearest else "amount"
         slots[key] = (str(value.quantize(Decimal(1))), "đồng")
     if re.search(r"không (?:có |còn )?nợ|(?:nợ|trả nợ)(?: hàng tháng)?\s*(?:là |: )?0(?:\s|$|[.,;])", low):
@@ -34,7 +42,7 @@ def extract(text):
     term = re.search(r"(?:kỳ hạn|thời hạn|trong|vay)\s*(\d+)\s*(năm|tháng)", low)
     if not term:
         term = re.search(r"(\d+)\s*(năm|tháng)", low)
-    if term:
+    if term and slots.get("product", (None,))[0] != "health_insurance":
         slots["term"] = (str(int(term[1]) * (12 if term[2] == "năm" else 1)), "tháng")
     if any(x in low for x in ["lãi cao", "lãi sau", "tăng lãi"]):
         slots["objection"] = ("rate_high", "")
@@ -178,6 +186,8 @@ class Memory:
             for span in suggestion["spans"][:20]:
                 if isinstance(span, str) and span and span in payload["text"]:
                     for key, value in extract(span).items():
+                        if extracted.get("product", (None,))[0] == "health_insurance" and key in ("amount", "term"):
+                            continue  # A partial span must retain the full message's product context.
                         extracted.setdefault(key, value)
         for key, (value, unit) in extracted.items():
             correction = corrects(payload["text"], key)

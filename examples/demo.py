@@ -1,4 +1,4 @@
-"""Demo đủ 9 tool, không cần LLM, API key hoặc mạng sau khi cài dependency."""
+"""Demo đủ 10 tool, không cần LLM, API key hoặc mạng sau khi cài dependency."""
 
 import json
 
@@ -44,6 +44,7 @@ def main():
     invoke("get_card_offer", income=100_000_000, segment=customer["data"]["segment"])
     invoke("send_summary", channel="zalo",
            fact_ids=[fact["fact_id"] for fact in promotions["facts"] + installment["facts"]])
+    invoke("get_insurance_offer")
     invoke("schedule_callback", time="2026-11-02T14:00:00+07:00")
     print(f"\nĐã chạy {len(bank.get_tool_calls())}/{len(get_tool_definitions(context=context))} tool; chỉ gửi tin và hẹn lịch GIẢ LẬP.")
 

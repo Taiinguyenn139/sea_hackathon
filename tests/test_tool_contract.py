@@ -337,8 +337,8 @@ class BankToolsTests(unittest.TestCase):
 
     def test_tool_catalog_isolated_and_traces_are_json(self):
         definitions = get_tool_definitions(context=self.context)
-        self.assertEqual(len(definitions), 9)
-        self.assertEqual(len({tool["name"] for tool in definitions}), 9)
+        self.assertEqual(len(definitions), 10)
+        self.assertEqual(len({tool["name"] for tool in definitions}), 10)
         definitions[0]["parameters"]["properties"]["as_of"]["type"] = "wrong"
         self.assertEqual(
             get_tool_definitions(context=self.context)[0]["parameters"]["properties"]["as_of"]["type"], "string"
@@ -349,11 +349,11 @@ class BankToolsTests(unittest.TestCase):
         trace[0]["facts"].clear()
         self.assertEqual(len(self.bank.get_tool_calls()[0]["facts"]), 2)
 
-    def test_entire_demo_runs_all_nine_tools(self):
+    def test_entire_demo_runs_all_ten_tools(self):
         output = StringIO()
         with redirect_stdout(output):
             demo_main()
-        self.assertIn("Đã chạy 9/9 tool", output.getvalue())
+        self.assertIn("Đã chạy 10/10 tool", output.getvalue())
 
     def test_bad_custom_fixture_is_rejected_at_startup(self):
         with tempfile.TemporaryDirectory() as temporary:

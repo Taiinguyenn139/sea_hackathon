@@ -31,6 +31,7 @@ TOOL_ACCESS = {
     "get_rate": "public",
     "get_active_promotions": "public",
     "get_card_offer": "public",
+    "get_insurance_offer": "public",
     "calc_installment": "public",
     "check_suitability": "public",
     "get_disclosures": "public",

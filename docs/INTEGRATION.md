@@ -43,12 +43,12 @@ thái xác minh, thông tin khách nói và memory liên phiên.
 
 | Trạng thái backend | Tool được cung cấp cho agent |
 | --- | --- |
-| Chưa đăng nhập/chưa xác minh | 6 tool công khai |
-| Đã xác minh danh tính, chưa đăng nhập | 6 tool công khai + `send_summary`, `schedule_callback` |
-| Đã đăng nhập | Đủ 9 tool, bao gồm `crm_lookup` |
+| Chưa đăng nhập/chưa xác minh | 7 tool công khai |
+| Đã xác minh danh tính, chưa đăng nhập | 7 tool công khai + `send_summary`, `schedule_callback` |
+| Đã đăng nhập | Đủ 10 tool, bao gồm `crm_lookup` |
 
-6 tool công khai gồm `get_rate`, `get_active_promotions`, `get_card_offer`,
-`calc_installment`, `check_suitability`, `get_disclosures`. Các công cụ này
+7 tool công khai gồm `get_rate`, `get_active_promotions`, `get_card_offer`,
+`calc_installment`, `check_suitability`, `get_disclosures`, `get_insurance_offer`. Các công cụ này
 chỉ dùng bảng giá công khai và tham số khách tự cung cấp. Một phân khúc như
 `priority` ở phép tính thử không chứng minh khách thực sự thuộc phân khúc đó.
 Không tự đọc hồ sơ ngân hàng để điền thông tin khi khách chưa đăng nhập.
@@ -177,7 +177,7 @@ không phải số đã được cấp fact để đọc trực tiếp cho khác
 Khi gắn fact vào memory, ứng dụng cần thêm `customer_id`, `session_id` và liên
 kết trace tương ứng. Thư viện không tự lưu vào DB của harness.
 
-## 3. Tham số và kết quả của 9 tool
+## 3. Tham số và kết quả của 10 tool
 
 Quy ước chung:
 
@@ -187,7 +187,7 @@ Quy ước chung:
 - Tiền: số nguyên VND. `2 tỷ` phải được agent chuẩn hóa thành `2000000000`.
 - Kỳ hạn: số nguyên tháng. `20 năm` phải thành `240`.
 - Lãi suất: phần trăm/năm. Truyền `6.9`, không truyền `0.069` hoặc `"6,9%"`.
-- `as_of`: bắt buộc với cả 9 tool, định dạng `YYYY-MM-DD`.
+- `as_of`: bắt buộc với cả 10 tool, định dạng `YYYY-MM-DD`.
 - Lịch gọi lại: ISO 8601 có múi giờ.
 
 Bảng dưới là tham số model gửi cho dispatcher. Với ba tool riêng tư,
@@ -252,7 +252,8 @@ thì trả `invalid`, thay vì kết luận khách không đủ điều kiện.
 `valid_until`; ngoài khoảng này tool trả `invalid`, không dùng chính sách cũ.
 Các file hiện chỉ có chính sách năm 2026; cần bổ sung trước khi demo năm khác.
 
-**Disclosure:** các topic hợp lệ là `rate`, `installment`, `fee`, `promo`.
+**Disclosure:** vay/thẻ nhận `rate`, `installment`, `fee`, `promo`; bảo hiểm
+nhận `fee`, `coverage`, `exclusions`. Topic không thuộc sản phẩm bị từ chối.
 Agent/renderer chèn nguyên văn câu lưu ý tương ứng khi tư vấn. Tool không tự
 chèn vào câu trả lời hay nội dung gửi đi.
 
@@ -271,13 +272,27 @@ chuyển lời hẹn tương đối thành thời gian cụ thể.
 Hai tool hành động chưa có idempotency (chống tạo trùng khi gọi lại): mỗi lần
 gọi thành công tạo ID mới. Agent cần tránh tự retry sau khi đã nhận thành công.
 
+### Bảo hiểm sức khỏe cá nhân
+
+`get_insurance_offer(as_of=...)` là tool công khai, không cần thông tin tài chính
+hay sức khỏe cá nhân. Trả gói `health_insurance` đang hiệu lực với
+`underwriting_required=true`, `mock=true` và facts `annual_premium`,
+`coverage_limit` (VND), `policy_months` (tháng), `waiting_days` (ngày),
+`min_age`/`max_age` (tuổi). Nguồn: `insurance_products.yaml`.
+
+Gọi tiếp `get_disclosures(product="health_insurance",
+topics=["fee", "coverage", "exclusions"], as_of=...)`. Không dùng `get_rate`,
+`calc_installment` hoặc `check_suitability` tín dụng cho bảo hiểm. Tool chỉ
+cung cấp thông tin gói minh họa, không kết luận khách được nhận bảo hiểm hay
+được bồi thường. Hết hạn dữ liệu thì trả lỗi và không phát fact.
+
 ## 4. Luồng gọi mẫu
 
 Ví dụ đầy đủ, chạy được: [examples/demo.py](../examples/demo.py).
 
 Luồng vay mua nhà:
 
-1. Khách ẩn danh được tư vấn/tính thử bằng 6 tool công khai từ thông tin tự cung cấp.
+1. Khách ẩn danh được tư vấn/tính thử bằng 7 tool công khai từ thông tin tự cung cấp.
 2. Khi đăng nhập thành công, backend truyền context và có thể gọi `crm_lookup` cho chính khách đó.
 3. Chỉ qua verify_identity của module ngoài thì được gửi tóm tắt/hẹn lại, chưa được đọc CRM.
 4. Lấy nhu cầu, thu nhập, khoản trả nợ, giá trị nhà từ hội thoại/memory đã được phép dùng.
@@ -362,9 +377,9 @@ python -m examples.demo
 Test bao gồm ngày bắt buộc/sai định dạng, ngày độc lập giữa các lời gọi,
 chính sách hết hạn, hồ sơ đúng khách sau đăng nhập, promo tại ngày biên, số tiền/kỳ hạn, hai giai
 đoạn trả góp, lãi bằng không, fact không hợp lệ, DTI/LTV, lỗi có đếm, hành động
-giả lập và demo đủ 9 tool. Đây là kiểm tra thư viện, chưa phải benchmark chất
+giả lập và demo đủ 10 tool. Đây là kiểm tra thư viện, chưa phải benchmark chất
 lượng hội thoại, guardrail hoặc memory của chatbot. `tests/test_authorization.py`
-kiểm tra riêng ma trận 6/8/9 tool, truy cập khác khách, giả cờ xác thực, gọi
+kiểm tra riêng ma trận 7/9/10 tool, truy cập khác khách, giả cờ xác thực, gọi
 hàm trực tiếp, logout và tác động của lời gọi bị từ chối.
 
 ## Tích hợp sẵn trên main: Bankwise

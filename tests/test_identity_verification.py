@@ -14,6 +14,7 @@ IDENTITIES = IdentityFile.model_validate_json((DEFAULT_DATASET_DIR / "identities
 ADMIN = {"Authorization": "Bearer identity-admin-test"}
 PUBLIC_TOOLS = {
     "get_rate", "get_active_promotions", "get_card_offer", "calc_installment", "check_suitability", "get_disclosures",
+    "get_insurance_offer",
 }
 VERIFIED_TOOLS = PUBLIC_TOOLS | {"send_summary", "schedule_callback"}
 
