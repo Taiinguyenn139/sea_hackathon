@@ -224,6 +224,27 @@ def test_model_classification_cannot_authorize_handoff(tmp_path, monkeypatch):
     assert explicit["handoff"] is True
 
 
+def test_expired_claim_cannot_restart_budget_after_wait_timeout(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "expired-wait.sqlite3"))
+    memory = Memory(db, configured(llm_call_budget_seconds=0.05))
+    with db.transaction() as conn:
+        memory.enqueue(conn, "turn", "hoa", "session", "web", "Thu nhập 45 triệu")
+        conn.execute("UPDATE memory_jobs SET status='processing',lease_until=?", (time.time() + 30,))
+    clock = [0.0]
+
+    def expire_claim(_):
+        clock[0] = 1.0
+        db.execute("UPDATE memory_jobs SET lease_until=0")
+
+    monkeypatch.setattr("harness.memory.service.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("harness.memory.service.time.sleep", expire_claim)
+    with pytest.raises(LLMUnavailable) as error:
+        memory.flush("hoa")
+    assert error.value.category == "memory_busy"
+    assert db.one("SELECT processed_seq FROM customer_sequences")["processed_seq"] == 0
+    assert db.one("SELECT status FROM memory_jobs")["status"] == "processing"
+
+
 def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
     settings = Settings(db_path=str(tmp_path / "chat.sqlite3"), llm_backend="rules", admin_token="test-admin")
     app = create_app(settings)

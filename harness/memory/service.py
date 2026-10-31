@@ -67,6 +67,7 @@ class Memory:
 
     def flush(self, customer, target_seq=None, allow_llm=True):
         wait_deadline = time.monotonic() + (self.settings.llm_call_budget_seconds if self.settings else 20)
+        waited = False
         with self.db.transaction() as c:
             row = c.execute("SELECT * FROM customer_sequences WHERE customer_id=?", (customer,)).fetchone()
             if not row:
@@ -95,6 +96,8 @@ class Memory:
                         raise LLMUnavailable("memory_cooldown")
                     busy = True
                 else:
+                    if waited and time.monotonic() >= wait_deadline:
+                        raise LLMUnavailable("memory_busy")
                     lease = time.time() + self.settings.llm_call_budget_seconds + 10
                     c.execute(
                         "UPDATE memory_jobs SET status='processing',lease_until=?,error=NULL WHERE turn_id=?",
@@ -102,6 +105,7 @@ class Memory:
                     )
                     payload = json.loads(job["payload"])
             if busy:
+                waited = True
                 if time.monotonic() >= wait_deadline:
                     raise LLMUnavailable("memory_busy")
                 time.sleep(0.01)
