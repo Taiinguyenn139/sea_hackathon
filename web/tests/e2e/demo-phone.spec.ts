@@ -20,7 +20,10 @@ for (const width of [375, 1440]) {
         return route.fulfill({ json: session("first") });
       }
       if (path.endsWith("/new")) { siblings++; return route.fulfill({ json: session("second") }); }
-      if (path.endsWith("/messages")) { messages++; return route.fulfill({ json: { reply: "Đã ghi nhớ", guard_events: [] } }); }
+      if (path.endsWith("/messages/stream")) {
+        messages++;
+        return route.fulfill({ contentType: "text/event-stream", body: `event: result\ndata: ${JSON.stringify({ reply: "Đã ghi nhớ", guard_events: [] })}\n\n` });
+      }
       if (path.endsWith("/turns")) return route.fulfill({ json: { items: [] } });
       if (path.startsWith("/sessions/")) return route.fulfill({ json: session(path.split("/")[2]) });
       return route.fulfill({ status: 404, json: {} });

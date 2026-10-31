@@ -27,9 +27,9 @@ import {
   loadTurns,
   errorMessage,
   request,
+  streamReply,
   type ChatSession,
   type Profile,
-  type Reply,
   type Turn,
 } from "../api";
 import { BrandMark, ErrorBanner, Spinner } from "../ui";
@@ -84,6 +84,7 @@ export function CustomerChat() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
+  const [streamStatus, setStreamStatus] = useState("Trợ lý đang xử lý yêu cầu…");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lastFailed, setLastFailed] = useState<{
@@ -95,7 +96,7 @@ export function CustomerChat() {
   const [promptNotice, setPromptNotice] = useState("");
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-  const sending = useRef(false);
+  const activeStream = useRef<AbortController | null>(null);
   const cached = useRef(new Map<string, { turns: ChatTurn[]; draft: string; loaded: boolean; error: string; lastFailed: typeof lastFailed }>());
   const verified = ["verified", "identified"].includes(
     session?.identity_status ?? "",
@@ -124,6 +125,13 @@ export function CustomerChat() {
       setStorageError("");
     } catch { setStorageError("Trình duyệt chưa lưu được danh sách phiên. Lịch sử có thể không khôi phục sau khi tải lại trang."); }
   }, [entries, session]);
+  useEffect(() => {
+    setPending(false);
+    return () => {
+      activeStream.current?.abort();
+      activeStream.current = null;
+    };
+  }, [session?.session_id]);
   function navigate(next: "home" | "conversation") {
     setView(next);
     window.location.hash = next;
@@ -159,7 +167,7 @@ export function CustomerChat() {
     if (session) cached.current.set(session.session_id, { turns, draft, loaded: !loading && !historyError, error, lastFailed });
   }
   function openConversation(next: ChatSession) {
-    if (pending || sending.current) return;
+    if (pending || activeStream.current) return;
     if (next.session_id !== session?.session_id) {
       rememberView();
       const previous = cached.current.get(next.session_id);
@@ -264,7 +272,7 @@ export function CustomerChat() {
     return () => { live = false; clearInterval(timer); };
   }, [session?.session_id, session?.handoff_id, ended]);
   async function start() {
-    if (pending || sending.current) return;
+    if (pending || activeStream.current) return;
     if (demoPhoneIdentity && !entryPhone.trim()) { document.getElementById("entry-phone")?.focus(); return; }
     setError("");
     setPending(true);
@@ -284,34 +292,98 @@ export function CustomerChat() {
     }
   }
   async function send(text = draft, id: string = crypto.randomUUID()) {
-    if (!session || !text.trim() || pending || loading || historyError || ended || waiting || sending.current) return;
-    // Lock synchronously: repeated Enter events must share one in-flight request.
-    sending.current = true;
-    setPending(true);
-    setError("");
-    setLastFailed(null);
+    if (
+      !session ||
+      !text.trim() ||
+      pending ||
+      waiting ||
+      loading ||
+      historyError ||
+      ended ||
+      activeStream.current
+    )
+      return;
+    const controller = new AbortController();
+    activeStream.current = controller;
     const message = text.trim();
     const retrying = turns.some((turn) => turn.clientId === id);
-    setTurns((prev) => retrying
-      ? prev.map((turn) => turn.clientId === id ? { ...turn, delivery: "sending" } : turn)
-      : [...prev, { id: `local-${id}`, clientId: id, role: "user", text: message, delivery: "sending" }]);
-    // Keep a different, unsent draft when retrying an older failed message.
+    const assistantId = `stream:${id}`;
+    const userId = `user:${id}`;
+    setTurns((prev) => [
+      ...prev
+        .filter((turn) => turn.id !== assistantId)
+        .map((turn): ChatTurn =>
+          turn.clientId === id ? { ...turn, delivery: "sending" } : turn,
+        ),
+      ...(!prev.some((turn) => turn.id === userId)
+        ? [
+            {
+              id: userId,
+              clientId: id,
+              role: "user",
+              text: message,
+              delivery: "sending" as const,
+            },
+          ]
+        : []),
+      { id: assistantId, role: "assistant", text: "" },
+    ]);
+    setPending(true);
+    setStreamStatus("Trợ lý đang xử lý yêu cầu…");
+    setError("");
+    setLastFailed(null);
     if (!retrying) setDraft("");
     setPromptNotice("");
     try {
-      const data = await request<Reply>(
-        `/sessions/${session.session_id}/messages`,
-        {
-          method: "POST",
-          body: { text: message, client_message_id: id },
-          token: session.session_token,
+      const data = await streamReply(
+        session,
+        text.trim(),
+        id,
+        (event) => {
+          if (controller.signal.aborted) return;
+          if (event.type === "text") {
+            setTurns((prev) =>
+              prev.map((turn) =>
+                turn.id === assistantId ? { ...turn, text: event.text } : turn,
+              ),
+            );
+          } else {
+            const labels: Record<string, string> = {
+              preparing: "Đang tiếp nối cuộc trò chuyện…",
+              planning: "Đang tìm hiểu yêu cầu của bạn…",
+              tools: "Đang tra cứu thông tin phù hợp…",
+              drafting: "Trợ lý đang trả lời…",
+              checking: "Đang kiểm tra thông tin trả lời…",
+              backup: "Đang thử lại phản hồi…",
+            };
+            setStreamStatus(
+              labels[event.stage] ?? "Trợ lý đang xử lý yêu cầu…",
+            );
+          }
         },
+        controller.signal,
       );
-      setTurns((prev) => [
-        ...prev.map((turn): ChatTurn => turn.clientId === id ? { ...turn, delivery: "sent" } : turn),
-        { id: `reply-${id}`, role: "assistant", text: data.reply },
-      ]);
-      if (!data.guard_events?.some((event) => !!event && typeof event === "object" && "stage" in event && event.stage === "input" && "action" in event && event.action === "block"))
+      if (controller.signal.aborted) return;
+      setTurns((prev) =>
+        prev.map((turn) =>
+          turn.id === assistantId
+            ? { ...turn, text: data.reply }
+            : turn.clientId === id
+              ? { ...turn, delivery: "sent" }
+              : turn,
+        ),
+      );
+      if (
+        !data.guard_events?.some(
+          (event) =>
+            !!event &&
+            typeof event === "object" &&
+            "stage" in event &&
+            event.stage === "input" &&
+            "action" in event &&
+            event.action === "block",
+        )
+      )
         titleFromMessage(session.session_id, message);
       if (data.identity_status || data.user_id || data.handoff_id || data.brief)
         save({
@@ -323,12 +395,21 @@ export function CustomerChat() {
           status: data.handoff_id ? "waiting_human" : session.status,
         });
     } catch (e) {
-      setTurns((prev) => prev.map((turn) => turn.clientId === id ? { ...turn, delivery: "failed" } : turn));
+      if (controller.signal.aborted) return;
+      setTurns((prev) =>
+        prev
+          .filter((turn) => turn.id !== assistantId)
+          .map((turn): ChatTurn =>
+            turn.clientId === id ? { ...turn, delivery: "failed" } : turn,
+          ),
+      );
       setError(errorMessage(e));
-      setLastFailed({ text: message, id });
+      setLastFailed({ text, id });
     } finally {
-      sending.current = false;
-      setPending(false);
+      if (activeStream.current === controller) {
+        activeStream.current = null;
+        setPending(false);
+      }
     }
   }
   async function handoff() {
@@ -357,7 +438,7 @@ export function CustomerChat() {
     }
   }
   async function newChat() {
-    if (pending || sending.current) return;
+    if (pending || activeStream.current) return;
     if (!session) { setHistoryOpen(false); await start(); return; }
     setPending(true);
     setError("");
@@ -565,7 +646,7 @@ export function CustomerChat() {
           {!isHome && loading && <Spinner label="Đang khôi phục hội thoại…" />}
           {!isHome && !!turns.length && (
             <div className="messages" role="log" aria-label="Lịch sử hội thoại">
-              {turns.map((turn, index) => (
+              {turns.filter((turn) => turn.text).map((turn, index) => (
                 <article
                   className={`message ${turn.role === "user" ? "from-user" : "from-assistant"}`}
                   key={turn.turn_id ?? turn.id ?? index}
@@ -601,7 +682,7 @@ export function CustomerChat() {
                 <i />
                 <i />
               </span>
-              <span>Trợ lý đang xử lý yêu cầu…</span>
+              <span>{streamStatus}</span>
             </div>
           )}
           {!isHome && waiting && (

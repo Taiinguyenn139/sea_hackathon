@@ -14,7 +14,7 @@ for (const width of [375, 1440]) {
       const path = new URL(route.request().url()).pathname.replace("/api", "");
       if (path === "/demo/profiles") return route.fulfill({ json: { profiles: [{ id: "hoa", name: "Hoa" }] } });
       if (path === "/sessions") return route.fulfill({ json: create() });
-      const match = path.match(/^\/sessions\/(chat-\d+)(?:\/(\w+))?$/);
+      const match = path.match(/^\/sessions\/(chat-\d+)(?:\/(\w+)(?:\/stream)?)?$/);
       if (!match) return route.fulfill({ status: 404, json: {} });
       const [, id, action] = match;
       expect(route.request().headers().authorization).toBe(`Bearer token-${id}`);
@@ -25,7 +25,7 @@ for (const width of [375, 1440]) {
         const body = route.request().postDataJSON();
         const reply = `Trả lời riêng của ${id}`;
         turns[id].push({ id: body.client_message_id, text: body.text, reply });
-        return route.fulfill({ json: { session_id: id, reply, guard_events: [] } });
+        return route.fulfill({ contentType: "text/event-stream", body: `event: result\ndata: ${JSON.stringify({ session_id: id, reply, guard_events: [] })}\n\n` });
       }
       return route.fulfill({ json: { session_id: id, status: "active", identity_status: "unverified" } });
     });

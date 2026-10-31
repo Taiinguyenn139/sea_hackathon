@@ -1,4 +1,22 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
+
+async function fulfillApi(
+  route: Route,
+  options: Parameters<Route["fulfill"]>[0],
+) {
+  if (
+    route.request().url().endsWith("/messages/stream") &&
+    options.json &&
+    (options.status ?? 200) < 400
+  )
+    return route.fulfill({
+      ...options,
+      json: undefined,
+      contentType: "text/event-stream",
+      body: `event: result\ndata: ${JSON.stringify(options.json)}\n\n`,
+    });
+  return route.fulfill(options);
+}
 
 const demoProfiles = Array.from({ length: 10 }, (_, index) => {
   const phone = `09000000${String(index + 1).padStart(2, "0")}`;
@@ -10,6 +28,78 @@ const demoProfiles = Array.from({ length: 10 }, (_, index) => {
   };
 });
 
+test("chat shows partial text while the streamed reply is still in progress", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    sessionStorage.setItem(
+      "bankwise-chat-session",
+      JSON.stringify({
+        session_id: "stream-session",
+        session_token: "stream-capability",
+        identity_status: "identified",
+      }),
+    );
+    const original = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      if (!String(input).endsWith("/messages/stream"))
+        return original(input, init);
+      const encoder = new TextEncoder();
+      let timer: ReturnType<typeof setTimeout>;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  'event: text\ndata: {"text":"Đoạn đầu đã kiểm tra."}\n\n',
+                ),
+              );
+              timer = setTimeout(() => {
+                controller.enqueue(
+                  encoder.encode(
+                    'event: result\ndata: {"session_id":"stream-session","reply":"Đoạn đầu đã kiểm tra. Đoạn tiếp theo.","used_fact_ids":[],"guard_events":[]}\n\n',
+                  ),
+                );
+                controller.close();
+              }, 1800);
+            },
+            cancel() {
+              clearTimeout(timer);
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    };
+  });
+  await page.route("**/api/**", (route) =>
+    route.fulfill({
+      json: route.request().url().includes("/demo/profiles")
+        ? { profiles: demoProfiles }
+        : { items: [] },
+    }),
+  );
+  await page.goto("/chat#conversation");
+  const composer = page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" });
+  await expect(composer).toBeEnabled();
+  await composer.fill("Tư vấn giúp tôi");
+  await composer.press("Enter");
+  await expect(
+    page.getByText("Đoạn đầu đã kiểm tra.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Đoạn đầu đã kiểm tra. Đoạn tiếp theo.", { exact: true }),
+  ).not.toBeVisible();
+  await expect(
+    page.getByText("Đoạn đầu đã kiểm tra. Đoạn tiếp theo.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("log").getByText("Tư vấn giúp tôi", { exact: true })).toHaveCount(
+    1,
+  );
+  await expect(composer).toBeEnabled();
+});
+
 test("phone confirmation restores Telegram context before enabling web chat", async ({
   page,
 }, testInfo) => {
@@ -17,21 +107,21 @@ test("phone confirmation restores Telegram context before enabling web chat", as
     const path = new URL(route.request().url()).pathname.replace("/api", "");
     const body = route.request().postDataJSON();
     if (path === "/demo/profiles")
-      return route.fulfill({ json: { profiles: demoProfiles } });
+      return fulfillApi(route, { json: { profiles: demoProfiles } });
     if (path === "/auth/phone/start") {
       expect(body.phone).toBe("0901234567");
-      return route.fulfill({
+      return fulfillApi(route, {
         json: { challenge_id: "test-phone-challenge", expires_in: 600 },
       });
     }
     if (path === "/auth/phone/confirm") {
       expect(body.challenge_id).toBe("test-phone-challenge");
       if (body.code !== "654321")
-        return route.fulfill({
+        return fulfillApi(route, {
           status: 400,
           json: { detail: "Mã xác nhận không hợp lệ hoặc đã hết hạn." },
         });
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           session_id: "phone-session",
           session_token: "phone-capability",
@@ -54,12 +144,13 @@ test("phone confirmation restores Telegram context before enabling web chat", as
         },
       });
     }
-    if (path.endsWith("/turns")) return route.fulfill({ json: { items: [] } });
-    if (path.endsWith("/messages")) {
+    if (path.endsWith("/turns"))
+      return fulfillApi(route, { json: { items: [] } });
+    if (path.endsWith("/messages") || path.endsWith("/messages/stream")) {
       expect(route.request().headers().authorization).toBe(
         "Bearer phone-capability",
       );
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           session_id: "phone-session",
           reply:
@@ -69,7 +160,7 @@ test("phone confirmation restores Telegram context before enabling web chat", as
         },
       });
     }
-    return route.fulfill({ status: 404, json: { detail: "Not found" } });
+    return fulfillApi(route, { status: 404, json: { detail: "Not found" } });
   });
   await page.goto("/chat");
   await page
@@ -104,7 +195,7 @@ test("phone confirmation restores Telegram context before enabling web chat", as
 test("phone onboarding fits a narrow screen", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.route("**/api/**", (route) =>
-    route.fulfill({ json: { profiles: [] } }),
+    fulfillApi(route, { json: { profiles: [] } }),
   );
   await page.goto("/chat");
   await page
@@ -130,10 +221,10 @@ test("demo phone in chat verifies the session; public questions and retry work",
     const path = new URL(route.request().url()).pathname.replace("/api", "");
     const body = route.request().postDataJSON();
     if (path === "/demo/profiles")
-      return route.fulfill({ json: { profiles: demoProfiles } });
+      return fulfillApi(route, { json: { profiles: demoProfiles } });
     if (path === "/sessions") {
       expect(body.demo_profile).toBe("0900000001");
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           session_id: "test-session",
           session_token: "test-capability",
@@ -143,15 +234,16 @@ test("demo phone in chat verifies the session; public questions and retry work",
         },
       });
     }
-    if (path.endsWith("/turns")) return route.fulfill({ json: { items: [] } });
-    if (path.endsWith("/messages")) {
+    if (path.endsWith("/turns"))
+      return fulfillApi(route, { json: { items: [] } });
+    if (path.endsWith("/messages") || path.endsWith("/messages/stream")) {
       expect(route.request().headers().authorization).toBe(
         "Bearer test-capability",
       );
       if (body.text === "Tôi muốn tìm hiểu vay mua nhà.") {
         expect(verified).toBe(false);
         publicQuestions += 1;
-        return route.fulfill({
+        return fulfillApi(route, {
           json: {
             session_id: "test-session",
             identity_status: "unverified",
@@ -165,7 +257,7 @@ test("demo phone in chat verifies the session; public questions and retry work",
       }
       if (body.text === "0900000001") {
         verified = true;
-        return route.fulfill({
+        return fulfillApi(route, {
           json: {
             session_id: "test-session",
             identity_status: "verified",
@@ -180,11 +272,11 @@ test("demo phone in chat verifies the session; public questions and retry work",
       expect(verified).toBe(true);
       messageIds.push(body.client_message_id);
       if (messageIds.length === 1)
-        return route.fulfill({
+        return fulfillApi(route, {
           status: 503,
           json: { detail: "Dịch vụ tạm thời chưa sẵn sàng." },
         });
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           session_id: "test-session",
           identity_status: "verified",
@@ -195,7 +287,7 @@ test("demo phone in chat verifies the session; public questions and retry work",
         },
       });
     }
-    return route.fulfill({ status: 404, json: { detail: "Not found" } });
+    return fulfillApi(route, { status: 404, json: { detail: "Not found" } });
   });
   await page.goto("/chat");
   const composer = page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" });
@@ -265,7 +357,7 @@ test("staff auth gates private content and incomplete benchmark is not presented
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api", "");
     if (path === "/staff/me")
-      return route.fulfill({
+      return fulfillApi(route, {
         status: loggedIn ? 200 : 401,
         json: loggedIn
           ? { authenticated: true, csrf_token: "test-csrf" }
@@ -273,17 +365,17 @@ test("staff auth gates private content and incomplete benchmark is not presented
       });
     if (path === "/staff/login") {
       loggedIn = true;
-      return route.fulfill({ json: { csrf_token: "test-csrf" } });
+      return fulfillApi(route, { json: { csrf_token: "test-csrf" } });
     }
     if (path === "/eval/runs")
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           schema_version: 1,
           runs: [{ run_id: "run-test", status: "incomplete", split: "dev" }],
         },
       });
     if (path === "/eval/runs/run-test")
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           schema_version: 1,
           run_id: "run-test",
@@ -293,7 +385,7 @@ test("staff auth gates private content and incomplete benchmark is not presented
           judge: { status: "skipped" },
         },
       });
-    return route.fulfill({ status: 404, json: { detail: "Not found" } });
+    return fulfillApi(route, { status: 404, json: { detail: "Not found" } });
   });
   await page.goto("/benchmark");
   await expect(
@@ -320,7 +412,7 @@ for (const [width, height] of [
   }, testInfo) => {
     await page.setViewportSize({ width, height });
     await page.route("**/api/demo/profiles", (route) =>
-      route.fulfill({
+      fulfillApi(route, {
         json: {
           profiles: demoProfiles,
         },
@@ -395,11 +487,12 @@ test("staff queue uses real counts and supports search with reset", async ({
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api", "");
     if (path === "/staff/me")
-      return route.fulfill({ json: { csrf_token: "test-csrf" } });
+      return fulfillApi(route, { json: { csrf_token: "test-csrf" } });
     if (path === "/handoffs")
-      return route.fulfill({ json: { items: handoffs } });
-    if (path === "/callbacks") return route.fulfill({ json: { items: [] } });
-    return route.fulfill({ status: 404, json: { detail: "Not found" } });
+      return fulfillApi(route, { json: { items: handoffs } });
+    if (path === "/callbacks")
+      return fulfillApi(route, { json: { items: [] } });
+    return fulfillApi(route, { status: 404, json: { detail: "Not found" } });
   });
   await page.goto("/staff");
   await expect(
@@ -436,7 +529,7 @@ test("staff login preview and reduced motion preference", async ({
 }, testInfo) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.route("**/api/staff/me", (route) =>
-    route.fulfill({ status: 401, json: { detail: "Unauthorized" } }),
+    fulfillApi(route, { status: 401, json: { detail: "Unauthorized" } }),
   );
   await page.goto("/staff");
   await expect(
@@ -449,7 +542,7 @@ test("staff login preview and reduced motion preference", async ({
     animations: "disabled",
   });
   await page.route("**/api/demo/profiles", (route) =>
-    route.fulfill({ json: { profiles: [] } }),
+    fulfillApi(route, { json: { profiles: [] } }),
   );
   await page.goto("/chat");
   await expect(page.locator(".illustrated-card")).toHaveCSS(

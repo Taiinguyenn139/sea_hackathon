@@ -199,7 +199,13 @@ def test_phone_entry_box_opens_empty_session_and_shared_memory(client):
     assert second["session_id"] != first["session_id"]
     assert second["brief"]["customer_id"] == first["brief"]["customer_id"]
     assert client.get(f"/sessions/{second['session_id']}/turns", headers=auth(second)).json()["items"] == []
-    say(client, second, "Thu nhập chính xác 50 triệu", "correct")
+    streamed = client.post(
+        f"/sessions/{second['session_id']}/messages/stream", headers=auth(second),
+        json={"text": "Thu nhập chính xác 50 triệu", "client_message_id": "correct"},
+    )
+    assert streamed.status_code == 200
+    assert "event: result" in streamed.text
+    assert "event: error" not in streamed.text
     say(client, first, "Tiếp tục tư vấn thẻ tín dụng", "resume")
     assert income_in_trace(client, first["session_id"]) == ["50000000"]
     tg = telegram(client, 1, "0901234567")

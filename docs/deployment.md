@@ -61,3 +61,15 @@ Memory gọi provider ngoài transaction SQLite. Job được claim bằng lease
 Thử lỗi cưỡng bức và eval chỉ chạy trên server localhost có DB tạm; runner eval reset dữ liệu. Không inject lỗi hoặc reset production để kiểm tra backup. Trước smoke ghi dữ liệu production, giữ backup nhất quán theo quy trình release.
 
 Rollback cấu hình bằng cách xuất bản lại payload đã biết tốt thành version mới nhất rồi chạy loader/release image tương thích. Loader luôn đọc latest, không tự quay về version cũ. Giữ version secret và digest/revision trước đó để phục hồi; không khôi phục snapshot DB cũ sau khi mở traffic nếu sẽ làm mất lượt mới.
+
+## Streaming trên web chat
+
+Web dùng `POST /sessions/{sid}/messages/stream` với bearer session token và JSON `{text, client_message_id}`. Backend trả `text/event-stream`: `status` báo tiến độ, `text` chứa **toàn bộ snapshot** thay cho nội dung assistant đang hiện, `result` chứa response cuối theo hợp đồng route JSON, `error` chứa `message` và `status`. Client phải nhận `result` mới coi lượt đã hoàn tất; EOF thiếu terminal là lỗi có thể gửi lại cùng message ID. Heartbeat là SSE comment. Route `/messages` trả JSON và Telegram vẫn dùng hợp đồng cũ.
+
+OpenAI chỉ stream bước `draft`; phân loại đầu vào, plan và extract vẫn là JSON nội bộ. Câu hoàn chỉnh chỉ được phát sau kiểm tra placeholder, số liệu và thời hạn fact, rồi render bằng nguồn đã biết và gắn disclosure. Guard toàn văn vẫn quyết định response cuối. Các nhánh lỗi tool, không phù hợp, xác nhận và action chỉ hiển thị kết quả cuối. Vì vậy khách thấy nội dung theo câu đã kiểm tra; thời gian trước câu đầu vẫn gồm phân loại, memory và bank tools.
+
+Khi primary lỗi sau partial, event `text` rỗng xóa bản nháp trước khi backup trả lời. Khi hết cả hai model, `result.reply` là câu mặc định đã chốt. Không hiển thị lỗi provider. Log completion thành công có `streamed: true` để phân biệt provider streaming thật.
+
+Queue mỗi request giới hạn 32 events và không giữ dữ liệu khi browser đã disconnect. Worker tiếp tục hoàn tất/lưu receipt trong ngân sách provider để retry cùng ID không gọi lại side effects; shutdown chờ worker đang chạy. Một lượt có nhiều bước nên tổng thời gian có thể vượt ngân sách một bước. Giữ shutdown grace đủ cho lượt đang chạy khi vận hành ngoài `release.sh`.
+
+SSE dùng `Cache-Control: no-store, no-transform` và `X-Accel-Buffering: no`. Khi thêm proxy/CDN, giữ khả năng flush SSE và kiểm tra event `status` cùng `text` đến trước `result` qua URL HTTPS thực tế. Không cần secret hoặc biến môi trường streaming mới; giữ cấu hình OpenAI hiện tại.
