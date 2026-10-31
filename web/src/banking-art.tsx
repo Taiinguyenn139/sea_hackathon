@@ -4,6 +4,7 @@ import { ArrowUpRight, Sparkles } from "lucide-react";
 export function BankingScene() {
   return (
     <div className="banking-scene" aria-hidden="true">
+      <div className="scene-composition">
       <div className="scene-grid" />
       <div className="scene-orbit orbit-back" />
       <div className="scene-orbit orbit-front" />
@@ -14,6 +15,7 @@ export function BankingScene() {
         <div className="art-card-bottom"><span>PERSONAL<br />BANKING</span><span className="card-circles"><i /><i /></span></div>
       </div>
       <div className="scene-sticker"><ArrowUpRight size={24} /></div>
+      </div>
       <div className="scene-caption"><span /> CHUYỆN CỦA BẠN. CHÚNG TÔI LẮNG NGHE.</div>
     </div>
   );
