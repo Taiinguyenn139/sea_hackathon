@@ -1,0 +1,8 @@
+# valid_from và valid_until đều bao gồm ngày biên; chọn đúng product + channel.
+promotions:
+  - {promo_id: HL-Q3-2026, product: home_loan, channels: [hotline, zalo, web], rate: 6.5, promo_months: 12, valid_from: '2026-07-01', valid_until: '2026-09-30'}
+  - {promo_id: HL-Q4-2026, product: home_loan, channels: [hotline, zalo], rate: 6.9, promo_months: 12, valid_from: '2026-10-01', valid_until: '2026-12-31'}
+  - {promo_id: HL-WEB-Q4-2026, product: home_loan, channels: [web], rate: 7.1, promo_months: 6, valid_from: '2026-10-01', valid_until: '2026-12-31'}
+  - {promo_id: PL-Q4-2026, product: personal_loan, channels: [hotline, zalo, web], rate: 12.0, promo_months: 6, valid_from: '2026-10-01', valid_until: '2026-12-31'}
+  - {promo_id: CARD-Q4-2026, product: credit_card, channels: [zalo, web], fee_waiver: 100.0, promo_months: 12, valid_from: '2026-10-01', valid_until: '2026-12-31'}
+  - {promo_id: HL-Q1-2027, product: home_loan, channels: [hotline, zalo, web], rate: 7.4, promo_months: 12, valid_from: '2027-01-01', valid_until: '2027-03-31'}

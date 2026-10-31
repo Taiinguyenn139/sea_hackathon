@@ -1,0 +1,6 @@
+# debt = tổng tiền phải trả mỗi tháng cho các khoản nợ hiện hữu, không phải dư nợ gốc.
+# DTI = (debt + khoản trả tháng ở standard_rate bảo thủ) / income.
+suitability_rules:
+  home_loan: {valid_from: '2026-01-01', valid_until: '2026-12-31', min_income: 15000000, amount_min: 100000000, amount_max: 10000000000, term_min: 12, term_max: 360, max_dti: 0.5, max_ltv: 0.8, assessment_rate: 10.5}
+  personal_loan: {valid_from: '2026-01-01', valid_until: '2026-12-31', min_income: 7000000, amount_min: 10000000, amount_max: 500000000, term_min: 6, term_max: 60, max_dti: 0.45, max_ltv: null, assessment_rate: 18.0}
+  credit_card: {valid_from: '2026-01-01', valid_until: '2026-12-31', min_income: 7000000, max_dti: 0.5, max_ltv: null}
