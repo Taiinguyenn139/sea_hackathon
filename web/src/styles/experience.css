@@ -34,6 +34,41 @@
 body { background: var(--surface); }
 button, a, input, textarea, select { transition: background 180ms, color 180ms, border-color 180ms, box-shadow 180ms; }
 button:disabled { opacity: .5; }
+.sales-improvements { margin-top: 24px; }
+.sales-improvements .panel-heading { gap: 16px; flex-wrap: wrap; }
+.sales-improvements .panel-heading p svg { vertical-align: middle; margin: 0 5px; }
+.improvement-content { padding: 0 21px 24px; }
+.improvement-note { background: #f0f4e7; border: 1px solid #dce5ce; padding: 13px 16px; border-radius: 10px; font-size: 12px; line-height: 1.8; }
+.improvement-list { display: grid; gap: 18px; margin-top: 22px; }
+.improvement-card { padding: 22px; border: 1px solid #dce1d3; border-radius: 12px; background: #fffefa; min-width: 0; }
+.improvement-card h3, .improvement-comparison h3 { font-size: 16px; margin: 14px 0 10px; line-height: 1.6; }
+.improvement-card p, .improvement-card li, .improvement-comparison p, .improvement-comparison li { font-size: 12px; line-height: 1.9; overflow-wrap: anywhere; }
+.improvement-title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; }
+.improvement-card ol { padding-left: 20px; }
+.improvement-target { display: flex; align-items: center; gap: 9px; color: #356143; font-size: 12px; line-height: 1.8; }
+.improvement-target svg { flex-shrink: 0; }
+.improvement-evidence { margin: 18px 0; padding: 13px 0; border-top: 1px solid #e2e7d8; border-bottom: 1px solid #e2e7d8; font-size: 12px; }
+.improvement-evidence summary { cursor: pointer; font-weight: 600; }
+.evidence-example { padding: 14px; background: #f5f6ef; margin-top: 10px; border-radius: 8px; overflow-wrap: anywhere; }
+.evidence-example p { white-space: pre-wrap; }
+.evidence-example small { color: #826234; }
+.improvement-form { display: grid; gap: 9px; }
+.improvement-form label, .improvement-comparison > label { font-size: 12px; font-weight: 500; }
+.improvement-form textarea { width: 100%; min-height: 70px; resize: vertical; font: inherit; font-size: 12px; line-height: 1.9; padding: 12px; color: inherit; background: white; border: 1px solid #d9dfcc; border-radius: 8px; }
+.improvement-save { display: flex; align-items: end; flex-wrap: wrap; gap: 14px; margin-top: 6px; }
+.improvement-save label { display: grid; gap: 8px; }
+.improvement-save select, .improvement-comparison > select { font: inherit; font-size: 12px; max-width: 100%; min-height: 40px; border: 1px solid #d9dfcc; border-radius: 8px; padding: 8px 12px; background: #fffefa; color: inherit; }
+.improvement-save .muted { font-size: 11px; align-self: center; }
+.improvement-comparison { border-top: 1px solid #dce1d3; margin-top: 26px; padding-top: 12px; }
+.improvement-comparison > label { display: block; margin: 18px 0 8px; }
+.improvement-comparison > select { width: 100%; margin-bottom: 14px; }
+.comparison-table td { font-size: 17px; white-space: nowrap; }
+@media (max-width: 600px) {
+  .improvement-content { padding: 0 14px 18px; }
+  .improvement-card { padding: 15px; }
+  .improvement-save { align-items: stretch; flex-direction: column; }
+  .improvement-save .button { justify-content: center; }
+}
 ::selection { background: var(--blue-line); color: var(--blue-ink); }
 :focus-visible { outline: 2px solid var(--brand-blue); outline-offset: 4px; }
 
@@ -402,4 +437,17 @@ button:disabled { opacity: .5; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+.sales-workspace > .panel { margin-top: 20px; }
+.sales-workspace label { display: grid; gap: 8px; margin: 10px 0; font-size: 12px; }
+.sales-workspace input:not([type=checkbox]), .sales-workspace select { max-width: 100%; min-height: 40px; padding: 8px; border: 1px solid #d9dfcc; border-radius: 8px; font: inherit; background: #fffefa; }
+.sales-workspace input[type=checkbox] { justify-self: start; }
+.sales-workspace pre { overflow: auto; max-height: 300px; font-size: 11px; padding: 10px; background: #f0f4e7; }
+.sales-workspace blockquote { white-space: pre-wrap; overflow-wrap: anywhere; }
+.sales-workspace .tabs { flex-wrap: wrap; }
+@media (max-width: 560px) {
+  .sidebar-content > nav { flex: 3; min-width: 0; }
+  .sidebar-content > nav:first-of-type { flex: 1; }
+  .sidebar-content .nav-item { flex: 1; width: auto; min-width: 0; padding: 5px 2px; }
+  .sidebar-content .nav-item > span:not(.nav-current) { font-size: 8px; max-width: 100%; text-align: center; }
 }

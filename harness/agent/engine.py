@@ -4,10 +4,8 @@ import sqlite3
 import threading
 from datetime import date, timedelta
 from decimal import Decimal
-from pathlib import Path
 from typing import TypedDict
 
-import yaml
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
@@ -15,6 +13,7 @@ from langgraph.types import Command, interrupt
 from bank_tools.service import BankTools, canonical, ident, now
 from harness.llm import DEFAULT_REPLY, DraftSuggestion, LLMUnavailable, PlanSuggestion, json_completion
 from harness.memory.service import Memory, extract
+from harness.streaming import emit, stream_sink
 
 
 class TurnState(TypedDict, total=False):
@@ -44,6 +43,22 @@ class TurnState(TypedDict, total=False):
 
 def event(guard, reason, action="fallback", attempt=0):
     return {"guard_id": guard, "reason": reason, "action": action, "stage": "guard", "attempt": attempt, "fact_ids": []}
+
+
+def conversation_intent(text):
+    low = " ".join(text.casefold().strip(" .!?,…").split())
+    if re.fullmatch(r"(?:hello|hi|hey|xin chào|chào)(?:\s+(?:bạn|em|anh|chị|bot|ad|shop))?", low):
+        return "greeting"
+    if re.fullmatch(r"(?:cảm ơn|cám ơn|thanks|thank you)(?:\s+(?:bạn|em|anh|chị|nhé|nhiều))*", low):
+        return "acknowledgement"
+    catalog = any(word in low for word in ["sản phẩm", "dịch vụ", "loại vay", "gói vay", "khoản vay"])
+    listing = any(word in low for word in ["những", "các", "nào", "danh sách", "giới thiệu", "có gì"])
+    if (catalog and listing) or re.search(r"\bvay (?:gì|nào)\b", low):
+        # A question naming a specific product should retain its detailed advice flow.
+        specific = any(word in low for word in ["mua nhà", "tiêu dùng", "thẻ tín dụng"])
+        if not specific:
+            return "loan_catalog" if "vay" in low else "product_catalog"
+    return "advice"
 
 
 def draft_problem(draft, facts, as_of):
@@ -129,13 +144,16 @@ class Engine:
         if session.get("verified", False):
             return True
         customer = session["customer_id"]
-        return bool(self.db.one(
-            "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
-            (customer, session.get("channel"), session.get("external_id")),
-        ) or self.db.one(
-            "SELECT session_id FROM phone_sessions WHERE session_id=? AND customer_id=?",
-            (session.get("id"), customer),
-        ))
+        return bool(
+            self.db.one(
+                "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
+                (customer, session.get("channel"), session.get("external_id")),
+            )
+            or self.db.one(
+                "SELECT session_id FROM phone_sessions WHERE session_id=? AND customer_id=?",
+                (session.get("id"), customer),
+            )
+        )
 
     def run(self, session, text, turn_id):
         with self.lock(session["customer_id"]):
@@ -176,6 +194,7 @@ class Engine:
                 return state
 
     def load_context(self, s):
+        emit("status", stage="preparing")
         session = s["session"]
         customer = session["customer_id"]
         job = self.db.one("SELECT seq FROM memory_jobs WHERE turn_id=?", (s["turn_id"],))
@@ -254,13 +273,19 @@ class Engine:
         return {"known": known, "facts": facts, "context_parts": parts, "confirmations": sorted(set(confirmations))}
 
     def plan(self, s):
+        emit("status", stage="planning")
         low = s["text"].lower()
         known = s["known"]
         product = known.get("product", "home_loan")
         handoff = any(t in low for t in ["chuyên viên", "gặp người", "khiếu nại", "nộp hồ sơ", "ký hợp đồng"])
+        intent = conversation_intent(s["text"])
         suggestion = json_completion(
             self.settings,
-            "Phân loại hội thoại tư vấn. Trả JSON {stage:discover|quote|objection|followup|apply, objection:rate_high|need_spouse|null}. Không trả số liệu hoặc tool arguments.",
+            "Phân loại hội thoại tư vấn. Trả JSON {stage:discover|quote|objection|followup|apply, "
+            "objection:rate_high|need_spouse|null, intent:advice|greeting|loan_catalog|product_catalog|acknowledgement}. "
+            "greeting: chào hỏi; loan_catalog: hỏi có những loại vay nào; product_catalog: hỏi các sản phẩm/dịch vụ "
+            "được tư vấn; acknowledgement: cảm ơn. Không biến câu hỏi tổng quan thành yêu cầu báo giá. "
+            "Không trả số liệu hoặc tool arguments.",
             {"text": s["text"], "known": known},
             schema=PlanSuggestion,
             purpose="plan",
@@ -268,11 +293,15 @@ class Engine:
         stage = "apply" if handoff else "discover"
         objection = known.get("objection")
         if suggestion:
+            if intent == "advice":
+                intent = suggestion.get("intent", "advice")
             if suggestion.get("stage") in ("discover", "quote", "objection", "followup", "apply"):
                 stage = suggestion["stage"]
             if suggestion.get("objection") in ("rate_high", "need_spouse"):
                 objection = suggestion["objection"]
         handoff = handoff and self.memory_access(s["session"])
+        if handoff or any(x in low for x in ["gọi lại", "hẹn", "liên hệ lại", "gửi tóm tắt", "gửi tổng kết"]):
+            intent = "advice"
         slots = ["income", "debt"] if product == "credit_card" else ["amount", "term", "income", "debt"]
         if product == "home_loan":
             slots.append("property_value")
@@ -283,7 +312,8 @@ class Engine:
         return {
             "plan": {
                 "product": product,
-                "public_info": not known.get("amount")
+                "intent": intent,
+                "public_info": intent == "advice" and not known.get("amount")
                 and any(x in low for x in ["lãi suất", "ưu đãi", "điều kiện", "phí"]),
                 "private_request": not self.memory_access(s["session"])
                 and any(x in low for x in ["lần trước", "lịch sử", "hồ sơ của tôi", "gặp chuyên viên", "crm"]),
@@ -297,18 +327,20 @@ class Engine:
         }
 
     def select_cards(self, s):
-        version = self.db.setting("playbook", "v1")
-        path = Path(__file__).parent.parent / "playbooks" / (version + ".yaml")
-        if not path.is_file():
-            raise RuntimeError("Configured playbook unavailable")
-        book = yaml.safe_load(path.read_text())
+        from harness.sales import book as load_book
+
+        pinned = self.db.one("SELECT version FROM session_playbooks WHERE session_id=?", (s["session"]["id"],))
+        version = pinned["version"] if pinned else "v1"
+        book = load_book(self.db, version)
         candidates = book.get("cards", {}).get(s["plan"].get("objection"), {}).get("retail", [])
         if not candidates:
+            candidates = book.get("stages", {}).get(s["plan"].get("stage"), {}).get("retail", [])
+        if not candidates:
             return {"cards": []}
-        index = int(ident("", [s["session"]["id"], version]), 16) % len(candidates)
-        return {"cards": [candidates[index]]}
+        return {"cards": [candidates[0]]}
 
     def call_tools(self, s):
+        emit("status", stage="tools")
         p, known, session = s["plan"], s["known"], s["session"]
         facts, calls, disclosures, notes = dict(s["facts"]), [], [], []
         error, unsuitable = False, False
@@ -330,7 +362,9 @@ class Engine:
             return {
                 "facts": facts,
                 "tool_calls": [],
-                "action_notes": ["Anh/chị vui lòng gửi số điện thoại khớp hồ sơ demo trong phiên chat để xem thông tin cá nhân hoặc gặp chuyên viên."],
+                "action_notes": [
+                    "Anh/chị vui lòng gửi số điện thoại khớp hồ sơ demo trong phiên chat để xem thông tin cá nhân hoặc gặp chuyên viên."
+                ],
             }
         if p["callback"]:
             if "schedule_callback" not in available:
@@ -356,7 +390,7 @@ class Engine:
                     receipt = call("schedule_callback", {"time": time})
                     if not receipt["error"]:
                         notes.append("Đã tạo lịch gọi lại mô phỏng theo thời gian anh/chị yêu cầu.")
-        quote = not p["missing"] and not s.get("confirmations")
+        quote = p.get("intent", "advice") == "advice" and not p["missing"] and not s.get("confirmations")
         if quote or p["public_info"]:
             if quote:
                 args = {
@@ -436,12 +470,43 @@ class Engine:
         }
 
     def rules_draft(self, s):
+        reply = self._rules_draft(s)
+        if (
+            s["session"].get("verified")
+            and not s["tool_error"]
+            and not s["unsuitable"]
+            and not s.get("confirmations")
+            and not s.get("action_notes")
+        ):
+            for card in s.get("cards", []):
+                reply += " " + card["text"]
+        return reply
+
+    def _rules_draft(self, s):
         if s["tool_error"]:
             return "Hệ thống ngân hàng đang gián đoạn. Anh/chị có thể thử lại hoặc yêu cầu gặp chuyên viên."
         if s["unsuitable"]:
             return "Hồ sơ hiện chưa phù hợp điều kiện sản phẩm. Em có thể chuyển chuyên viên để trao đổi phương án phù hợp hơn."
         if s.get("action_notes"):
             return " ".join(s["action_notes"])
+        intent = s["plan"].get("intent", "advice")
+        if intent == "greeting":
+            return (
+                "Chào anh/chị! Em là trợ lý ngân hàng, có thể tư vấn vay mua nhà, vay tiêu dùng và thẻ tín dụng. "
+                "Anh/chị muốn tìm hiểu sản phẩm nào?"
+            )
+        if intent == "loan_catalog":
+            return (
+                "Em có thể tư vấn vay mua nhà và vay tiêu dùng. "
+                "Anh/chị muốn tìm hiểu loại nào, hoặc chia sẻ mục đích vay để em hỗ trợ phù hợp?"
+            )
+        if intent == "product_catalog":
+            return (
+                "Em có thể tư vấn vay mua nhà, vay tiêu dùng và thẻ tín dụng. "
+                "Anh/chị đang quan tâm sản phẩm nào?"
+            )
+        if intent == "acknowledgement":
+            return "Rất vui được hỗ trợ anh/chị. Khi cần tìm hiểu thêm về sản phẩm ngân hàng, anh/chị cứ nhắn em nhé!"
         if s.get("confirmations"):
             labels = {
                 "income": "thu nhập",
@@ -488,24 +553,53 @@ class Engine:
                     reply += f" Sau ưu đãi {ph('installment_after')} mỗi tháng."
             elif ph("installment_standard"):
                 reply += f" Trả góp minh họa {ph('installment_standard')} mỗi tháng."
-        for card in s.get("cards", []):
-            reply += " " + card["text"]
         return reply
 
     def draft(self, s):
+        emit("status", stage="drafting")
         draft = self.rules_draft(s)
+        last_prefix = ""
+
+        def preview(text):
+            nonlocal last_prefix
+            if not text:
+                last_prefix = ""
+                emit("text", text="")
+                emit("status", stage="backup")
+                return
+            if s["tool_error"] or s["unsuitable"] or s.get("action_notes") or s.get("confirmations"):
+                return
+            boundaries = list(re.finditer(r"[.!?。](?:\s|$)|\n", text))
+            if not boundaries:
+                return
+            prefix = text[:boundaries[-1].end()]
+            if len(prefix) <= len(last_prefix) or len(prefix) >= 8000:
+                return
+            if any(draft_problem(prefix, s["facts"], self.db.setting("clock"))):
+                return
+            # Snapshot includes rendered trusted facts and required disclosures.
+            # Full schema and guard still decide the final persisted response.
+            rendered = self.render({**s, "draft": prefix})["reply"]
+            emit("text", text=rendered)
+            last_prefix = prefix
         candidate = json_completion(
             self.settings,
-            "Viết câu tư vấn ngân hàng tiếng Việt. Mọi số phải dùng {fact:id} từ facts. Không tạo fact. Giữ ý nghĩa rules_draft. Trả JSON {draft:string}.",
-            {"rules_draft": draft, "known": s["known"], "facts": s["facts"], "context_parts": s["context_parts"]},
+            "Trả lời trực tiếp tin nhắn khách hàng bằng tiếng Việt, theo intent và ý chính của rules_draft. "
+            "Chào hỏi hoặc hỏi danh sách sản phẩm thì giới thiệu đúng phạm vi tư vấn, không ép khách cung cấp "
+            "số tiền vay hay thu nhập để xem danh sách. Chỉ báo giá khi có facts. "
+            "Mọi số phải dùng {fact:id} từ facts; không tạo fact, không đánh số danh sách. Trả JSON {draft:string}.",
+            {"text": s["text"], "intent": s["plan"].get("intent", "advice"), "rules_draft": draft,
+             "known": s["known"], "facts": s["facts"], "context_parts": s["context_parts"]},
             schema=DraftSuggestion,
             purpose="draft",
+            on_delta=preview if stream_sink.get() else None,
         )
         if candidate and isinstance(candidate.get("draft"), str) and 0 < len(candidate["draft"]) < 8000:
             draft = candidate["draft"]
         return {"draft": draft}
 
     def guard(self, s):
+        emit("status", stage="checking")
         events = []
         if not s["session"].get("verified", False):
             events.append(event("G7", "public_tools_only", "restrict_private"))
@@ -536,7 +630,10 @@ class Engine:
             if session.get("verified", False)
             else None
         )
-        if session.get("verified", False) and old and not s["tool_error"] and not s["plan"]["missing"]:
+        if (
+            session.get("verified", False) and old and not s["tool_error"] and not s["plan"]["missing"]
+            and s["plan"].get("intent", "advice") == "advice"
+        ):
             draft = "Ưu đãi trước đã hết hạn; em cập nhật thông tin hiện tại. " + draft
             events.append(event("G3", "previous_quote_expired", "refresh"))
         if s["disclosures"]:

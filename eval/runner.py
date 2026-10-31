@@ -286,7 +286,7 @@ def summarize(results: list[dict], expected: int) -> tuple[str, dict, dict]:
 def publish(output: Path, run: dict) -> None:
     atomic_json(output / f"{run['run_id']}.json", run)
     index_path = output / "index.json"
-    index = read_document(index_path) if index_path.exists() else {"schema_version": 1, "runs": []}
+    index: dict = read_document(index_path) if index_path.exists() else {"schema_version": 1, "runs": []}
     row = {
         key: run[key]
         for key in ("run_id", "status", "split", "created_at", "backend", "seed", "repetitions", "summary")

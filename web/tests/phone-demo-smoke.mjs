@@ -76,11 +76,13 @@ async function login(page, phone) {
 }
 async function send(page, text) {
   const response = page.waitForResponse(
-    (r) => r.url().endsWith("/messages") && r.request().method() === "POST",
+    (r) => r.url().endsWith("/messages/stream") && r.request().method() === "POST",
   );
   await page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" }).fill(text);
   await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
-  expect((await response).status()).toBe(200);
+  const streamed = await response;
+  expect(streamed.status()).toBe(200);
+  await expect(page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" })).toBeEnabled();
 }
 async function waitIncome(phone, value) {
   await expect

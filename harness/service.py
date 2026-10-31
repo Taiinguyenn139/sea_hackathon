@@ -104,6 +104,7 @@ class Harness:
                 "INSERT INTO sessions(id,customer_id,channel,external_id,mode,token_hash,created_at) VALUES(?,?,?,?,?,?,?)",
                 (sid, profile, channel, external_id or sid, mode, token_hash(token), now()),
             )
+            c.execute("INSERT INTO session_playbooks VALUES(?,?)", (sid, self.db.setting("playbook", "v1")))
             if phone_authenticated:
                 c.execute("INSERT INTO phone_sessions VALUES(?,?)", (sid, profile))
         return {
@@ -119,6 +120,19 @@ class Harness:
         if not session:
             raise HTTPException(404, "Session not found")
         return session
+
+    def new_conversation(self, previous):
+        """Start a separate transcript without ending a conversation or handoff."""
+        authenticated = bool(self.can_chat(previous))
+        result = self._create_session(
+            previous["customer_id"], previous["mode"], phone_authenticated=authenticated
+        )
+        if previous["verified"]:
+            self.db.execute("UPDATE sessions SET verified=1 WHERE id=?", (result["session_id"],))
+            result["identity_status"] = "verified"
+        if authenticated and self.db.one("SELECT id FROM customer_profiles WHERE id=?", (previous["customer_id"],)):
+            result["telegram_url"] = "https://t.me/" + self.settings.telegram_bot_username
+        return result
 
     def verify(self, session, phone, source):
         # Refresh server state: a claim can never select or replace the bound
@@ -340,6 +354,7 @@ class Harness:
         for sid in ids:
             self.engine.checkpointer.delete_thread(sid)
         tables = [
+            "session_playbooks",
             "sessions",
             "phone_sessions",
             "phone_challenges",

@@ -320,3 +320,24 @@ def test_phone_only_web_profile_survives_restart(tmp_path):
         again = demo_login(second)
         assert again["brief"]["customer_id"] == session["brief"]["customer_id"]
         assert any(f["key"] == "income" and f["value"] == "47000000" for f in again["brief"]["needs"])
+
+
+def test_new_conversation_keeps_demo_phone_memory_and_telegram_link(client):
+    original = demo_login(client)
+    web_say(client, original, "Thu nhập 47 triệu", "income")
+    response = client.post(
+        f"/sessions/{original['session_id']}/new",
+        headers={"Authorization": "Bearer " + original["session_token"]},
+    )
+    assert response.status_code == 200
+    new = response.json()
+    assert new["session_id"] != original["session_id"]
+    assert new["identity_status"] == "identified"
+    assert new["telegram_url"] == original["telegram_url"]
+    assert new["brief"]["customer_id"] == original["brief"]["customer_id"]
+    assert any(f["key"] == "income" and f["value"] == "47000000" for f in new["brief"]["needs"])
+    history = client.get(
+        f"/sessions/{new['session_id']}/turns",
+        headers={"Authorization": "Bearer " + new["session_token"]},
+    )
+    assert history.json()["items"] == []

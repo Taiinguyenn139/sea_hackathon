@@ -20,12 +20,12 @@ for (const width of [375, 1440]) {
         } });
       }
       if (path.endsWith("/turns")) return route.fulfill({ json: { items: turns } });
-      if (path.endsWith("/messages")) {
+      if (path.endsWith("/messages/stream")) {
         expect(route.request().headers().authorization).toBe("Bearer navigation-capability");
         const body = route.request().postDataJSON();
         const reply = "Bạn có thể hỏi điều kiện và hồ sơ vay mua nhà ngay tại đây.";
         turns.push({ id: body.client_message_id, text: body.text, reply });
-        return route.fulfill({ json: { session_id: "navigation-session", identity_status: "unverified", reply } });
+        return route.fulfill({ contentType: "text/event-stream", body: `event: result\ndata: ${JSON.stringify({ session_id: "navigation-session", identity_status: "unverified", reply })}\n\n` });
       }
       if (path.endsWith("/verify")) verifications += 1;
       if (path.endsWith("/end")) ends += 1;
@@ -74,7 +74,7 @@ for (const width of [375, 1440]) {
   });
 }
 
-test("home stays available when ending a session is blocked by a staff handoff", async ({ page }) => {
+test("new conversations leave a waiting staff handoff available in history", async ({ page }) => {
   let ends = 0;
   await page.addInitScript(() => sessionStorage.setItem("bankwise-chat-session", JSON.stringify({
     session_id: "waiting-session", session_token: "waiting-capability", identity_status: "verified",
@@ -83,20 +83,23 @@ test("home stays available when ending a session is blocked by a staff handoff",
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api", "");
     if (path === "/demo/profiles") return route.fulfill({ json: { profiles: [{ id: "0900000001", name: "Hoa" }] } });
-    if (path.endsWith("/turns")) return route.fulfill({ json: { items: [{ id: "saved", text: "Tôi muốn gặp chuyên viên", reply: "Đã gửi yêu cầu." }] } });
+    if (path.endsWith("/new")) return route.fulfill({ json: { session_id: "new-session", session_token: "new-capability", identity_status: "verified", status: "active" } });
+    if (path.endsWith("/turns")) return route.fulfill({ json: { items: path.includes("waiting-session") ? [{ id: "saved", text: "Tôi muốn gặp chuyên viên", reply: "Đã gửi yêu cầu." }] : [] } });
     if (path.endsWith("/end")) {
       ends += 1;
       return route.fulfill({ status: 409, json: { detail: "Complete handoff before ending session" } });
     }
-    return route.fulfill({ json: { status: "waiting_human" } });
+    return route.fulfill({ json: { status: path.includes("waiting-session") ? "waiting_human" : "active" } });
   });
   await page.goto("/chat#conversation");
+  await expect(page.getByRole("log")).toContainText("Đã gửi yêu cầu.");
   await page.getByRole("button", { name: "Bắt đầu phiên mới" }).click();
-  await expect(page.getByRole("alert")).toContainText("đợi chuyên viên");
+  await expect(page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" })).toBeEnabled();
+  await page.locator("#customer-history").getByRole("button", { name: /Tôi muốn gặp chuyên viên Chờ chuyên viên/ }).click();
   await page.getByRole("link", { name: "Về màn hình chính" }).click();
   await expect(page.getByRole("heading", { name: "Chúng tôi có thể hỗ trợ gì cho bạn?" })).toBeVisible();
   await page.getByRole("button", { name: "Tiếp tục trò chuyện", exact: true }).click();
   await expect(page.getByRole("log")).toContainText("Đã gửi yêu cầu.");
   await expect(page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" })).toBeDisabled();
-  expect(ends).toBe(1);
+  expect(ends).toBe(0);
 });

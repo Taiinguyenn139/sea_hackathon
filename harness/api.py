@@ -2,24 +2,27 @@
 
 import asyncio
 import json
+import queue
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from contextlib import asynccontextmanager, suppress
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import Field
 
 from bank_tools.service import FIXTURES
 from harness.config import Settings
 from harness.db import Database
 from harness.identity import get_profile
+from harness.improvements import build_plan, compare_runs
 from harness.llm import DEFAULT_REPLY, LLMUnavailable
 from harness.llm import logger as llm_logger
 from harness.schemas import (
@@ -35,6 +38,7 @@ from harness.schemas import (
     VerifyInput,
 )
 from harness.service import Harness, token_hash
+from harness.streaming import stream_to
 
 
 class ClockInput(Input):
@@ -49,6 +53,12 @@ class FaultInput(Input):
 
 class PlaybookInput(Input):
     version: str = Field(max_length=100)
+
+
+class ImprovementInput(Input):
+    status: Literal["draft", "in_progress", "ready_for_evaluation"]
+    script: str = Field(min_length=1, max_length=4000)
+    notes: str = Field(default="", max_length=4000)
 
 
 class ReconcileInput(Input):
@@ -73,6 +83,13 @@ def create_app(settings=None):
 
         app.state.dispatcher = Dispatcher(harness)
         app.state.worker_error = None
+        for job in sales.rows("job"):
+            if job["status"] == "running":
+                job.update(status="failed", error="Đánh giá bị gián đoạn; chạy lại thủ công.")
+                sales.put("job", job)
+                version = sales.get("playbook", job["version"])
+                version["status"] = "failed"
+                sales.put("playbook", version)
         recovered = False
 
         def preflight():
@@ -122,16 +139,31 @@ def create_app(settings=None):
                 except recovery_errors:
                     app.state.worker_error = "background_processing_failed"
 
+        async def sales_worker():
+            while True:
+                await asyncio.sleep(2)
+                await asyncio.to_thread(sales.run_next)
+
+        sales_task = asyncio.create_task(sales_worker())
         worker_task = asyncio.create_task(worker())
         try:
             yield
         finally:
+            sales.stopping.set()
+            sales_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await sales_task
             worker_task.cancel()
             with suppress(asyncio.CancelledError):
                 await worker_task
+            # Disconnected clients may still have a bounded completion in flight.
+            # Drain it before closing the event loop so its receipt is durable.
+            if app.state.stream_tasks:
+                await asyncio.gather(*tuple(app.state.stream_tasks), return_exceptions=True)
 
     app = FastAPI(title="Memory Harness", version="0.1.0", lifespan=lifespan)
     app.state.harness = harness
+    app.state.stream_tasks = set()
 
     @app.exception_handler(LLMUnavailable)
     async def llm_unavailable(request: Request, exc: LLMUnavailable):
@@ -146,7 +178,7 @@ def create_app(settings=None):
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
         allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
     )
 
@@ -161,7 +193,10 @@ def create_app(settings=None):
             return JSONResponse({"detail": "Invalid content length"}, status_code=400)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Cache-Control"] = "no-store"
+        response.headers["Cache-Control"] = (
+            "no-store, no-transform" if response.headers.get("content-type", "").startswith("text/event-stream")
+            else "no-store"
+        )
         return response
 
     def bearer(request):
@@ -247,6 +282,11 @@ def create_app(settings=None):
         result["telegram_url"] = "https://t.me/" + settings.telegram_bot_username
         return result
 
+    @app.post("/sessions/{sid}/new")
+    def new_conversation(sid: str, request: Request):
+        # A session capability can create a sibling for the same identity only.
+        return harness.new_conversation(owner(sid, request))
+
     @app.post("/auth/phone/start")
     def phone_start(body: PhoneLoginInput, request: Request, tasks: BackgroundTasks):
         result = harness.phone_identity.begin(body.phone, request.client.host if request.client else "unknown")
@@ -276,22 +316,100 @@ def create_app(settings=None):
     def verify(sid: str, body: VerifyInput, request: Request):
         return harness.verify(owner(sid, request), body.phone, request.client.host if request.client else "unknown")
 
+    def message_result(sid, body, source):
+        response = harness.message(
+            sid, body.text, body.client_message_id, source
+        )
+        if not input_blocked(response) and harness.identity_status(harness.session(sid)) == "identified":
+            try:
+                response = {**response, "brief": harness.engine.memory.brief(harness.session(sid)["customer_id"])}
+            except LLMUnavailable:
+                response = {**response, "brief": {"redacted": True}}
+        return response
+
+    def input_blocked(response):
+        return any(e.get("stage") == "input" and e["action"] == "block" for e in response["guard_events"])
+
     @app.post("/sessions/{sid}/messages")
     def message(sid: str, body: MessageInput, request: Request, tasks: BackgroundTasks):
         owner(sid, request)
-        response = harness.message(
-            sid, body.text, body.client_message_id, request.client.host if request.client else "unknown"
-        )
-        if not any(e.get("stage") == "input" and e["action"] == "block" for e in response["guard_events"]):
-            if harness.identity_status(harness.session(sid)) == "identified":
-                try:
-                    response = {**response, "brief": harness.engine.memory.brief(harness.session(sid)["customer_id"])}
-                except LLMUnavailable:
-                    response = {**response, "brief": {"redacted": True}}
+        response = message_result(sid, body, request.client.host if request.client else "unknown")
+        if not input_blocked(response):
             tasks.add_task(flush_memory, harness.session(sid)["customer_id"])
         if hasattr(app.state, "dispatcher"):
             tasks.add_task(app.state.dispatcher.send_pending)
         return response
+
+    @app.post("/sessions/{sid}/messages/stream")
+    def message_stream(sid: str, body: MessageInput, request: Request):
+        owner(sid, request)
+        source = request.client.host if request.client else "unknown"
+        events: queue.Queue = queue.Queue(maxsize=32)
+        disconnected = threading.Event()
+
+        def send(kind, data):
+            if disconnected.is_set():
+                return
+            try:
+                events.put_nowait((kind, data))
+            except queue.Full:
+                # Snapshots supersede earlier snapshots. Keep the worker bounded
+                # even when a browser stops consuming, retaining the final receipt.
+                with suppress(queue.Empty):
+                    events.get_nowait()
+                events.put_nowait((kind, data))
+
+        def work():
+            try:
+                with stream_to(send):
+                    response = message_result(sid, body, source)
+                # message_result persists the idempotent receipt before this event.
+                send("result", response)
+                if not input_blocked(response):
+                    flush_memory(harness.session(sid)["customer_id"])
+                if hasattr(app.state, "dispatcher"):
+                    app.state.dispatcher.send_pending()
+            except HTTPException as exc:
+                send("error", {"message": exc.detail, "status": exc.status_code})
+            except LLMUnavailable:
+                send("error", {"message": DEFAULT_REPLY, "status": 503})
+            except (RuntimeError, sqlite3.Error, ValueError, KeyError, TypeError):
+                llm_logger.error('llm_stream {"status":"request_failed"}')
+                send("error", {"message": "Yêu cầu chưa hoàn tất. Vui lòng thử lại.", "status": 500})
+
+        async def body_events():
+            # Continue bounded generation/persistence after disconnect so retrying
+            # a message ID never repeats already-completed bank side effects.
+            task = asyncio.create_task(asyncio.to_thread(work))
+            app.state.stream_tasks.add(task)
+
+            def finished(completed):
+                app.state.stream_tasks.discard(completed)
+                if not completed.cancelled() and completed.exception():
+                    llm_logger.error('llm_stream {"status":"worker_failed"}')
+
+            task.add_done_callback(finished)
+            try:
+                yield 'event: status\ndata: {"stage":"preparing"}\n\n'
+                while True:
+                    try:
+                        kind, data = await asyncio.to_thread(events.get, True, 1)
+                    except queue.Empty:
+                        if task.done():
+                            yield 'event: error\ndata: {"message":"Yêu cầu chưa hoàn tất. Vui lòng thử lại.","status":500}\n\n'
+                            break
+                        yield ": keep-alive\n\n"
+                        continue
+                    yield "event: " + kind + "\ndata: " + json.dumps(data, ensure_ascii=False) + "\n\n"
+                    if kind in ("result", "error"):
+                        break
+            finally:
+                disconnected.set()
+
+        return StreamingResponse(
+            body_events(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+        )
 
     @app.post("/sessions/{sid}/handoff")
     def handoff(sid: str, body: HandoffInput, request: Request):
@@ -416,6 +534,42 @@ def create_app(settings=None):
         except (ValueError, OSError):
             raise HTTPException(503, "Run result invalid")
 
+    def improvement_plan(rid: str):
+        saved = {row["action_id"]: row for row in db.all("SELECT * FROM sales_improvements WHERE run_id=?", (rid,))}
+        return build_plan(run_detail(rid), saved)
+
+    @app.get("/eval/runs/{rid}/improvements", dependencies=[Depends(staff)])
+    def improvements(rid: str):
+        return improvement_plan(rid)
+
+    @app.patch("/eval/runs/{rid}/improvements/{action_id}", dependencies=[Depends(staff)])
+    def save_improvement(rid: str, action_id: str, body: ImprovementInput):
+        plan = improvement_plan(rid)
+        if not plan["eligible"]:
+            raise HTTPException(409, "Chỉ cập nhật kế hoạch của lượt dev đã hoàn tất.")
+        if action_id not in {action["id"] for action in plan["actions"]}:
+            raise HTTPException(404, "Không tìm thấy đề xuất trong lượt đánh giá này.")
+        if not body.script.strip():
+            raise HTTPException(422, "Lời tư vấn không được để trống.")
+        db.execute(
+            "INSERT INTO sales_improvements VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(run_id,action_id) DO UPDATE SET "
+            "status=excluded.status,script=excluded.script,notes=excluded.notes,updated_at=excluded.updated_at",
+            (rid, action_id, body.status, body.script.strip(), body.notes.strip(), datetime.now(UTC).isoformat()),
+        )
+        return improvement_plan(rid)
+
+    @app.get("/eval/runs/{rid}/comparison", dependencies=[Depends(staff)])
+    def improvement_comparison(rid: str, candidate_id: str):
+        return compare_runs(run_detail(rid), run_detail(candidate_id))
+
+    from harness.sales import Sales
+    from harness.sales import router as sales_router
+
+    sales = Sales(db, settings, run_detail)
+    app.state.sales = sales
+    app.include_router(sales_router(sales, staff))
+
     @app.post("/admin/sessions", dependencies=[Depends(admin)])
     def admin_session(body: AdminSessionInput):
         return harness.new_session(body.demo_profile, body.mode, body.channel, "eval:" + body.demo_profile)
@@ -438,9 +592,12 @@ def create_app(settings=None):
 
     @app.post("/admin/playbook", dependencies=[Depends(admin)])
     def playbook(body: PlaybookInput):
+        stored = db.one("SELECT id FROM sales_objects WHERE kind='playbook' AND id=?", (body.version,))
+        if stored and not settings.sales_sandbox:
+            raise HTTPException(409, "Kích hoạt kịch bản qua luồng duyệt /sales/playbooks.")
         if (
             not re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", body.version)
-            or not (Path("harness/playbooks") / (body.version + ".yaml")).is_file()
+            or not stored and not (Path("harness/playbooks") / (body.version + ".yaml")).is_file()
         ):
             raise HTTPException(422, "Unknown playbook version")
         db.set("playbook", body.version)
