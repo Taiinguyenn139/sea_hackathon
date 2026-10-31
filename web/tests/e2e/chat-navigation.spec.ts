@@ -20,12 +20,12 @@ for (const width of [375, 1440]) {
         } });
       }
       if (path.endsWith("/turns")) return route.fulfill({ json: { items: turns } });
-      if (path.endsWith("/messages")) {
+      if (path.endsWith("/messages/stream")) {
         expect(route.request().headers().authorization).toBe("Bearer navigation-capability");
         const body = route.request().postDataJSON();
         const reply = "Bạn có thể hỏi điều kiện và hồ sơ vay mua nhà ngay tại đây.";
         turns.push({ id: body.client_message_id, text: body.text, reply });
-        return route.fulfill({ json: { session_id: "navigation-session", identity_status: "unverified", reply } });
+        return route.fulfill({ contentType: "text/event-stream", body: `event: result\ndata: ${JSON.stringify({ session_id: "navigation-session", identity_status: "unverified", reply })}\n\n` });
       }
       if (path.endsWith("/verify")) verifications += 1;
       if (path.endsWith("/end")) ends += 1;

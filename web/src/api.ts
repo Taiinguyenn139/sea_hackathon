@@ -7,6 +7,32 @@ export class ApiError extends Error {
     super(message);
   }
 }
+function responseError(payload: unknown, status: number): ApiError {
+  const data = payload as { detail?: unknown; error?: unknown } | null;
+  const detail =
+    typeof data?.detail === "string"
+      ? data.detail
+      : typeof data?.error === "string"
+        ? data.error
+        : status === 401
+          ? "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại."
+          : status === 429
+            ? "Bạn đã thử quá nhiều lần. Vui lòng chờ trước khi thử lại."
+            : "Yêu cầu chưa hoàn tất. Vui lòng thử lại.";
+  const localized: Record<string, string> = {
+    "Invalid credentials": "Mật khẩu chưa đúng. Vui lòng thử lại.",
+    "Staff login required":
+      "Vui lòng đăng nhập để truy cập không gian chuyên viên.",
+    "Please try again later": "Bạn đã thử quá nhiều lần. Vui lòng thử lại sau.",
+    "CSRF verification failed":
+      "Phiên bảo mật đã thay đổi. Vui lòng đăng nhập lại.",
+    "Session capability required":
+      "Phiên trò chuyện không còn hợp lệ. Bạn có thể bắt đầu phiên mới.",
+    "Complete handoff before ending session":
+      "Vui lòng đợi chuyên viên hoàn tất trước khi mở phiên mới.",
+  };
+  return new ApiError(localized[detail] ?? detail, status);
+}
 export async function request<T>(
   path: string,
   options: {
@@ -37,33 +63,7 @@ export async function request<T>(
     throw new ApiError("Chưa kết nối được máy chủ. Vui lòng thử lại sau.", 0);
   }
   const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const data = payload as { detail?: unknown; error?: unknown } | null;
-    const detail =
-      typeof data?.detail === "string"
-        ? data.detail
-        : typeof data?.error === "string"
-          ? data.error
-          : response.status === 401
-            ? "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại."
-            : response.status === 429
-              ? "Bạn đã thử quá nhiều lần. Vui lòng chờ trước khi thử lại."
-              : "Yêu cầu chưa hoàn tất. Vui lòng thử lại.";
-    const localized: Record<string, string> = {
-      "Invalid credentials": "Mật khẩu chưa đúng. Vui lòng thử lại.",
-      "Staff login required":
-        "Vui lòng đăng nhập để truy cập không gian chuyên viên.",
-      "Please try again later":
-        "Bạn đã thử quá nhiều lần. Vui lòng thử lại sau.",
-      "CSRF verification failed":
-        "Phiên bảo mật đã thay đổi. Vui lòng đăng nhập lại.",
-      "Session capability required":
-        "Phiên trò chuyện không còn hợp lệ. Bạn có thể bắt đầu phiên mới.",
-      "Complete handoff before ending session":
-        "Vui lòng đợi chuyên viên hoàn tất trước khi mở phiên mới.",
-    };
-    throw new ApiError(localized[detail] ?? detail, response.status);
-  }
+  if (!response.ok) throw responseError(payload, response.status);
   if (payload === null)
     throw new ApiError("Máy chủ trả về dữ liệu không hợp lệ.", response.status);
   return payload as T;
@@ -110,6 +110,104 @@ export type Reply = {
   session_id: string;
   handoff_id?: string;
 };
+export type ReplyStreamEvent =
+  { type: "text"; text: string } | { type: "status"; stage: string };
+
+export async function streamReply(
+  session: ChatSession,
+  text: string,
+  messageId: string,
+  onEvent: (event: ReplyStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<Reply> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${BASE}/sessions/${encodeURIComponent(session.session_id)}/messages/stream`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Accept: "text/event-stream",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.session_token}`,
+        },
+        body: JSON.stringify({ text, client_message_id: messageId }),
+        signal,
+      },
+    );
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError")
+      throw error;
+    throw new ApiError("Chưa kết nối được máy chủ. Vui lòng thử lại sau.", 0);
+  }
+  if (!response.ok)
+    throw responseError(
+      await response.json().catch(() => null),
+      response.status,
+    );
+  if (
+    !response.body ||
+    !response.headers.get("content-type")?.includes("text/event-stream")
+  )
+    throw new ApiError("Máy chủ trả về luồng phản hồi không hợp lệ.", 502);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer = (buffer + decoder.decode(value, { stream: !done })).replace(
+        /\r\n/g,
+        "\n",
+      );
+      let boundary: number;
+      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        let kind = "message";
+        const lines: string[] = [];
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event:")) kind = line.slice(6).trim();
+          if (line.startsWith("data:")) lines.push(line.slice(5).trimStart());
+        }
+        if (!lines.length) continue;
+        const data: Record<string, unknown> = JSON.parse(lines.join("\n"));
+        if (kind === "result") {
+          if (
+            typeof data.reply !== "string" ||
+            data.session_id !== session.session_id
+          )
+            throw new ApiError("Máy chủ trả về dữ liệu không hợp lệ.", 502);
+          return data as Reply;
+        }
+        if (kind === "error")
+          throw responseError(
+            { detail: data.message },
+            typeof data.status === "number" ? data.status : 500,
+          );
+        if (kind === "text" && typeof data.text === "string")
+          onEvent({ type: "text", text: data.text });
+        if (kind === "status" && typeof data.stage === "string")
+          onEvent({ type: "status", stage: data.stage });
+      }
+      if (buffer.length > 128000)
+        throw new ApiError("Luồng phản hồi vượt giới hạn cho phép.", 502);
+      if (done)
+        throw new ApiError("Phản hồi bị gián đoạn. Vui lòng thử lại.", 502);
+    }
+  } catch (error) {
+    if (
+      error instanceof ApiError ||
+      (error instanceof DOMException && error.name === "AbortError")
+    )
+      throw error;
+    throw new ApiError("Phản hồi bị gián đoạn. Vui lòng thử lại.", 502);
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
 export type Handoff = {
   handoff_id: string;
   from_session?: string;
