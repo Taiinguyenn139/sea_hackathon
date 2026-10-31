@@ -149,6 +149,9 @@ for (const [width, height] of [
       }),
     ).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
+    expect(await page.locator(".conversation-scroll").evaluate(
+      (element) => element.scrollHeight <= element.clientHeight,
+    )).toBe(true);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,

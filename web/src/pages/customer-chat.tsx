@@ -273,7 +273,7 @@ export function CustomerChat() {
   const chosenProfile = profiles.find((p) => p.id === profile);
   return (
     <div className={`chat-layout ${railOpen ? "rail-open" : ""}`}>
-      <section className="chat-main" aria-label="Hỗ trợ khách hàng ngân hàng">
+      <section className={`chat-main ${!turns.length ? "is-welcome" : ""}`} aria-label="Hỗ trợ khách hàng ngân hàng">
         <header className="chat-heading">
           <div className="assistant-identity">
             <BrandMark small />

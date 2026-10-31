@@ -58,6 +58,8 @@ button:disabled { opacity: .5; }
 .chat-layout { padding: 24px; gap: 24px; grid-template-columns: minmax(0, 1fr); min-height: calc(100dvh - 76px); align-items: start; }
 .chat-layout.rail-open { grid-template-columns: minmax(0, 1fr) 286px; }
 .chat-main { height: calc(100dvh - 124px); max-height: none; min-height: 680px; border: 1px solid var(--line); border-radius: 24px; box-shadow: var(--shadow-card); overflow: hidden; }
+.chat-main.is-welcome { height: auto; min-height: max(680px, calc(100dvh - 124px)); }
+.chat-main.is-welcome .conversation-scroll { overflow: visible; flex: 1 0 auto; }
 .chat-heading { height: 80px; padding: 18px 28px; background: #fff; }
 .assistant-identity h1 { font-size: 15px; }
 .assistant-identity p { font-size: 11px; }
