@@ -39,6 +39,7 @@ test("phone confirmation restores Telegram context before enabling web chat", as
   await page.getByRole("button", { name: "Xác nhận và tiếp tục" }).click();
   await expect(composer).toBeEnabled();
   await expect(page.locator("#dob")).toHaveCount(0);
+  await page.getByRole("button", { name: "Hiện thông tin hỗ trợ" }).click();
   await page.getByText("Thông tin đã ghi nhận từ Telegram", { exact: true }).click();
   await expect(page.locator(".phone-context")).toContainText("40.000.000");
   await composer.fill("Tiếp tục tư vấn thẻ tín dụng");
