@@ -348,8 +348,13 @@ def test_openai_draft_cannot_reuse_old_income_after_cross_channel_update(setting
             value = {"category": "safe"}
         elif "Phân loại hội thoại" in instruction:
             value = {"stage": "discover", "objection": None, "intent": "advice"}
-        elif "Trích các đoạn" in instruction:
-            value = {"spans": [payload["text"]]}
+        elif "Trích xuất memory" in instruction:
+            text = payload["text"]
+            value = {"facts": []}
+            if text == "Thu nhập 47 triệu" or text == update:
+                value = {"facts": [{"key": "income", "value": "47000000" if text == "Thu nhập 47 triệu" else "53000000",
+                                    "unit": "đồng", "operation": "conflict" if text == update and expected is None else "replace",
+                                    "source_text": text}]}
         else:
             drafts.append(payload)
             income = next((f for f in payload["facts"].values() if f["key"] == "income"), None)

@@ -75,6 +75,11 @@ def initial_facts(customer, as_of, live_facts):
                 "status": "active",
                 "confidence": 1.0,
             }
+    return filter_live(list(latest.values()), live_facts)
+
+
+def filter_live(baseline, live_facts):
+    """Live records own their fields regardless of how the baseline was extracted."""
     # Even a conflicted/stale live field owns its key: never resurrect the demo value.
     live_keys = {fact["key"] for fact in live_facts if fact["source_type"] == "customer"}
     live_products = [
@@ -83,11 +88,11 @@ def initial_facts(customer, as_of, live_facts):
         and fact["source_type"] == "customer"
         and fact["status"] in ("active", "conflicted")
     ]
-    baseline_product = latest.get("product", {}).get("value")
+    baseline_product = next((f["value"] for f in baseline if f["key"] == "product"), None)
     product_changed = any(
         fact["status"] == "conflicted" or fact["value"] != baseline_product
         for fact in live_products
     )
     if product_changed:
         live_keys.update(LOAN_DETAIL_KEYS)
-    return [fact for key, fact in latest.items() if key not in live_keys]
+    return [fact for fact in baseline if fact["key"] not in live_keys]
