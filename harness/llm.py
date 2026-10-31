@@ -115,7 +115,7 @@ async def _read_stream(response, on_delta):
             partial = from_json(raw, allow_partial="trailing-strings")
         except ValueError:
             continue
-        if isinstance(partial, dict) and isinstance(partial.get("draft"), str):
+        if isinstance(partial, dict) and isinstance(partial.get("draft"), str) and partial["draft"]:
             on_delta(partial["draft"])
     if not done or finish != "stop":
         raise ValueError("Incomplete streamed completion")

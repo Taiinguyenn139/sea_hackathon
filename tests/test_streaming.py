@@ -182,7 +182,8 @@ def test_stream_exhaustion_returns_default_result(tmp_path, monkeypatch):
         assert events(response)[-1][1]["reply"] == DEFAULT_REPLY
 
 
-def test_socket_progress_disconnect_persists_without_replay(tmp_path, monkeypatch):
+@pytest.mark.parametrize("shutdown_early", [False, True])
+def test_socket_progress_disconnect_persists_without_replay(tmp_path, monkeypatch, shutdown_early):
     config = settings(db_path=str(tmp_path / "disconnect.sqlite3"))
     app = create_app(config)
     drafts = []
@@ -227,6 +228,10 @@ def test_socket_progress_disconnect_persists_without_replay(tmp_path, monkeypatc
                         break
                 else:
                     pytest.fail("No partial text received")
+            if shutdown_early:
+                server.should_exit = True
+                thread.join(5)
+                assert not thread.is_alive()
             deadline = time.monotonic() + 3
             while time.monotonic() < deadline:
                 receipt = app.state.harness.db.one("SELECT result FROM turns WHERE result IS NOT NULL")
@@ -234,11 +239,24 @@ def test_socket_progress_disconnect_persists_without_replay(tmp_path, monkeypatc
                     break
                 time.sleep(0.01)
             assert receipt
-            retry = client.post(path, headers=auth, json=body)
-            assert retry.json()["reply"] == "Xin chào. Tôi có thể giúp bạn."
+            if not shutdown_early:
+                retry = client.post(path, headers=auth, json=body)
+                assert retry.json()["reply"] == "Xin chào. Tôi có thể giúp bạn."
             assert len(drafts) == 1
     finally:
         server.should_exit = True
         thread.join(5)
         sock.close()
         assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("end", [b"", frame(finish="length") + b"data: [DONE]\n\n"])
+def test_incomplete_provider_stream_cannot_succeed(monkeypatch, end):
+    class IncompleteStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield frame('{"draft":"Xin chào."}')
+            yield end
+
+    mock_provider(monkeypatch, lambda request: httpx.Response(200, stream=IncompleteStream()))
+    with pytest.raises(LLMUnavailable):
+        json_completion(settings(), "JSON", {}, DraftSuggestion, purpose="draft", on_delta=lambda text: None)
