@@ -30,6 +30,7 @@ import {
   request,
   streamReply,
   type ChatSession,
+  type Reply,
   type Turn,
 } from "../api";
 import { BrandMark, ErrorBanner, Spinner } from "../ui";
@@ -131,7 +132,10 @@ export function CustomerChat() {
     session?.identity_status ?? "",
   );
   const waiting =
-    Boolean(session?.handoff_id) && session?.status !== "completed";
+    session?.status === "waiting_human" ||
+    (Boolean(session?.handoff_id) && !session?.status);
+  const specialist = session?.responder === "ai_specialist";
+  const specialistKeys = useRef(new Map<string, string>());
   const ended = session?.status === "ended" || session?.status === "completed";
   const currentEntry = entries.find(
     (entry) => entry.session.session_id === session?.session_id,
@@ -338,7 +342,7 @@ export function CustomerChat() {
       });
   }, [turns, pending, isHome]);
   useEffect(() => {
-    if (!session?.handoff_id || ended) return;
+    if ((!session?.handoff_id && !session?.specialist_id) || ended) return;
     let live = true;
     const timer = setInterval(() => {
       request<ChatSession>(`/sessions/${session.session_id}`, {
@@ -362,7 +366,7 @@ export function CustomerChat() {
       live = false;
       clearInterval(timer);
     };
-  }, [session?.session_id, session?.handoff_id, ended]);
+  }, [session?.session_id, session?.handoff_id, session?.specialist_id, ended]);
   async function send(text = draft, id: string = crypto.randomUUID()) {
     if (
       !text.trim() ||
@@ -398,7 +402,12 @@ export function CustomerChat() {
             },
           ]
         : []),
-      { id: assistantId, role: "assistant", text: "" },
+      {
+        id: assistantId,
+        role: "assistant",
+        responder: session?.responder ?? "assistant",
+        text: "",
+      },
     ]);
     setPending(true);
     setStreamStatus("Trợ lý đang xử lý yêu cầu…");
@@ -424,6 +433,14 @@ export function CustomerChat() {
                 turn.id === assistantId ? { ...turn, text: event.text } : turn,
               ),
             );
+          } else if (event.type === "metadata") {
+            setTurns((prev) =>
+              prev.map((turn) =>
+                turn.id === assistantId
+                  ? { ...turn, responder: event.responder }
+                  : turn,
+              ),
+            );
           } else {
             const labels: Record<string, string> = {
               preparing: "Đang tiếp nối cuộc trò chuyện…",
@@ -444,7 +461,12 @@ export function CustomerChat() {
       setTurns((prev) =>
         prev.map((turn) =>
           turn.id === assistantId
-            ? { ...turn, text: data.reply }
+            ? {
+                ...turn,
+                text: data.reply,
+                responder:
+                  data.responder ?? activeSession.responder ?? "assistant",
+              }
             : turn.clientId === id
               ? { ...turn, delivery: "sent" }
               : turn,
@@ -466,7 +488,10 @@ export function CustomerChat() {
         data.identity_status ||
         data.user_id !== undefined ||
         data.handoff_id ||
-        data.brief
+        data.brief ||
+        data.responder ||
+        data.status ||
+        data.specialist_id !== undefined
       )
         save({
           ...activeSession,
@@ -476,7 +501,20 @@ export function CustomerChat() {
             data.user_id !== undefined ? data.user_id : activeSession.user_id,
           brief: data.brief ?? activeSession.brief,
           handoff_id: data.handoff_id ?? activeSession.handoff_id,
-          status: data.handoff_id ? "waiting_human" : activeSession.status,
+          status:
+            data.status ??
+            (data.handoff_id ? "waiting_human" : activeSession.status),
+          responder: data.responder ?? activeSession.responder,
+          specialist_id:
+            data.specialist_id === undefined
+              ? activeSession.specialist_id
+              : data.specialist_id,
+          specialist_status:
+            data.specialist_status === undefined
+              ? activeSession.specialist_status
+              : data.specialist_status,
+          specialist_available:
+            data.specialist_available ?? activeSession.specialist_available,
         });
     } catch (e) {
       if (controller.signal.aborted) return;
@@ -513,6 +551,9 @@ export function CustomerChat() {
         ...session,
         handoff_id: data.handoff_id,
         status: "waiting_human",
+        responder: "assistant",
+        specialist_id: null,
+        specialist_status: null,
       });
       setHint("Đã chuyển yêu cầu và bản tóm tắt tới chuyên viên.");
     } catch (e) {
@@ -520,6 +561,57 @@ export function CustomerChat() {
     } finally {
       setPending(false);
     }
+  }
+  async function specialistAction(action: "start" | "complete") {
+    if (!session || pending) return;
+    const sid = session.session_id;
+    if (!specialistKeys.current.has(sid))
+      specialistKeys.current.set(sid, crypto.randomUUID());
+    setPending(true);
+    setError("");
+    try {
+      if (action === "start") {
+        const response = await request<Reply>(
+          `/sessions/${sid}/specialist/start`,
+          {
+            method: "POST",
+            token: session.session_token,
+            body: {
+              reason: "Khách yêu cầu tư vấn chuyên sâu",
+              idempotency_key: specialistKeys.current.get(sid),
+            },
+          },
+        );
+        specialistKeys.current.delete(sid);
+        save({ ...session, ...response });
+        setTurns(await loadTurns(sid, session.session_token));
+        navigate("conversation");
+        setHint("Chuyên viên đã tiếp nhận nội dung trao đổi của bạn.");
+      } else {
+        await request(`/sessions/${sid}/specialist/complete`, {
+          method: "POST",
+          token: session.session_token,
+          body: {
+            handoff_id: session.specialist_id,
+            idempotency_key: `complete-${session.specialist_id}`,
+          },
+        });
+        specialistKeys.current.delete(sid);
+        setHint("Đã lưu nội dung tư vấn. Bạn đang trao đổi với trợ lý.");
+      }
+      const next = await request<ChatSession>(`/sessions/${sid}`, {
+        token: session.session_token,
+      });
+      save({ ...session, ...next });
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setPending(false);
+    }
+  }
+  function consult() {
+    if (session?.specialist_available) void specialistAction("start");
+    else void handoff();
   }
   async function newChat() {
     if (pending || activeStream.current) return;
@@ -625,9 +717,11 @@ export function CustomerChat() {
                 <span className="status-dot" />{" "}
                 {waiting
                   ? "Đang chờ chuyên viên"
-                  : verified
-                    ? "Sẵn sàng tiếp nối cùng bạn"
-                    : "Cùng bạn trong từng quyết định"}
+                  : specialist
+                    ? "Chuyên viên tư vấn đang hỗ trợ"
+                    : verified
+                      ? "Sẵn sàng tiếp nối cùng bạn"
+                      : "Cùng bạn trong từng quyết định"}
               </p>
             </div>
           </div>
@@ -654,8 +748,8 @@ export function CustomerChat() {
             </button>
             <button
               className="icon-button"
-              onClick={handoff}
-              disabled={!verified || pending || waiting || ended}
+              onClick={consult}
+              disabled={!verified || pending || waiting || ended || specialist}
               aria-label="Gặp chuyên viên"
               title="Gặp chuyên viên"
             >
@@ -808,7 +902,11 @@ export function CustomerChat() {
                     {turn.role !== "user" && <BrandMark small />}
                     <div>
                       <div className="message-label">
-                        {turn.role === "user" ? "Bạn" : "Trợ lý Bankwise"}
+                        {turn.role === "user"
+                          ? "Bạn"
+                          : turn.responder === "ai_specialist"
+                            ? "Chuyên viên tư vấn"
+                            : "Trợ lý Bankwise"}
                       </div>
                       <div className="message-bubble">{turn.text}</div>
                       {turn.role === "user" && (
@@ -859,6 +957,33 @@ export function CustomerChat() {
                 <i />
               </span>
               <span>{streamStatus}</span>
+            </div>
+          )}
+          {!isHome && specialist && (
+            <div className="handoff-notice">
+              <Users size={20} />
+              <div>
+                <strong>Chuyên viên tư vấn</strong>
+                <p>
+                  {session?.specialist_status === "initializing"
+                    ? "Đang tiếp nhận hồ sơ. Nếu có lỗi, gửi tin nhắn để thử lại hoặc quay lại trợ lý."
+                    : "Bạn có thể tiếp tục trao đổi ngay trong cuộc trò chuyện này."}
+                </p>
+                <button
+                  className="button secondary"
+                  disabled={pending}
+                  onClick={() => void specialistAction("complete")}
+                >
+                  Quay lại trợ lý
+                </button>
+                <button
+                  className="button secondary"
+                  disabled={pending}
+                  onClick={() => void handoff()}
+                >
+                  Yêu cầu nhân viên thật
+                </button>
+              </div>
             </div>
           )}
           {!isHome && waiting && (
@@ -1061,8 +1186,8 @@ export function CustomerChat() {
         </div>
         <button
           className="human-help"
-          onClick={handoff}
-          disabled={!verified || pending || waiting || ended}
+          onClick={consult}
+          disabled={!verified || pending || waiting || ended || specialist}
         >
           <UserRound size={20} />
           <span>
@@ -1071,6 +1196,11 @@ export function CustomerChat() {
           </span>
           <ArrowRight size={17} />
         </button>
+        {session?.specialist_available && (
+          <p className="muted">
+            Trong demo, vai trò chuyên viên được mô phỏng bằng LLM.
+          </p>
+        )}
         <div className="rail-bottom">
           <CircleHelp size={15} />
           <span>Không yêu cầu mật khẩu hay mã OTP trong chat.</span>

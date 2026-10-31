@@ -6,6 +6,7 @@ from pathlib import Path
 
 @dataclass
 class Settings:
+    ai_specialist_enabled: bool = field(default_factory=lambda: os.getenv("AI_SPECIALIST_ENABLED", "false").lower() == "true")
     sales_sandbox: bool = False
     demo_phone_identity: bool = field(default_factory=lambda: os.getenv("DEMO_PHONE_IDENTITY", "false").lower() == "true")
     db_path: str = os.getenv("HARNESS_DB", "data/harness.sqlite3")
@@ -38,6 +39,9 @@ class Settings:
         return not self.release_gate or Path(self.release_gate).is_file()
 
     def __post_init__(self):
+        if self.ai_specialist_enabled and self.llm_backend != "openai":
+            raise ValueError("AI_SPECIALIST_ENABLED requires LLM_BACKEND=openai")
+
         import re
 
         if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", self.telegram_bot_username):

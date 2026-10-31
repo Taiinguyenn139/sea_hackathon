@@ -4,6 +4,7 @@ import time
 from decimal import Decimal
 
 from bank_tools.service import canonical, ident
+from harness.customer_profile import customer_profile
 from harness.llm import ExtractionSuggestion, LLMUnavailable, current_deadline, json_completion
 from harness.memory.dataset_history import combine_facts, context_slots, project_history
 
@@ -79,6 +80,31 @@ def extract(text):
         ):
             slots["commitment"] = ("Khách yêu cầu liên hệ lại", "")
     return slots
+
+
+def corrects(text, key):
+    """Recognize an explicit current-value update for this field, not another clause."""
+    clauses = re.split(r"[;\n]|\.(?!\d)|,(?!\d)|\s+(?:và|nhưng)\s+", text.lower())
+    # An explicit confirmation of the whole new request also covers the
+    # comma-separated fields in that sentence, without extending to later ones.
+    clauses.extend(sentence for sentence in re.split(r"[;\n]|\.(?!\d)", text.lower())
+                   if re.search(r"\bxác nhận nhu cầu mới\b", sentence))
+    for clause in clauses:
+        if key not in extract(clause):
+            continue
+        # A proposed or negated change must not resolve conflicting statements.
+        intent = re.sub(r"không (?:có |còn )?nợ", "", clause)
+        if "?" in clause or re.search(
+            r"\b(?:nếu|giả sử|giả định|ước gì|mong muốn|dự kiến|sẽ|chưa|không)\b", intent,
+        ):
+            continue
+        if re.search(
+            r"\b(?:xác nhận|đính chính|sửa lại|chính xác|cập nhật|"
+            r"tăng (?:lên|thành)|giảm (?:xuống|còn)|đổi (?:sang|thành)|"
+            r"hiện tại|bây giờ|hiện nay|mới là)\b", clause,
+        ):
+            return True
+    return False
 
 
 class Memory:
@@ -207,7 +233,6 @@ class Memory:
         c.execute("UPDATE customer_sequences SET processed_seq=? WHERE customer_id=?", (job["seq"], customer))
 
     def _write(self, c, turn, customer, payload, suggestion=None):
-        correction = any(x in payload["text"].lower() for x in ["xác nhận", "đính chính", "sửa lại", "chính xác"])
         extracted = extract(payload["text"])
         if getattr(self.settings, "identity_history_enabled", False):
             extracted.update(context_slots(payload["text"]))
@@ -219,6 +244,7 @@ class Memory:
         baseline = {fact["key"]: fact for fact in self._historical(customer, payload["date"])["facts"]
                     if fact["status"] == "active"}
         for key, (value, unit) in extracted.items():
+            correction = corrects(payload["text"], key)
             fid = ident("cf_", [turn, key, value])
             old = c.execute(
                 "SELECT * FROM facts WHERE customer_id=? AND key=? AND source_type='customer' AND status IN ('active','conflicted')",
@@ -297,15 +323,7 @@ class Memory:
         return history
 
     def profile(self, customer):
-        from bank_tools.service import FIXTURES
-        from harness.identity import resolve_identity
-
-        customer = resolve_identity(customer) or customer
-        return next((x for x in FIXTURES["customers"] if x["id"] == customer), None) or self.db.one(
-            "SELECT id,name,NULL AS cif FROM customer_profiles WHERE id=?", (customer,)
-        ) or self.db.one(
-            "SELECT id,name,NULL AS cif FROM guest_customers WHERE id=?", (customer,)
-        )
+        return customer_profile(self.db, customer)
 
     def brief(self, customer, *, flush=True):
         from harness.identity import resolve_identity
@@ -327,6 +345,7 @@ class Memory:
             "name": profile["name"],
             "segment": profile.get("segment", "mass"),
             "as_of": self.db.setting("clock"),
+            "name_source": profile["name_source"],
             "cif": profile["cif"],
             "phone": phone["phone_e164"] if phone else profile.get("phone"),
             "facts": facts,

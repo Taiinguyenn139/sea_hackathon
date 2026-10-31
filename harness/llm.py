@@ -50,7 +50,7 @@ class PlanSuggestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     stage: Literal["discover", "quote", "objection", "followup", "apply"]
     objection: Literal["rate_high", "need_spouse"] | None = None
-    intent: Literal["advice", "greeting", "loan_catalog", "product_catalog", "acknowledgement"] = "advice"
+    intent: Literal["advice", "greeting", "loan_catalog", "product_catalog", "acknowledgement", "profile_name"] = "advice"
 
 
 class ExtractionSuggestion(BaseModel):
@@ -218,7 +218,7 @@ async def _completion(
                         ],
                         "response_format": {"type": "json_object"},
                     }
-                    if tools is not None:
+                    if tools:
                         payload.update(tools=[{"type": "function", "function": tool} for tool in tools], tool_choice="auto")
                     headers = {"Authorization": "Bearer " + settings.openai_key}
                     if on_delta:

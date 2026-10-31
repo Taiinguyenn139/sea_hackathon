@@ -11,7 +11,7 @@ from bank_tools.service import canonical, ident, now
 from harness.identity import IDENTITY_TOOL_DEFINITION
 from harness.input_guard import normalized
 from harness.llm import DEFAULT_REPLY, LLMUnavailable, current_deadline, tool_completion
-from harness.memory.service import extract
+from harness.memory.service import corrects, extract
 
 SYSTEM = """Bạn là Bankwise, trợ lý tư vấn ngân hàng giả lập, nói tiếng Việt tự nhiên.
 Bạn tự quyết định gọi các function tools được cung cấp; backend thực thi và cấp quyền.
@@ -36,6 +36,8 @@ Khi tính trả góp dùng fact_id lãi suất của tool vừa lấy; không b�
 Khi trả lãi/phí/trả góp/ưu đãi phải gọi get_disclosures cho sản phẩm và chủ đề tương ứng.
 Chỉ dùng số có trong facts do backend cung cấp: viết {fact:ID} vào câu trả lời, backend sẽ hiển thị.
 Không viết số trực tiếp trong draft, không nhắc lại số điện thoại. Có thể chào bằng tên đã được tool xác nhận.
+Nếu khách hỏi tên, chỉ dùng fact profile_name của chính khách và nêu nguồn hồ sơ.
+Tên hiển thị Telegram không phải tên đã xác minh ngân hàng; thiếu hoặc lỗi hồ sơ thì nói rõ, không đoán tên.
 Khi muốn kết thúc lượt, trả JSON {"draft":"câu trả lời với {fact:ID} khi cần","handoff":false}.
 handoff=true chỉ khi chính khách yêu cầu gặp chuyên viên ở tin nhắn hiện tại; không suy ra từ lịch sử.
 Nếu tool lỗi, giải thích ngắn gọn hoặc hỏi lại; không tự tạo kết quả thay thế.
@@ -121,7 +123,11 @@ class AgentLoop:
         self.db.execute("INSERT OR REPLACE INTO agent_runs VALUES(?,?,?,?)", (turn_id, sid, canonical(run), now()))
 
     def _context(self, state, run):
+        from harness.agent.engine import conversation_intent
+
         session = self.db.one("SELECT * FROM sessions WHERE id=?", (state["session"]["id"],))
+        session.update({key: state["session"][key] for key in ("specialist_id", "specialist_welcome")
+                        if key in state["session"]})
         previous_customer = run.get("history_customer_id")
         if previous_customer and previous_customer != session["customer_id"] and self.db.one(
             "SELECT id FROM guest_customers WHERE id=? AND channel='telegram'", (previous_customer,),
@@ -135,20 +141,26 @@ class AgentLoop:
         state["session"] = session
         with self.engine.lock(session["customer_id"]):
             state.update(self.engine.load_context(state))
-            brief = self.engine.memory.brief(session["customer_id"], flush=False) if self.engine.memory_access(session) else None
-        if brief and not any(word in state["text"].lower() for word in (
-            "xác nhận", "đính chính", "sửa lại", "chính xác", "nhu cầu mới",
-        )):
-            conflicts = {fact["key"] for fact in brief["conflicts"]}
+            brief = (self.engine.memory.brief(session["customer_id"], flush=False)
+                     if self.engine.memory_access(session) and conversation_intent(state["text"]) != "profile_name"
+                     else None)
+        if brief:
             current = extract(state["text"])
+            conflicts = {fact["key"] for fact in brief["conflicts"]
+                         if fact["key"] not in current or not corrects(state["text"], fact["key"])}
             for fact in brief["needs"]:
-                if fact["key"] in current and current[fact["key"]][0] != fact["value"]:
+                if (fact["key"] in current and current[fact["key"]][0] != fact["value"]
+                        and not corrects(state["text"], fact["key"])):
                     conflicts.add(fact["key"])
             state["confirmations"] = sorted(set(state.get("confirmations", [])) | conflicts)
         return {
             "business_as_of": self.db.setting("clock"),
             "current_channel": session["channel"],
             "identity_verified": bool(session["verified"]),
+            "responder": self.engine.responder,
+            "specialist_welcome": bool(session.get("specialist_welcome")),
+            "profile_context": state.get("profile_context", {}),
+            "context_parts": state.get("context_parts", []),
             "brief": brief,
             "published_playbook": self.engine.agent_playbook(session),
             "facts": state["facts"],
@@ -221,6 +233,8 @@ class AgentLoop:
                 # Refresh capabilities after every result; model arguments never
                 # grant authority or choose the storage/customer identity.
                 session = self.db.one("SELECT * FROM sessions WHERE id=?", (state["session"]["id"],))
+                session.update({key: state["session"][key] for key in ("specialist_id", "specialist_welcome")
+                                if key in state["session"]})
                 state["session"] = session
                 for key in ("amount", "term", "income", "debt", "property_value"):
                     if key in args and key in state.get("confirmations", []):
@@ -354,9 +368,11 @@ class AgentLoop:
                 if run["rounds"] >= self.settings.agent_max_rounds:
                     raise LLMUnavailable("agent_round_limit")
                 context["facts"] = state["facts"]
-                offered = definitions(self.engine, state["session"])
+                offered = [] if state["session"].get("specialist_welcome") else definitions(self.engine, state["session"])
                 completion = tool_completion(
-                    self.settings, [{"role": "system", "content": SYSTEM + "\nBACKEND_CONTEXT_JSON:\n" + canonical(context)},
+                    self.settings, [{"role": "system", "content": SYSTEM + self.engine.draft_prefix
+                                     + "\nNếu specialist_welcome=true, chỉ tiếp nhận hồ sơ, không gọi tool hay bàn giao lần nữa."
+                                     + "\nBACKEND_CONTEXT_JSON:\n" + canonical(context)},
                                     *run["messages"]], offered, deadline=deadline,
                 )
                 run["rounds"] += 1
@@ -410,12 +426,13 @@ class AgentLoop:
             if state["unsuitable"]:
                 state["draft"] = "Hồ sơ hiện chưa phù hợp điều kiện sản phẩm. Em có thể chuyển chuyên viên để trao đổi phương án phù hợp hơn."
                 state["guard_events"].append(event("G4", "unsuitable", "decline"))
-            if run.get("handoff") and self.engine.memory_access(state["session"]) and any(
+            if (run.get("handoff") and not state["session"].get("specialist_welcome")
+                    and self.engine.responder == "assistant" and self.engine.memory_access(state["session"]) and any(
                 phrase in normalized(text) for phrase in ["gap chuyen vien", "gap nguoi", "chuyen vien", "khieu nai", "nop ho so", "ky hop dong"]
-            ):
+            )):
                 # Preserve the existing LangGraph interrupt/checkpoint contract.
                 state["handoff_only"] = True
-                state = self.engine.graph.invoke(state, {"configurable": {"thread_id": session["id"]}})
+                state = self.engine.graph.invoke(state, {"configurable": {"thread_id": self.engine.thread_id(state["session"])}})
                 return state
             if not state["session"]["verified"]:
                 state["guard_events"].append(event("G7", "public_tools_only", "restrict_private"))
@@ -424,6 +441,6 @@ class AgentLoop:
                 state["disclosures"].append("Lịch gọi và bản tóm tắt chỉ được mô phỏng trong hệ thống demo, chưa gửi thông báo ra bên ngoài.")
             state.update(self.engine.render(state))
         except LLMUnavailable as error:
-            state.update(reply=DEFAULT_REPLY, source_spans=[], used_fact_ids=[], tool_calls=run["calls"])
+            state.update(reply=DEFAULT_REPLY, source_spans=[], used_fact_ids=[], tool_calls=run["calls"], llm_unavailable=True)
             state["guard_events"].append(event("G2", error.category, "retry"))
         return state

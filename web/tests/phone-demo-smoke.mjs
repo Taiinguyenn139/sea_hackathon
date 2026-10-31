@@ -158,9 +158,9 @@ try {
     first.brief.needs.find((fact) => fact.key === "income")?.value,
     "47000000",
   );
-  await send(first, "Thu nhập chính xác 53 triệu");
+  await send(first, "Lương mới được tăng lên 53 triệu rồi");
   await waitIncome("0901234567", "53000000");
-  await tg(111, "Thu nhập chính xác 55 triệu");
+  await tg(111, "Thu nhập hiện tại của tôi là 55 triệu");
   await waitIncome("0901234567", "55000000");
   // The opposite order keeps web memory when the matching contact arrives.
   const second = await login("0901234568");
@@ -168,7 +168,7 @@ try {
   await waitIncome("0901234568", "61000000");
   await tg(222, "/start");
   await tg(222, null, "+84901234568");
-  await tg(222, "Thu nhập chính xác 63 triệu");
+  await tg(222, "Lương mới được tăng lên 63 triệu rồi");
   await waitIncome("0901234568", "63000000");
   const resumed = await login("+84 90 123 4568");
   assert.equal(resumed.brief.customer_id, second.brief.customer_id);

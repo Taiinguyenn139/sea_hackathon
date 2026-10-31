@@ -127,7 +127,7 @@ python3 scripts/setup_telegram.py \
 - Khách đi từ website trước được tạo hồ sơ với liên kết Telegram tạm `web:<id>`.
   Khi chủ số chia sẻ contact trên Telegram, bot gắn vào chính hồ sơ đó, giữ
   memory web. Một số đã gắn với Telegram khác không tự chuyển chủ.
-- `/start` mở phiên mới và giữ memory; không vượt qua handoff đang chờ chuyên viên.
+- `/start` mở phiên mới và giữ memory; không vượt qua handoff đang chờ nhân viên thật.
   Transcript từng phiên riêng biệt; thông tin đã ghi nhớ dùng chung.
 
 ## Liên kết demo cũ
@@ -137,6 +137,17 @@ Bot tự dùng hồ sơ cá nhân; người dùng chỉ cần chia sẻ số, kh
 Nếu contact cùng chủ Telegram trùng với phone binding demo cũ, binding chuyển
 sang hồ sơ cá nhân khi chia sẻ lại. Không sao chép memory demo dùng chung vào
 hồ sơ cá nhân. Khách đã có hồ sơ riêng tiếp tục dùng memory hiện có.
+
+## Chuyên viên tư vấn mô phỏng
+
+Gửi `/start` mở phiên mới và giữ memory đã ghi nhận. Trong lúc chờ nhân viên thật,
+`/start` không bỏ qua quy trình bàn giao. Khi bật `AI_SPECIALIST_ENABLED=true`
+với backend OpenAI, `/specialist` mở tư vấn chuyên sâu trong cùng phiên,
+`/assistant` lưu kết quả và quay lại trợ lý, `/human` chuyển vào hàng chờ người
+thật. Nhãn **Chuyên viên tư vấn** là vai trò mô phỏng bằng LLM. Tin nhắn thường
+được gửi tới vai trò đang phụ trách. Nếu tiếp nhận lỗi, gửi tin mới để thử lại
+hoặc dùng `/assistant` để thoát mà không cần LLM. `/start` khi chuyên viên mô phỏng
+đang hỗ trợ sẽ kết thúc phần tư vấn đó và tạo phiên mới.
 
 ## Kịch bản kiểm tra API riêng và Telegram hai chiều
 

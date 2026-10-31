@@ -25,6 +25,7 @@ def main() -> int:
             HARNESS_DB=str(Path(folder) / "harness.sqlite3"),
             LLM_BACKEND="rules",
             IDENTITY_HISTORY_ENABLED="false",
+            AI_SPECIALIST_ENABLED="false",
         )
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))

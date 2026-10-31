@@ -76,7 +76,7 @@ export function ChatHistory({ entries, activeId, busy, onNew, onSelect, onRename
             <button type="button" aria-label="Hủy đổi tên" onClick={() => setEditing(null)}><X size={16} /></button>
           </form> : <>
             <button className="history-select" aria-current={entry.session.session_id === activeId ? "page" : undefined} disabled={busy} onClick={() => onSelect(entry)}>
-              <MessageCircle size={16} /><span><strong>{entry.title}</strong><small>{entry.session.handoff_id && entry.session.status !== "completed" ? "Chờ chuyên viên" : entry.session.status === "ended" || entry.session.status === "completed" ? "Đã kết thúc" : "Có thể tiếp tục"}</small></span>
+              <MessageCircle size={16} /><span><strong>{entry.title}</strong><small>{entry.session.status === "waiting_human" || (entry.session.handoff_id && !entry.session.status) ? "Chờ chuyên viên" : entry.session.status === "ended" || entry.session.status === "completed" ? "Đã kết thúc" : entry.session.responder === "ai_specialist" ? "Chuyên viên tư vấn" : "Có thể tiếp tục"}</small></span>
             </button>
             <button className="history-edit" aria-label={`Đổi tên: ${entry.title}`} onClick={() => { setTitle(entry.title); setEditing(entry.session.session_id); }}><Pencil size={13} /></button>
           </>}

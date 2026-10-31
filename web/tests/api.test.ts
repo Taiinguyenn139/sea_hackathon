@@ -89,11 +89,36 @@ describe("API boundary", () => {
       {
         id: "turn1-assistant",
         role: "assistant",
+        responder: "assistant",
         text: "Mình có thể giúp bạn.",
         created_at: undefined,
       },
     ]);
   });
+});
+
+it("restores specialist-only events without fabricating customer messages", () => {
+  const turns = normalizeTurns({
+    items: [
+      {
+        id: "welcome",
+        text: "",
+        reply: "Đã tiếp nhận hồ sơ.",
+        responder: "ai_specialist",
+      },
+      {
+        id: "next",
+        text: "Cảm ơn",
+        reply: "Em tiếp tục hỗ trợ.",
+        responder: "assistant",
+      },
+    ],
+  });
+  expect(turns.map((t) => [t.role, t.responder])).toEqual([
+    ["assistant", "ai_specialist"],
+    ["user", undefined],
+    ["assistant", "assistant"],
+  ]);
 });
 
 describe("streaming replies", () => {
@@ -125,6 +150,22 @@ describe("streaming replies", () => {
     vi.stubGlobal("fetch", fetch);
     return fetch;
   }
+  it("keeps specialist role metadata separate from text snapshots and the final receipt", async () => {
+    const final = { ...result, responder: "ai_specialist" };
+    stubStream(
+      `event: metadata\ndata: {"responder":"ai_specialist"}\n\nevent: text\ndata: {"text":"Xin chào."}\n\nevent: result\ndata: ${JSON.stringify(final)}\n\n`,
+    );
+    const received: ReplyStreamEvent[] = [];
+    expect(
+      await streamReply(session, "Chào", "specialist-id", (event) =>
+        received.push(event),
+      ),
+    ).toEqual(final);
+    expect(received).toEqual([
+      { type: "metadata", responder: "ai_specialist" },
+      { type: "text", text: "Xin chào." },
+    ]);
+  });
   it("decodes fragmented Unicode and CRLF snapshots before the terminal receipt", async () => {
     const fetch = stubStream(
       `: heartbeat\r\n\r\nevent: status\r\ndata: {"stage":"drafting"}\r\n\r\nevent: text\r\ndata: {"text":"Xin chào."}\r\n\r\nevent: result\r\ndata: ${JSON.stringify(result)}\r\n\r\n`,
