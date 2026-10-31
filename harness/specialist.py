@@ -35,7 +35,7 @@ class Specialist:
                 "specialist_status": current["status"] if current else None,
                 "specialist_available": self.settings.ai_specialist_enabled}
 
-    def start(self, sid, reason, key, *, input_checked=False, welcome_turn=None):
+    def start(self, sid, reason, key, *, input_checked=False, welcome_turn=None, resume_from_human=False):
         h = self.harness
         session = h.session(sid)
         with h.engine.lock(session["customer_id"]):
@@ -48,6 +48,26 @@ class Specialist:
                     raise HTTPException(409, "Specialist request key already used")
                 if previous["start_result"]:
                     return json.loads(previous["start_result"])
+            if session["status"] == "waiting_human" and resume_from_human:
+                if h.identity_status(session) not in ("verified", "identified"):
+                    raise HTTPException(403, "Verify identity first")
+                if not self.settings.ai_specialist_enabled:
+                    raise HTTPException(409, "Tư vấn chuyên sâu chưa được bật.")
+                blocked = inspect_input(reason, self.settings, semantic=not input_checked)
+                if blocked:
+                    raise HTTPException(400, blocked["reply"])
+                pending = self.db.one(
+                    "SELECT * FROM handoffs WHERE session_id=? AND status IN ('pending','completing') "
+                    "ORDER BY created_at DESC LIMIT 1", (sid,),
+                )
+                if not pending:
+                    raise HTTPException(409, "Không tìm thấy yêu cầu nhân viên đang chờ.")
+                h.engine.complete(pending, {
+                    "notes": "Khách chọn chuyên viên AI tiếp nhận; chưa có nhân viên thật tư vấn.",
+                    "commitments": [],
+                })
+                session = h.session(sid)
+                input_checked = True
             if session["status"] != "active":
                 raise HTTPException(409, "Session is waiting for staff or ended")
             if h.identity_status(session) not in ("verified", "identified"):

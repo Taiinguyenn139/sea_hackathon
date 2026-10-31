@@ -44,6 +44,7 @@ class HandoffInput(Input):
 
 
 class SpecialistStartInput(Input):
+    resume_from_human: bool = False
     reason: str = Field(default="Khách yêu cầu tư vấn chuyên sâu", min_length=1, max_length=1000)
     idempotency_key: str = Field(min_length=1, max_length=128)
 

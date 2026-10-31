@@ -433,7 +433,9 @@ def create_app(settings=None):
     def specialist_start(sid: str, body: SpecialistStartInput, request: Request):
         owner(sid, request)
         with harness.engine.lock("session:" + sid), completion_budget(settings.agent_turn_budget_seconds):
-            return harness.specialist.start(sid, body.reason, body.idempotency_key)
+            return harness.specialist.start(
+                sid, body.reason, body.idempotency_key, resume_from_human=body.resume_from_human,
+            )
 
     @app.post("/sessions/{sid}/specialist/complete")
     def specialist_complete(sid: str, body: SpecialistCompleteInput, request: Request):

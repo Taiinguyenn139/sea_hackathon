@@ -630,6 +630,7 @@ export function CustomerChat() {
             body: {
               reason: "Khách yêu cầu tư vấn chuyên sâu",
               idempotency_key: specialistKeys.current.get(sid),
+              resume_from_human: waiting,
             },
           },
         );
@@ -637,7 +638,7 @@ export function CustomerChat() {
         save({ ...session, ...response });
         setTurns(await loadTurns(sid, session.session_token));
         navigate("conversation");
-        setHint("Chuyên viên đã tiếp nhận nội dung trao đổi của bạn.");
+        setHint("Chuyên viên AI đã tiếp nhận nội dung trao đổi của bạn.");
       } else {
         await request(`/sessions/${sid}/specialist/complete`, {
           method: "POST",
@@ -785,7 +786,7 @@ export function CustomerChat() {
                 {waiting
                   ? "Đang chờ chuyên viên"
                   : specialist
-                    ? "Chuyên viên tư vấn đang hỗ trợ"
+                    ? "Chuyên viên AI đang hỗ trợ"
                     : verified
                       ? "Sẵn sàng tiếp nối cùng bạn"
                       : "Cùng bạn trong từng quyết định"}
@@ -989,7 +990,7 @@ export function CustomerChat() {
                         {turn.role === "user"
                           ? "Bạn"
                           : turn.responder === "ai_specialist"
-                            ? "Chuyên viên tư vấn"
+                            ? "Chuyên viên AI"
                             : "Trợ lý Bankwise"}
                       </div>
                       <div className="message-bubble">{turn.text}</div>
@@ -1047,7 +1048,7 @@ export function CustomerChat() {
             <div className="handoff-notice">
               <Users size={20} />
               <div>
-                <strong>Chuyên viên tư vấn</strong>
+                <strong>Chuyên viên AI</strong>
                 <p>
                   {session?.specialist_status === "initializing"
                     ? "Đang tiếp nhận hồ sơ. Nếu có lỗi, gửi tin nhắn để thử lại hoặc quay lại trợ lý."
@@ -1078,6 +1079,15 @@ export function CustomerChat() {
                 <p>
                   Yêu cầu của bạn đã được gửi. Vui lòng chờ chuyên viên hỗ trợ.
                 </p>
+                {session?.specialist_available && (
+                  <button
+                    className="button secondary"
+                    disabled={pending || loading}
+                    onClick={() => void specialistAction("start")}
+                  >
+                    Để chuyên viên AI hỗ trợ ngay
+                  </button>
+                )}
               </div>
             </div>
           )}

@@ -101,7 +101,7 @@ for (const width of [375, 1440]) {
       .getByRole("button", { name: "Gặp chuyên viên", exact: true })
       .click();
     const log = page.getByRole("log");
-    await expect(log).toContainText("Chuyên viên tư vấn");
+    await expect(log).toContainText("Chuyên viên AI");
     await expect(log).toContainText(
       "Em đã tiếp nhận nội dung trao đổi về khoản vay 2 tỷ",
     );
@@ -111,14 +111,14 @@ for (const width of [375, 1440]) {
     await expect(composer).toBeEnabled();
     await expect(
       log.locator(".from-assistant .message-label").last(),
-    ).toHaveText("Chuyên viên tư vấn");
+    ).toHaveText("Chuyên viên AI");
     await page.reload();
     await expect(
       log.locator(".from-assistant .message-label").first(),
     ).toHaveText("Trợ lý Bankwise");
     await expect(
       log.locator(".from-assistant .message-label").last(),
-    ).toHaveText("Chuyên viên tư vấn");
+    ).toHaveText("Chuyên viên AI");
     await expect(composer).toBeEnabled();
     await page
       .getByRole("button", { name: "Quay lại trợ lý", exact: true })
@@ -171,6 +171,13 @@ for (const width of [375, 1440]) {
           item.target === "ai_specialist" && item.status === "completed",
       ),
     ).toHaveLength(2);
+    await page.getByRole("button", { name: "Để chuyên viên AI hỗ trợ ngay" }).click();
+    await expect(composer).toBeEnabled();
+    await expect(page.getByText("Đang chờ chuyên viên tiếp nhận", { exact: true })).toHaveCount(0);
+    await expect(log.locator(".from-assistant .message-label").last()).toHaveText("Chuyên viên AI");
+    await page.reload();
+    await expect(composer).toBeEnabled();
+    await expect(log.locator(".from-assistant .message-label").last()).toHaveText("Chuyên viên AI");
   });
 }
 
