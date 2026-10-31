@@ -68,7 +68,7 @@ export function StaffBoundary({ children }: { children: ReactNode }) {
           <h1>Cổng nghiệp vụ ngân hàng</h1>
           <p>
             Đăng nhập để tiếp nhận và xử lý yêu cầu hỗ trợ khách hàng Ngân hàng
-            Tài Khoa Tuấn.
+            Bankwise.
           </p>
           <div className="entry-detail">
             <ShieldCheck size={22} />

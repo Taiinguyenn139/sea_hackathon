@@ -67,6 +67,7 @@ class Scenario(Input):
     customer_claims: list[tuple[Literal["VND", "months", "%"], str | int | float]] = Field(default_factory=list)
     sessions: list[Session] = Field(min_length=1)
     loan: Loan | None = None
+    card_income: int | None = Field(default=None, ge=0)
     concerns: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")

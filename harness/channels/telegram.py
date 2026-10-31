@@ -1,7 +1,6 @@
 """Telegram inbox/outbox: acknowledge durable events before running the agent."""
 
 import json
-import re
 import sqlite3
 import threading
 import time
@@ -125,18 +124,11 @@ class Dispatcher:
                         session = self.harness.session(created["session_id"])
                     if late:
                         reply = "Tin nhắn đến trễ so với cuộc trao đổi hiện tại. Anh/chị vui lòng gửi lại thông tin cần cập nhật để em xác nhận."
-                    elif not self.harness.can_chat(session):
-                        dob = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text)
-                        if dob:
-                            result = self.harness.verify(session, dob[1], "telegram:" + target)
-                            reply = (
-                                "Đã xác minh. Anh/chị cần tư vấn sản phẩm nào?"
-                                if result["identity_status"] == "verified"
-                                else "Chưa thể xác minh. Anh/chị vui lòng kiểm tra lại thông tin."
-                            )
-                        else:
-                            reply = "Để tiếp tục demo, vui lòng xác minh ngày sinh theo định dạng năm-tháng-ngày."
                     elif isinstance(contact, dict):
+                        # Contact binding is a separate proof path. Existing
+                        # fixture sessions must first match their bound demo phone.
+                        if not self.harness.can_chat(session):
+                            raise HTTPException(403, "Vui lòng gửi số điện thoại demo trong chat để nhận diện phiên này trước.")
                         profile = self.harness.engine.memory.profile(customer)
                         self.harness.phone_identity.bind(
                             customer, profile["name"], target, contact, message.get("from", {}).get("id")
@@ -155,7 +147,7 @@ class Dispatcher:
                         )
                     else:
                         reply = self.harness.message(
-                            session["id"], text, row["id"],
+                            session["id"], text, row["id"], "telegram:" + target,
                             input_checked=payload.get("input_guard_version") == VERSION,
                         )["reply"]
                     if self.harness.can_chat(session) and session["status"] == "active" and not contact and not late and (

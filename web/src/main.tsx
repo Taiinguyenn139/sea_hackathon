@@ -34,13 +34,13 @@ function App() {
       </a>
       <aside className="sidebar">
         <a
-          href="/chat"
+          href={page === "chat" ? "#home" : "/chat#home"}
           className="brand"
-          aria-label="Ngân hàng Tài Khoa Tuấn — hỗ trợ khách hàng"
+          aria-label="Ngân hàng Bankwise — hỗ trợ khách hàng"
         >
           <BrandMark />
           <div>
-            <strong>TÀI KHOA TUẤN</strong>
+            <strong>BANKWISE</strong>
             <small>NGÂN HÀNG</small>
           </div>
         </a>
@@ -49,7 +49,7 @@ function App() {
           <nav aria-label="Điều hướng chính">
             <a
               className={page === "chat" ? "nav-item active" : "nav-item"}
-              href="/chat"
+              href={page === "chat" ? "#home" : "/chat#home"}
               aria-label="Hỗ trợ trực tuyến"
               aria-current={page === "chat" ? "page" : undefined}
             >
@@ -111,7 +111,7 @@ function App() {
       <div className="main-column">
         <header className="topbar">
           <div className="breadcrumb">
-            Tài Khoa Tuấn <span>/</span>{" "}
+            Bankwise <span>/</span>{" "}
             <strong>
               {page === "chat"
                 ? "Hỗ trợ khách hàng"

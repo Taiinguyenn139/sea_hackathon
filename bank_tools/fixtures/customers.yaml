@@ -1,0 +1,86 @@
+# Toàn bộ tên, CIF và định danh đều hư cấu; không chứa dữ liệu xác minh danh tính.
+# external_id là ID demo, không phải số điện thoại hoặc tài khoản thật.
+customers:
+  - customer_id: cus_001
+    cif: '0048213'
+    full_name: Nguyễn Thị Hoa
+    segment: mass
+    income: 45000000
+    monthly_debt_payment: 5000000
+    identity_links:
+      - {channel: hotline, external_id: 'demo:hoa:hotline'}
+      - {channel: zalo, external_id: 'demo:hoa:zalo'}
+  - customer_id: cus_002
+    cif: '0048214'
+    full_name: Trần Minh An
+    segment: priority
+    income: 100000000
+    monthly_debt_payment: 10000000
+    identity_links:
+      - {channel: hotline, external_id: 'demo:an:hotline'}
+      - {channel: zalo, external_id: 'demo:an:zalo'}
+  - customer_id: cus_003
+    cif: '0048215'
+    full_name: Lê Bảo Ngọc
+    segment: mass
+    income: 8000000
+    monthly_debt_payment: 1000000
+    identity_links:
+      - {channel: web, external_id: 'demo:ngoc:web'}
+  - customer_id: cus_004
+    cif: '0048216'
+    full_name: Phạm Quốc Huy
+    segment: mass
+    income: 30000000
+    monthly_debt_payment: 18000000
+    identity_links:
+      - {channel: hotline, external_id: 'demo:huy:hotline'}
+  - customer_id: cus_005
+    cif: '0048217'
+    full_name: Vũ Thu Hà
+    segment: priority
+    income: 80000000
+    monthly_debt_payment: 0
+    identity_links:
+      - {channel: zalo, external_id: 'demo:ha:zalo'}
+  - customer_id: cus_006
+    cif: '0048218'
+    full_name: Đỗ Đức Nam
+    segment: mass
+    income: 20000000
+    monthly_debt_payment: 3000000
+    identity_links:
+      - {channel: web, external_id: 'demo:nam:web'}
+      - {channel: hotline, external_id: 'demo:nam:hotline'}
+  - customer_id: cus_007
+    cif: '0048219'
+    full_name: Bùi Khánh Linh
+    segment: mass
+    income: 15000000
+    monthly_debt_payment: 0
+    identity_links:
+      - {channel: zalo, external_id: 'demo:linh:zalo'}
+  - customer_id: cus_008
+    cif: '0048220'
+    full_name: Hoàng Gia Bảo
+    segment: priority
+    income: 150000000
+    monthly_debt_payment: 20000000
+    identity_links:
+      - {channel: web, external_id: 'demo:bao:web'}
+  - customer_id: cus_009
+    cif: '0048221'
+    full_name: Đặng Mỹ Anh
+    segment: mass
+    income: 25000000
+    monthly_debt_payment: 2000000
+    identity_links:
+      - {channel: hotline, external_id: 'demo:myanh:hotline'}
+  - customer_id: cus_010
+    cif: '0048222'
+    full_name: Ngô Tuấn Kiệt
+    segment: mass
+    income: 6000000
+    monthly_debt_payment: 0
+    identity_links:
+      - {channel: web, external_id: 'demo:kiet:web'}

@@ -25,7 +25,7 @@ class MessageInput(Input):
 
 
 class VerifyInput(Input):
-    dob: str = Field(max_length=10)
+    phone: str = Field(min_length=1, max_length=64)
 
 
 class PhoneLoginInput(Input):

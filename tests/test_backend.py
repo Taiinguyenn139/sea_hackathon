@@ -33,7 +33,7 @@ def session(c, profile="hoa", mode="harness", channel=None):
 
 def verify(c, sid, auth, profile="hoa"):
     r = c.post(
-        f"/sessions/{sid}/verify", headers=auth, json={"dob": "1988-05-12" if profile == "hoa" else "1992-08-20"}
+        f"/sessions/{sid}/verify", headers=auth, json={"phone": "0900000001" if profile == "hoa" else "0900000002"}
     )
     assert r.status_code == 200, r.text
     assert r.json()["identity_status"] == "verified"
@@ -60,11 +60,11 @@ def test_verify_limit(client):
     sid, a = session(client)
     for _ in range(5):
         assert (
-            client.post(f"/sessions/{sid}/verify", headers=a, json={"dob": "wrong"}).json()["identity_status"]
+            client.post(f"/sessions/{sid}/verify", headers=a, json={"phone": "0900000002"}).json()["identity_status"]
             == "unverified"
         )
     sid, b = session(client)
-    assert client.post(f"/sessions/{sid}/verify", headers=b, json={"dob": "1988-05-12"}).status_code == 429
+    assert client.post(f"/sessions/{sid}/verify", headers=b, json={"phone": "0900000001"}).status_code == 429
 
 
 def test_staff_cookie_csrf(client):
@@ -97,8 +97,8 @@ def test_three_modes_common_renderer(client, mode):
     sid, a = session(client, mode=mode)
     verify(client, sid, a)
     send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm", "a")
-    r = send(client, sid, a, "Thu nhập 45 triệu mỗi tháng", "b")
-    assert "2 tỷ" in r["reply"] and "6,9" in r["reply"]
+    r = send(client, sid, a, "Thu nhập 45 triệu mỗi tháng, không có nợ, giá nhà 3 tỷ", "b")
+    assert "2 tỷ" in r["reply"] and "7,1" in r["reply"]
     trace = client.get(f"/traces/{sid}", headers=ADMIN).json()["items"][-1]
     for span in trace["source_spans"]:
         assert r["reply"][span["start"] : span["end"]]
@@ -108,11 +108,11 @@ def test_three_modes_common_renderer(client, mode):
 def test_memory_without_old_transcript(client):
     sid, a = session(client)
     verify(client, sid, a)
-    send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu. SECRET_CANARY")
+    send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ. SECRET_CANARY")
     client.post(f"/sessions/{sid}/end", headers=a)
     new, b = session(client)
     verify(client, new, b)
-    assert "6,9" in send(client, new, b, "Tiếp tục tư vấn")["reply"]
+    assert "7,1" in send(client, new, b, "Tiếp tục tư vấn")["reply"]
     assert "SECRET_CANARY" not in json.dumps(client.get(f"/traces/{new}", headers=ADMIN).json(), ensure_ascii=False)
 
 
@@ -145,14 +145,14 @@ def test_duplicate_no_memory_gap(client):
     )
 
 
-def test_fault_safe_callback(client):
+def test_fault_does_not_invent_callback(client):
     sid, a = session(client)
     verify(client, sid, a)
     client.post("/admin/faults", headers=ADMIN, json={"tool": "get_rate", "mode": "timeout", "count": 1})
-    r = send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu")
+    r = send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ")
     assert not any(x.isdigit() for x in r["reply"])
     assert any(x["guard_id"] == "G2" for x in r["guard_events"])
-    assert len(client.get("/callbacks", headers=ADMIN).json()["items"]) == 1
+    assert len(client.get("/callbacks", headers=ADMIN).json()["items"]) == 0
 
 
 def test_handoff_current_turn_concurrent_complete(client):
@@ -178,21 +178,21 @@ def test_expired_promo(client):
     client.post("/admin/clock", headers=ADMIN, json={"as_of": "2026-09-27"})
     sid, a = session(client)
     verify(client, sid, a)
-    assert "6,5" in send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu")["reply"]
+    assert "6,5" in send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ")["reply"]
     client.post("/admin/clock", headers=ADMIN, json={"as_of": "2026-10-31"})
     sid, b = session(client)
     verify(client, sid, b)
     r = send(client, sid, b, "Tiếp tục tư vấn")
-    assert "6,9" in r["reply"] and "hết hạn" in r["reply"]
+    assert "7,1" in r["reply"] and "hết hạn" in r["reply"]
 
 
 def test_card_and_unsuitable(client):
     sid, a = session(client)
     verify(client, sid, a)
-    assert "100 triệu" in send(client, sid, a, "Tôi cần thẻ tín dụng thu nhập 40 triệu")["reply"]
+    assert "100 triệu" in send(client, sid, a, "Tôi cần thẻ tín dụng thu nhập 40 triệu, không có nợ")["reply"]
     sid, b = session(client, "minh")
     verify(client, sid, b, "minh")
-    r = send(client, sid, b, "Vay tiêu dùng 100 triệu trong 24 tháng thu nhập 2 triệu")
+    r = send(client, sid, b, "Vay tiêu dùng 100 triệu trong 24 tháng thu nhập 2 triệu, không có nợ")
     assert any(e["guard_id"] == "G4" for e in r["guard_events"])
 
 
@@ -249,7 +249,7 @@ def test_telegram_new_customer_can_start_and_update_needs(client):
     customer, welcome = telegram_message(client, 1, "/start")
     assert "sản phẩm" in welcome and "quản trị" not in welcome
     assert customer not in {"hoa", "minh"}
-    _, reply = telegram_message(client, 2, "Tôi cần thẻ tín dụng, thu nhập 40 triệu")
+    _, reply = telegram_message(client, 2, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
     assert "100 triệu" in reply
     telegram_message(client, 3, "Thu nhập chính xác 50 triệu")
     h = client.app.state.harness
@@ -267,7 +267,7 @@ def test_telegram_new_customer_can_start_and_update_needs(client):
 
 
 def test_telegram_first_message_is_processed_and_customers_are_isolated(client):
-    customer, reply = telegram_message(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu")
+    customer, reply = telegram_message(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
     assert "100 triệu" in reply
     other, reply = telegram_message(client, 2, "Tôi cần thẻ tín dụng", chat_id=222)
     assert other != customer and "thu nhập" in reply and "100 triệu" not in reply
@@ -288,7 +288,7 @@ def test_telegram_first_message_is_processed_and_customers_are_isolated(client):
 def test_telegram_guest_memory_survives_new_session_and_process_restart(tmp_path):
     settings = Settings(db_path=str(tmp_path / "guest.sqlite3"), admin_token="admin-test", staff_password="staff-test")
     with TestClient(create_app(settings)) as client:
-        customer, _ = telegram_message(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu")
+        customer, _ = telegram_message(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
         telegram_message(client, 2, "/start")
         _, reply = telegram_message(client, 3, "Tiếp tục tư vấn thẻ tín dụng")
         assert "100 triệu" in reply
@@ -306,16 +306,22 @@ def test_telegram_explicit_bank_link_still_requires_verification(client):
         "/admin/identity-links/telegram", headers=ADMIN, json={"external_id": "111", "customer_id": "hoa"}
     ).status_code == 200
     customer, reply = telegram_message(client, 2, "Tôi cần thẻ tín dụng")
-    assert customer == "hoa" and "xác minh ngày sinh" in reply
-    _, reply = telegram_message(client, 3, "1988-05-12")
-    assert "Đã xác minh" in reply
+    assert customer == "hoa" and "thu nhập" in reply
+    harness = client.app.state.harness
+    linked = harness.db.one("SELECT * FROM sessions WHERE customer_id='hoa' AND channel='telegram'")
+    assert not linked["verified"]
+    assert len(harness.engine.bank.definitions("hoa", linked["id"])) == 6
+    _, reply = telegram_message(client, 3, "0900000001")
+    assert "nhận diện hồ sơ demo" in reply
+    assert harness.session(linked["id"])["verified"] == 1
+    assert len(harness.engine.bank.definitions("hoa", linked["id"])) == 8
     _, reply = telegram_message(client, 4, "Tôi cần thẻ tín dụng")
     assert "thu nhập" in reply  # The former prospect's income was not attached to Hoa.
     assert client.app.state.harness.engine.memory.brief(guest)["needs"]
 
 
 def test_telegram_guest_can_handoff_with_shared_bank_brief(client):
-    customer, _ = telegram_message(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu")
+    customer, _ = telegram_message(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
     _, reply = telegram_message(client, 2, "Tôi muốn gặp chuyên viên")
     assert "chuyển yêu cầu" in reply
     handoff = client.get("/handoffs", headers=ADMIN).json()["items"][0]
@@ -325,14 +331,17 @@ def test_telegram_guest_can_handoff_with_shared_bank_brief(client):
     assert "Chuyên viên đang tiếp nhận" in reply
 
 
-def test_telegram_guest_can_request_summary_for_own_chat(client):
-    customer, _ = telegram_message(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu")
-    telegram_message(client, 2, "Gửi tóm tắt")
+def test_telegram_guest_summary_keeps_private_action_locked(client):
+    customer, _ = telegram_message(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
+    _, reply = telegram_message(client, 2, "Gửi tóm tắt")
     h = client.app.state.harness
-    call = h.db.one("SELECT result FROM tool_calls WHERE tool='send_summary'")
-    assert call and json.loads(call["result"])["error"] is None
-    assert len(h.db.all("SELECT * FROM outbox WHERE target='111'")) == 3
+    calls = h.db.all("SELECT result FROM tool_calls WHERE tool='send_summary'")
+    assert all(json.loads(call["result"])["error"] for call in calls)
+    assert not h.db.all("SELECT * FROM outbox WHERE status='mock_sent'")
+    assert "số điện thoại" in reply
+    assert len(h.db.all("SELECT * FROM outbox WHERE target='111'")) == 2
     assert h.engine.memory.brief(customer)["quotes"]
+    assert not h.engine.memory.brief("hoa")["needs"]
 
 
 def test_telegram_late_start_does_not_reset_active_session(client):
@@ -348,7 +357,7 @@ def test_telegram_late_start_does_not_reset_active_session(client):
 def test_admin_reset(client):
     sid, a = session(client)
     verify(client, sid, a)
-    send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu")
+    send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ")
     assert client.post("/admin/reset", headers=ADMIN, json={}).status_code == 200
     assert client.get("/sessions/" + sid, headers=a).status_code == 404
 
@@ -406,18 +415,21 @@ def test_memory_two_workers_contiguous(client):
 
 def test_bank_fact_canonical_ids_and_fault_count(client):
     h = client.app.state.harness
-    a = h.engine.bank.call("get_rate", {"product": "home_loan", "amount": 2000000000}, "hoa", "test-session")
-    b = h.engine.bank.call("get_rate", {"amount": 2000000000, "product": "home_loan"}, "hoa", "test-session")
+    args = {"product": "home_loan", "amount": 2000000000, "term": 240, "segment": "mass", "as_of": "2026-10-31"}
+    a = h.engine.bank.call("get_rate", args, "hoa", "test-session")
+    b = h.engine.bank.call("get_rate", dict(reversed(list(args.items()))), "hoa", "test-session")
+    assert a["facts"] and not a["error"]
     assert [f["fact_id"] for f in a["facts"]] == [f["fact_id"] for f in b["facts"]]
     client.post("/admin/faults", headers=ADMIN, json={"tool": "get_rate", "mode": "error", "count": 1})
-    assert h.engine.bank.call("get_rate", {}, "hoa", "test-session")["error"] == "error"
-    assert h.engine.bank.call("get_rate", {}, "hoa", "test-session")["error"] is None
+    assert "as_of" in h.engine.bank.call("get_rate", {}, "hoa", "test-session")["error"]
+    assert h.engine.bank.call("get_rate", args, "hoa", "test-session")["error"] == "error"
+    assert h.engine.bank.call("get_rate", args, "hoa", "test-session")["error"] is None
 
 
 def test_guard_revalidates_second_draft(client, monkeypatch):
     engine = client.app.state.harness.engine
     state = {
-        "session": {"mode": "harness", "customer_id": "hoa"},
+        "session": {"mode": "harness", "customer_id": "hoa", "verified": True},
         "draft": "Lãi {fact:missing}",
         "facts": {},
         "tool_error": False,
@@ -467,7 +479,7 @@ def test_eval_manifest_allowlist(client, tmp_path):
 def test_unbacked_draft_variants(client, monkeypatch, draft):
     engine = client.app.state.harness.engine
     state = {
-        "session": {"mode": "harness", "customer_id": "hoa"},
+        "session": {"mode": "harness", "customer_id": "hoa", "verified": True},
         "draft": draft,
         "facts": {},
         "tool_error": False,
@@ -507,8 +519,8 @@ def test_optional_llm_schema_fallback_and_extraction_source(client, monkeypatch)
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
     sid, a = session(client)
     verify(client, sid, a)
-    r = send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm. Thu nhập 45 triệu")
-    assert "999" not in r["reply"] and "6,9" in r["reply"]
+    r = send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm. Thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ")
+    assert "999" not in r["reply"] and "7,1" in r["reply"]
     assert any(e["guard_id"] == "G1" for e in r["guard_events"])
     brief = client.get("/customers/hoa/brief", headers=ADMIN).json()
     assert not any(f["value"] == "999000000" for f in brief["facts"])
@@ -529,11 +541,12 @@ def test_optional_llm_schema_fallback_and_extraction_source(client, monkeypatch)
     assert send(client, sid, a, "Tiếp tục", "next")["reply"] == DEFAULT_REPLY
 
 
-def test_dob_not_persisted_in_tool_audit(client):
+def test_phone_not_persisted_in_verification_tool_arguments(client):
     sid, a = session(client)
     verify(client, sid, a)
     rows = client.app.state.harness.db.all("SELECT args FROM tool_calls WHERE tool='verify_identity'")
-    assert rows and "1988-05-12" not in json.dumps(rows)
+    assert rows and "0900000001" not in json.dumps(rows)
+    assert all(json.loads(row["args"])["phone"] == "[redacted]" for row in rows)
 
 
 def test_release_gate_blocks_mutation_and_delivery(tmp_path, monkeypatch):
@@ -574,7 +587,7 @@ def test_production_config_rejects_empty_secrets():
 def test_handoff_bot_said_has_tool_provenance(client):
     sid, a = session(client)
     verify(client, sid, a)
-    send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu")
+    send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ")
     response = client.post(f"/sessions/{sid}/handoff", headers=a, json={"reason": "Tư vấn hồ sơ"})
     assert response.status_code == 200
     assert response.json()["bot_said"][0]["tool_call_ids"]
@@ -584,7 +597,7 @@ def test_handoff_bot_said_has_tool_provenance(client):
 def test_callback_uses_business_clock(client):
     sid, a = session(client)
     verify(client, sid, a)
-    send(client, sid, a, "Hẹn gọi lại sau 2 ngày")
+    send(client, sid, a, "Hẹn gọi lại sau 2 ngày lúc 09:00")
     callbacks = client.get("/callbacks", headers=ADMIN).json()["items"]
     assert callbacks[0]["due_at"].startswith("2026-11-02")
 
@@ -690,3 +703,95 @@ def test_candidate_preflight_recovers_valid_completing_handoff(tmp_path, monkeyp
         harness = candidate.state.harness
         assert harness.db.one("SELECT status FROM handoffs WHERE id=?", (hid,))["status"] == "completed"
         assert len(harness.db.all("SELECT * FROM callbacks")) == 1
+
+
+def test_tool_registry_and_trusted_verification(client):
+    sid, auth = session(client)
+    tools = client.get(f"/sessions/{sid}/tools", headers=auth).json()["tools"]
+    assert len(tools) == 6
+    assert all("as_of" in tool["parameters"]["required"] for tool in tools)
+    result = send(client, sid, auth, "Ưu đãi vay mua nhà hiện tại?", "public")
+    assert "7,1" in result["reply"]
+    harness = client.app.state.harness
+    assert harness.db.all("SELECT * FROM facts WHERE customer_id='hoa'") == []
+    assert harness.db.all("SELECT * FROM memory_jobs") == []
+    denied = harness.engine.bank.call("schedule_callback", {"time": "2026-11-02T09:00:00+07:00", "as_of": "2026-10-31"}, "hoa", sid)
+    assert denied["error"].startswith("authentication_required:")
+    verify(client, sid, auth)
+    tools = client.get(f"/sessions/{sid}/tools", headers=auth).json()["tools"]
+    assert len(tools) == 8
+    assert "crm_lookup" not in {tool["name"] for tool in tools}
+    assert all("customer_id" not in tool["parameters"]["properties"] for tool in tools)
+    assert harness.engine.bank.call("crm_lookup", {"as_of": "2026-10-31"}, "hoa", sid)["error"].startswith("authentication_required:")
+    client.post("/staff/login", json={"password": "staff-test"})
+    assert len(client.get(f"/sessions/{sid}/tools", headers=auth).json()["tools"]) == 8
+
+
+def test_verified_summary_and_callback_are_durable_mocks(client):
+    sid, auth = session(client)
+    verify(client, sid, auth)
+    result = send(client, sid, auth, "Vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ. Gửi tóm tắt", "summary")
+    assert "tóm tắt mô phỏng" in result["reply"]
+    harness = client.app.state.harness
+    row = harness.db.one("SELECT * FROM outbox")
+    assert row["status"] == "mock_sent" and json.loads(row["text"])
+    assert all(f["observed_at"] == "2026-10-31" for f in json.loads(row["text"]))
+    send(client, sid, auth, "Hẹn gọi lại sau 2 ngày", "missing-time")
+    assert harness.db.all("SELECT * FROM callbacks") == []
+    text = "Hẹn gọi lại sau 2 ngày lúc 14:30"
+    first = send(client, sid, auth, text, "callback")
+    assert send(client, sid, auth, text, "callback") == first
+    callbacks = harness.db.all("SELECT * FROM callbacks")
+    assert len(callbacks) == 1 and callbacks[0]["due_at"] == "2026-11-02T14:30:00+07:00"
+    assert json.loads(callbacks[0]["payload"])["mock"] is True
+
+
+def test_guest_cannot_read_existing_customer_memory(client):
+    sid, auth = session(client)
+    verify(client, sid, auth)
+    send(client, sid, auth, "Thu nhập 99 triệu", "private")
+    guest, token = session(client)
+    reply = send(client, guest, token, "Cho xem hồ sơ của tôi lần trước", "guest")
+    assert "số điện thoại" in reply["reply"] and "99" not in reply["reply"]
+    trace = client.get(f"/traces/{guest}", headers=ADMIN).json()["items"][-1]
+    assert not trace["tool_calls"]
+    assert all(p["type"] != "call_brief" for p in trace["context_parts"])
+    assert not any(f["key"] == "income" for f in trace["facts"])
+
+
+def test_tool_rejects_spoofed_identity_and_context(client):
+    from bank_tools.auth import AuthContext
+
+    sid, auth = session(client)
+    verify(client, sid, auth)
+    bank = client.app.state.harness.engine.bank
+    args = {"as_of": "2026-10-31", "time": "2026-11-02T09:00:00+07:00"}
+    assert "forbidden" in bank.call("schedule_callback", {**args, "customer_id": "minh"}, "hoa", sid)["error"]
+    assert "forbidden" in bank.call("schedule_callback", args, "hoa", sid, context={"identity_verified": True})["error"]
+    assert "forbidden" in bank.call("schedule_callback", args, "minh", sid, context=AuthContext("minh", True))["error"]
+    assert client.app.state.harness.db.all("SELECT * FROM callbacks") == []
+
+
+def test_new_business_day_refreshes_sources_and_expires_policy(client):
+    sid, auth = session(client)
+    verify(client, sid, auth)
+    text = "Vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ"
+    assert "7,1" in send(client, sid, auth, text, "day1")["reply"]
+    client.post("/admin/clock", headers=ADMIN, json={"as_of": "2026-11-01"})
+    assert "7,1" in send(client, sid, auth, "Tiếp tục", "day2")["reply"]
+    trace = client.get(f"/traces/{sid}", headers=ADMIN).json()["items"][-1]
+    assert all(call["args"]["as_of"] == "2026-11-01" for call in trace["tool_calls"])
+    assert all(f["observed_at"] == "2026-11-01" for f in trace["facts"] if f["source_type"] == "bank_tool")
+    client.post("/admin/clock", headers=ADMIN, json={"as_of": "2027-01-01"})
+    result = send(client, sid, auth, "Tiếp tục", "expired")
+    assert any(g["guard_id"] == "G2" for g in result["guard_events"])
+    assert "7,1" not in result["reply"] and not client.app.state.harness.db.all("SELECT * FROM callbacks")
+
+
+def test_explicit_zero_debt_and_long_income_confirmation():
+    from harness.memory.service import extract
+
+    assert extract("Không có nợ")["debt"] == ("0", "đồng")
+    assert extract("Nợ 0")["debt"] == ("0", "đồng")
+    assert "debt" not in extract("Vay mua nhà 2 tỷ")
+    assert extract("Chị xác nhận thu nhập riêng hiện tại chính xác là 40 triệu đồng mỗi tháng.")["income"] == ("40000000", "đồng")

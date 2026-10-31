@@ -77,7 +77,7 @@ class Oracle:
         return allowed
 
     def expected_values(
-        self, product: str, as_of: str, channel: str, loan: dict[str, Any] | None = None
+        self, product: str, as_of: str, channel: str, loan: dict[str, Any] | None = None, *, card_income: int | None = None
     ) -> dict[str, Decimal]:
         rows = [
             r
@@ -90,10 +90,13 @@ class Oracle:
         if product == "credit_card":
             return {
                 "card_limit_min": Decimal(10000000),
-                "card_limit_max": Decimal(100000000),
-                "annual_fee": Decimal(500000),
-                "fee_waiver_spend": Decimal(100000000),
-                "promo_fee_waiver": Decimal(500000),
+                "card_limit_max": (
+                    min(Decimal(100000000), Decimal(card_income) * 3)
+                    if card_income is not None else Decimal(100000000)
+                ),
+                "annual_fee": Decimal(300000),
+                "fee_waiver_spend": Decimal(30000000),
+                "promo_fee_waiver": Decimal(100),
                 "promo_months": Decimal(12),
             }
         rates = [Decimal(str(value)) for unit, value in row["claims"] if unit == "%"]

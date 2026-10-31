@@ -49,7 +49,7 @@ Mỗi bước phân loại (`plan`), soạn trả lời (`draft`) và trích xu�
 
 Khi hết hai model, khách nhận đúng câu: “Hiện tại hệ thống tư vấn đang tạm gián đoạn. Anh/chị vui lòng thử lại sau ít phút.” Không tạo tư vấn bằng rules do lỗi API, không gọi lại bank tools và không đưa chi tiết lỗi nội bộ cho khách. Guard số liệu, nguồn span, phép tính ngân hàng và template bảo vệ vẫn tất định.
 
-Memory gọi provider ngoài transaction SQLite. Job được claim bằng lease rồi kiểm tra lại trước commit; khi lỗi, giữ payload/thứ tự để thử lại và cooldown 30 giây để tránh gọi liên tục. Candidate startup recovery dùng parser tất định, không gọi primary/backup trước promotion.
+Memory gọi provider ngoài transaction SQLite. Job được claim bằng lease rồi kiểm tra lại trước commit; request gặp claim đang chạy sẽ chờ ngoài DB lock, tối đa ngân sách gọi, để bàn giao hoặc lượt tiếp theo đọc được memory vừa cập nhật. Khi provider lỗi, giữ payload/thứ tự để thử lại và cooldown 30 giây để tránh gọi liên tục. Candidate startup recovery dùng parser tất định, không gọi primary/backup trước promotion.
 
 Để bật trên VM hiện tại:
 

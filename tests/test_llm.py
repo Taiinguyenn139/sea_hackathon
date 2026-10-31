@@ -8,6 +8,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from harness.agent.engine import Engine
 from harness.api import create_app
 from harness.config import Settings
 from harness.db import Database
@@ -162,11 +163,12 @@ def test_memory_network_does_not_hold_database_lock(tmp_path, monkeypatch):
         try:
             other = pool.submit(db.one, "SELECT value FROM settings WHERE key='clock'")
             assert other.result(timeout=0.5)
-            with pytest.raises(LLMUnavailable):
-                memory.flush("hoa")
+            same_customer = pool.submit(memory.flush, "hoa")
+            assert not same_customer.done()
         finally:
             release.set()
         worker.result(timeout=3)
+        same_customer.result(timeout=3)
     assert db.one("SELECT processed_seq FROM customer_sequences WHERE customer_id='hoa'")["processed_seq"] == 1
     assert db.one("SELECT count(*) AS n FROM facts WHERE source_ref='turn-a'")["n"] == 1
     assert db.one("SELECT value FROM facts WHERE source_ref='turn-a'")["value"] == "45000000"
@@ -194,6 +196,55 @@ def test_memory_exhaustion_keeps_job_and_cooldown(tmp_path, monkeypatch):
     assert db.one("SELECT status FROM memory_jobs")["status"] == "processed"
 
 
+def test_memory_wait_for_active_claim_has_deadline(tmp_path):
+    db = Database(str(tmp_path / "busy.sqlite3"))
+    memory = Memory(db, configured(llm_call_budget_seconds=0.05))
+    with db.transaction() as conn:
+        memory.enqueue(conn, "turn", "hoa", "session", "web", "Thu nhập 45 triệu")
+        conn.execute("UPDATE memory_jobs SET status='processing',lease_until=?", (time.time() + 30,))
+    started = time.monotonic()
+    with pytest.raises(LLMUnavailable):
+        memory.flush("hoa")
+    assert time.monotonic() - started < 0.5
+    assert db.one("SELECT processed_seq FROM customer_sequences")["processed_seq"] == 0
+    assert db.one("SELECT status FROM memory_jobs")["status"] == "processing"
+
+
+def test_model_classification_cannot_authorize_handoff(tmp_path, monkeypatch):
+    engine = Engine(Database(str(tmp_path / "intent.sqlite3")), configured())
+    monkeypatch.setattr(
+        "harness.agent.engine.json_completion", lambda *args, **kwargs: {"stage": "apply", "objection": None}
+    )
+    known = {"amount": "2000000000", "term": "240", "income": "45000000", "debt": "0", "property_value": "3000000000"}
+    normal = engine.plan({"text": "Tôi muốn vay mua nhà", "known": known, "session": {"verified": True}})["plan"]
+    assert normal["handoff"] is False and normal["stage"] == "quote"
+    explicit = engine.plan({
+        "text": "Tôi muốn gặp chuyên viên để nộp hồ sơ", "known": known, "session": {"verified": True},
+    })["plan"]
+    assert explicit["handoff"] is True
+
+
+def test_expired_claim_cannot_restart_budget_after_wait_timeout(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "expired-wait.sqlite3"))
+    memory = Memory(db, configured(llm_call_budget_seconds=0.05))
+    with db.transaction() as conn:
+        memory.enqueue(conn, "turn", "hoa", "session", "web", "Thu nhập 45 triệu")
+        conn.execute("UPDATE memory_jobs SET status='processing',lease_until=?", (time.time() + 30,))
+    clock = [0.0]
+
+    def expire_claim(_):
+        clock[0] = 1.0
+        db.execute("UPDATE memory_jobs SET lease_until=0")
+
+    monkeypatch.setattr("harness.memory.service.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("harness.memory.service.time.sleep", expire_claim)
+    with pytest.raises(LLMUnavailable) as error:
+        memory.flush("hoa")
+    assert error.value.category == "memory_busy"
+    assert db.one("SELECT processed_seq FROM customer_sequences")["processed_seq"] == 0
+    assert db.one("SELECT status FROM memory_jobs")["status"] == "processing"
+
+
 def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
     settings = Settings(db_path=str(tmp_path / "chat.sqlite3"), llm_backend="rules", admin_token="test-admin")
     app = create_app(settings)
@@ -201,7 +252,7 @@ def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
         session = client.post("/sessions", json={"demo_profile": "hoa", "mode": "harness"}).json()
         sid = session["session_id"]
         auth = {"Authorization": "Bearer " + session["session_token"]}
-        assert client.post(f"/sessions/{sid}/verify", headers=auth, json={"dob": "1988-05-12"}).status_code == 200
+        assert client.post(f"/sessions/{sid}/verify", headers=auth, json={"phone": session["user_id"]}).status_code == 200
         settings.llm_backend = "openai"
         settings.openai_key = "test-only"
         settings.openai_model = "primary"
@@ -215,7 +266,10 @@ def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
             return httpx.Response(503)
 
         monkeypatch.setattr(httpx.AsyncClient, "post", post)
-        body = {"text": "Vay mua nhà 2 tỷ trong 20 năm. Thu nhập 45 triệu. Gọi lại giúp tôi", "client_message_id": "same"}
+        body = {
+            "text": "Vay mua nhà 2 tỷ trong 20 năm. Thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ. Hẹn gọi lại sau 2 ngày lúc 09:00",
+            "client_message_id": "same",
+        }
         first = client.post(f"/sessions/{sid}/messages", headers=auth, json=body)
         second = client.post(f"/sessions/{sid}/messages", headers=auth, json=body)
         assert first.status_code == second.status_code == 200

@@ -2,6 +2,7 @@ import json
 import re
 import sqlite3
 import threading
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TypedDict
@@ -38,6 +39,7 @@ class TurnState(TypedDict, total=False):
     completion: dict
     confirmations: list
     cards: list
+    action_notes: list
 
 
 def event(guard, reason, action="fallback", attempt=0):
@@ -72,7 +74,7 @@ def format_fact(f):
 
     v = str(f["value"])
     u = f.get("unit", "")
-    if u == "đồng":
+    if u in ("đồng", "VND"):
         d = Decimal(v)
         if d >= 10**9 and d % 10**8 == 0:
             return numeric(d / 10**9) + " tỷ đồng"
@@ -122,6 +124,19 @@ class Engine:
         with self.locks_lock:
             return self.locks.setdefault(key, threading.RLock())
 
+    def memory_access(self, session):
+        """Separate fixture recognition from channel-owned prospect history."""
+        if session.get("verified", False):
+            return True
+        customer = session["customer_id"]
+        return bool(self.db.one(
+            "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
+            (customer, session.get("channel"), session.get("external_id")),
+        ) or self.db.one(
+            "SELECT session_id FROM phone_sessions WHERE session_id=? AND customer_id=?",
+            (session.get("id"), customer),
+        ))
+
     def run(self, session, text, turn_id):
         with self.lock(session["customer_id"]):
             config = {"configurable": {"thread_id": session["id"]}}
@@ -140,6 +155,7 @@ class Engine:
                         "source_spans": [],
                         "used_fact_ids": [],
                         "disclosures": [],
+                        "action_notes": [],
                         "cards": [],
                         "confirmations": [],
                         "facts": {},
@@ -163,7 +179,8 @@ class Engine:
         session = s["session"]
         customer = session["customer_id"]
         job = self.db.one("SELECT seq FROM memory_jobs WHERE turn_id=?", (s["turn_id"],))
-        self.memory.flush(customer, job["seq"] - 1 if job else None)
+        if self.memory_access(session):
+            self.memory.flush(customer, job["seq"] - 1 if job else None)
         current = self.db.all(
             "SELECT id,text,reply FROM turns WHERE session_id=? ORDER BY created_at,id", (session["id"],)
         )
@@ -171,7 +188,7 @@ class Engine:
         facts = {}
         parts = []
         confirmations = []
-        if session["mode"] == "harness":
+        if self.memory_access(session) and session["mode"] == "harness":
             for f in self.memory.facts(customer):
                 if f["status"] == "conflicted" and f["key"] not in extract(s["text"]):
                     confirmations.append(f["key"])
@@ -179,7 +196,7 @@ class Engine:
                     known[f["key"]] = f["value"]
                     facts[f["id"]] = f
             parts.append({"type": "call_brief", "fact_ids": list(facts)})
-        elif session["mode"] == "full_history":
+        elif self.memory_access(session) and session["mode"] == "full_history":
             old = self.db.all(
                 "SELECT t.id,t.text,t.reply FROM turns t JOIN sessions s ON s.id=t.session_id WHERE s.customer_id=? AND s.id<>? ORDER BY t.created_at,t.id",
                 (customer, session["id"]),
@@ -255,12 +272,21 @@ class Engine:
                 stage = suggestion["stage"]
             if suggestion.get("objection") in ("rate_high", "need_spouse"):
                 objection = suggestion["objection"]
-            handoff = handoff or stage == "apply"
-        slots = ["income"] if product == "credit_card" else ["amount", "term", "income"]
+        handoff = handoff and self.memory_access(s["session"])
+        slots = ["income", "debt"] if product == "credit_card" else ["amount", "term", "income", "debt"]
+        if product == "home_loan":
+            slots.append("property_value")
         missing = [k for k in slots if k not in known]
+        # A classification suggestion cannot authorize a human handoff by itself.
+        if stage == "apply" and not handoff:
+            stage = "discover" if missing else "quote"
         return {
             "plan": {
                 "product": product,
+                "public_info": not known.get("amount")
+                and any(x in low for x in ["lãi suất", "ưu đãi", "điều kiện", "phí"]),
+                "private_request": not self.memory_access(s["session"])
+                and any(x in low for x in ["lần trước", "lịch sử", "hồ sơ của tôi", "gặp chuyên viên", "crm"]),
                 "handoff": handoff,
                 "missing": missing,
                 "callback": any(x in low for x in ["gọi lại", "hẹn", "liên hệ lại"]),
@@ -283,75 +309,139 @@ class Engine:
         return {"cards": [candidates[index]]}
 
     def call_tools(self, s):
-        p = s["plan"]
-        known = s["known"]
-        facts = dict(s["facts"])
-        calls = []
-        disclosures = []
-        error = False
-        unsuitable = False
-        session = s["session"]
+        p, known, session = s["plan"], s["known"], s["session"]
+        facts, calls, disclosures, notes = dict(s["facts"]), [], [], []
+        error, unsuitable = False, False
         product = p["product"]
+        as_of = self.db.setting("clock")
+        available = {tool["name"] for tool in self.bank.definitions(session["customer_id"], session["id"])}
 
         def call(name, args):
             nonlocal error
-            result = self.bank.call(name, {"product": product, **args}, session["customer_id"], session["id"])
-            calls.append(
-                {"id": result.get("tool_call_id"), "tool": name, "args": {"product": product, **args}, "result": result}
-            )
+            args = {**args, "as_of": as_of}
+            result = self.bank.call(name, args, session["customer_id"], session["id"], idempotency_key=s["turn_id"])
+            calls.append({"id": result["tool_call_id"], "tool": name, "args": args, "result": result})
             error = error or bool(result["error"])
-            for f in result["facts"]:
-                facts[f["fact_id"]] = {**f, "id": f["fact_id"]}
+            for fact in result["facts"]:
+                facts[fact["fact_id"]] = {**fact, "id": fact["fact_id"]}
             return result
 
+        if p["private_request"]:
+            return {
+                "facts": facts,
+                "tool_calls": [],
+                "action_notes": ["Anh/chị vui lòng gửi số điện thoại khớp hồ sơ demo trong phiên chat để xem thông tin cá nhân hoặc gặp chuyên viên."],
+            }
         if p["callback"]:
-            call("schedule_callback", {"action_key": s["turn_id"], "reason": s["text"]})
-        if not p["missing"] and not s.get("confirmations"):
-            args = {k: known[k] for k in ["amount", "term", "income", "debt", "property_value"] if k in known}
-            suitability = call("check_suitability", args)
-            unsuitable = not suitability["data"].get("ok", False)
-            if not unsuitable:
-                call("get_card_offer", args) if product == "credit_card" else call("get_rate", args)
-                call("get_active_promotions", {"channel": session["channel"]})
-                ds = call("get_disclosures", {})
-                disclosures = ds["data"].get("disclosures", [])
-                if product != "credit_card" and not error:
-                    rate = next((f for f in facts.values() if f["key"] == "promo_rate"), None) or next(
-                        (f for f in facts.values() if f["key"] == "standard_rate"), None
+            if "schedule_callback" not in available:
+                notes.append("Anh/chị vui lòng gửi số điện thoại khớp hồ sơ demo trước khi đặt lịch gọi lại.")
+            else:
+                low = s["text"].lower()
+                iso = re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})", s["text"])
+                time = iso[0] if iso else None
+                hour = re.search(r"(?<![\dT])([01]?\d|2[0-3])(?::([0-5]\d)|\s*giờ(?:\s*([0-5]?\d)\s*phút)?)", low)
+                offset = re.search(r"sau\s+(\d+)\s+ngày", low)
+                days = int(offset[1]) if offset else 1 if "ngày mai" in low else 2 if "hai ngày" in low else None
+                calendar = re.search(r"\b\d{4}-\d{2}-\d{2}\b", low)
+                if days is not None and not 1 <= days <= 365:
+                    days = None
+                if not time and hour and (days is not None or calendar):
+                    due = calendar[0] if calendar else (date.fromisoformat(as_of) + timedelta(days=days)).isoformat()
+                    time = f"{due}T{int(hour[1]):02}:{int(hour[2] or hour[3] or 0):02}:00+07:00"
+                if not time:
+                    notes.append(
+                        "Anh/chị cho em ngày và giờ gọi lại cụ thể, sau ngày hiện tại; giờ được hiểu theo giờ Việt Nam."
                     )
-                    standard = next((f for f in facts.values() if f["key"] == "standard_rate"), rate)
-                    months = next((f for f in facts.values() if f["key"] == "promo_months"), {"value": 0})
-                    if rate:
+                else:
+                    receipt = call("schedule_callback", {"time": time})
+                    if not receipt["error"]:
+                        notes.append("Đã tạo lịch gọi lại mô phỏng theo thời gian anh/chị yêu cầu.")
+        quote = not p["missing"] and not s.get("confirmations")
+        if quote or p["public_info"]:
+            if quote:
+                args = {
+                    key: int(known[key])
+                    for key in ["income", "debt", "amount", "term", "property_value"]
+                    if key in known
+                }
+                suitability = call("check_suitability", {"product": product, **args})
+                unsuitable = not suitability["error"] and not suitability["data"].get("ok", False)
+                if not error and not unsuitable:
+                    # Mass is the public illustrative offer. Never infer CRM/login from a demo profile.
+                    if product == "credit_card":
+                        card = call("get_card_offer", {"income": int(known["income"]), "segment": "mass"})
+                        unsuitable = not card["error"] and not card["data"].get("eligible", False)
+                    else:
                         call(
-                            "calc_installment",
+                            "get_rate",
                             {
-                                "amount": known["amount"],
-                                "term": known["term"],
-                                "rate": rate["value"],
-                                "rate_fact_id": rate["id"],
-                                "promo_months": months["value"],
-                                "after_rate": standard["value"],
+                                "product": product,
+                                "amount": int(known["amount"]),
+                                "term": int(known["term"]),
+                                "segment": "mass",
                             },
                         )
-        if error:
-            call("schedule_callback", {"action_key": s["turn_id"], "reason": "Hệ thống ngân hàng cần kiểm tra lại"})
+            if not error and not unsuitable:
+                promos = call("get_active_promotions", {"product": product, "channel": session["channel"]})
+                ds = call(
+                    "get_disclosures",
+                    {
+                        "product": product,
+                        "topics": ["fee", "promo"] if product == "credit_card" else ["rate", "installment", "promo"],
+                    },
+                )
+                disclosures = [item["text"] for item in ds["data"].get("disclosures", [])]
+                if quote and product != "credit_card" and not error:
+                    standard = next(f for f in facts.values() if f["key"] == "standard_rate")
+                    promo = next((f for f in promos["facts"] if f["key"] == "promo_rate"), None)
+                    rate = promo or standard
+                    months = next(
+                        (
+                            f["value"]
+                            for f in promos["facts"]
+                            if f["key"] == "promo_months" and f["label"] == rate["label"]
+                        ),
+                        0,
+                    )
+                    args = {
+                        "amount": int(known["amount"]),
+                        "term": int(known["term"]),
+                        "rate": rate["value"],
+                        "rate_fact_id": rate["fact_id"],
+                        "promo_months": min(months, int(known["term"])),
+                    }
+                    if promo and int(known["term"]) > months:
+                        args.update(after_rate=standard["value"], after_rate_fact_id=standard["fact_id"])
+                    call("calc_installment", args)
         if p["summary"]:
-            ids = [f["id"] for f in facts.values() if f["source_type"] == "bank_tool"]
-            if ids and session["channel"] != "web":
-                call("send_summary", {"channel": session["channel"], "fact_ids": ids, "action_key": s["turn_id"]})
+            if "send_summary" not in available:
+                notes.append("Anh/chị vui lòng gửi số điện thoại khớp hồ sơ demo trước khi gửi tóm tắt.")
+            elif not error and not unsuitable:
+                ids = [
+                    f["id"] for f in facts.values() if f["source_type"] == "bank_tool" and f.get("observed_at") == as_of
+                ]
+                if ids:
+                    receipt = call("send_summary", {"channel": session["channel"], "fact_ids": ids})
+                    if not receipt["error"]:
+                        notes.append("Đã lưu bản tóm tắt mô phỏng; chưa gửi qua nhà cung cấp bên ngoài.")
+                else:
+                    notes.append("Em cần báo giá đầy đủ theo thông tin hiện tại trước khi tạo tóm tắt.")
         return {
             "facts": facts,
             "tool_calls": calls,
             "disclosures": disclosures,
             "tool_error": error,
             "unsuitable": unsuitable,
+            "action_notes": notes,
         }
 
     def rules_draft(self, s):
         if s["tool_error"]:
-            return "Hệ thống ngân hàng đang gián đoạn. Em đã ghi nhận yêu cầu để chuyên viên xác nhận lại."
+            return "Hệ thống ngân hàng đang gián đoạn. Anh/chị có thể thử lại hoặc yêu cầu gặp chuyên viên."
         if s["unsuitable"]:
             return "Hồ sơ hiện chưa phù hợp điều kiện sản phẩm. Em có thể chuyển chuyên viên để trao đổi phương án phù hợp hơn."
+        if s.get("action_notes"):
+            return " ".join(s["action_notes"])
         if s.get("confirmations"):
             labels = {
                 "income": "thu nhập",
@@ -364,8 +454,14 @@ class Engine:
                 + labels.get(s["confirmations"][0], s["confirmations"][0])
                 + " giữa các kênh chưa thống nhất. Anh/chị vui lòng xác nhận thông tin chính xác để em cập nhật nhé?"
             )
-        if s["plan"]["missing"]:
-            labels = {"amount": "số tiền muốn vay", "term": "kỳ hạn mong muốn", "income": "thu nhập hàng tháng"}
+        if s["plan"]["missing"] and not s["plan"].get("public_info"):
+            labels = {
+                "amount": "số tiền muốn vay",
+                "term": "kỳ hạn mong muốn",
+                "income": "thu nhập hàng tháng",
+                "debt": "số tiền trả nợ hiện tại mỗi tháng (hoặc xác nhận không có nợ)",
+                "property_value": "giá trị căn nhà",
+            }
             return "Anh/chị cho em biết " + labels[s["plan"]["missing"][0]] + " để em tư vấn phù hợp nhé?"
         facts = s["facts"]
 
@@ -373,6 +469,12 @@ class Engine:
             f = next((x for x in facts.values() if x["key"] == key), None)
             return "{fact:" + f["id"] + "}" if f else ""
 
+        if s["plan"].get("public_info") and s["plan"]["missing"]:
+            if ph("promo_rate"):
+                return f"Ưu đãi công khai trên kênh hiện tại: lãi suất {ph('promo_rate')} trong {ph('promo_months')}. Cần bổ sung thông tin để tính khoản trả góp phù hợp."
+            if ph("promo_fee_waiver"):
+                return f"Ưu đãi công khai: miễn {ph('promo_fee_waiver')} phí trong {ph('promo_months')}."
+            return "Hiện không có ưu đãi phù hợp trên kênh này. Anh/chị có thể bổ sung nhu cầu để em tư vấn."
         if s["plan"]["product"] == "credit_card":
             reply = f"Hạn mức thẻ tham khảo từ {ph('card_limit_min')} đến {ph('card_limit_max')}. Phí thường niên {ph('annual_fee')}."
         else:
@@ -381,7 +483,11 @@ class Engine:
             if ph("promo_months"):
                 reply += f" Thời gian ưu đãi {ph('promo_months')}."
             if ph("installment_promo"):
-                reply += f" Trả góp minh họa {ph('installment_promo')} mỗi tháng trong ưu đãi, sau đó {ph('installment_after')}."
+                reply += f" Trả góp minh họa {ph('installment_promo')} mỗi tháng trong ưu đãi."
+                if ph("installment_after"):
+                    reply += f" Sau ưu đãi {ph('installment_after')} mỗi tháng."
+            elif ph("installment_standard"):
+                reply += f" Trả góp minh họa {ph('installment_standard')} mỗi tháng."
         for card in s.get("cards", []):
             reply += " " + card["text"]
         return reply
@@ -401,12 +507,14 @@ class Engine:
 
     def guard(self, s):
         events = []
+        if not s["session"].get("verified", False):
+            events.append(event("G7", "public_tools_only", "restrict_private"))
         draft = s["draft"]
         session = s["session"]
         if session["mode"] != "harness":
             return {"guard_events": events}
         if s["tool_error"]:
-            events.append(event("G2", "tool_failed", "callback"))
+            events.append(event("G2", "tool_failed", "retry_or_handoff"))
             draft = self.rules_draft(s)
         if s["unsuitable"]:
             events.append(event("G4", "unsuitable", "decline"))
@@ -420,11 +528,15 @@ class Engine:
             if any(draft_problem(draft, s["facts"], self.db.setting("clock"))):
                 draft = "Em cần xác nhận lại thông tin trước khi đưa ra báo giá. Anh/chị muốn gặp chuyên viên không?"
                 events.append(event("G1", "second_failure", "safe_fallback", 2))
-        old = self.db.one(
-            "SELECT id FROM facts WHERE customer_id=? AND source_type='bank_tool' AND status='expired' LIMIT 1",
-            (session["customer_id"],),
+        old = (
+            self.db.one(
+                "SELECT id FROM facts WHERE customer_id=? AND source_type='bank_tool' AND status='expired' LIMIT 1",
+                (session["customer_id"],),
+            )
+            if session.get("verified", False)
+            else None
         )
-        if old and not s["tool_error"] and not s["plan"]["missing"]:
+        if session.get("verified", False) and old and not s["tool_error"] and not s["plan"]["missing"]:
             draft = "Ưu đãi trước đã hết hạn; em cập nhật thông tin hiện tại. " + draft
             events.append(event("G3", "previous_quote_expired", "refresh"))
         if s["disclosures"]:

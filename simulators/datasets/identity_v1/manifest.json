@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "dataset_id": "bankwise-identity-v1",
+  "synthetic": true,
+  "description": "10 danh tính hư cấu định danh bằng chuỗi số điện thoại; mỗi người 4 phiên ở 4 kênh, tách dữ liệu hội thoại khỏi oracle đánh giá. Bao phủ hỏi người nhà, so sánh ngân hàng hư cấu, phiên chưa xác minh, thay đổi ngân sách và báo giá Q3 hết hạn khi sang Q4/2026.",
+  "business_timezone": "Asia/Ho_Chi_Minh",
+  "identity_file": "identities.json",
+  "offers_file": "offers.json",
+  "journey_files": [
+    "journeys/0900000001.json",
+    "journeys/0900000002.json",
+    "journeys/0900000003.json",
+    "journeys/0900000004.json",
+    "journeys/0900000005.json",
+    "journeys/0900000006.json",
+    "journeys/0900000007.json",
+    "journeys/0900000008.json",
+    "journeys/0900000009.json",
+    "journeys/0900000010.json"
+  ],
+  "expected_counts": {
+    "users": 10,
+    "sessions": 40,
+    "user_messages": 120,
+    "assistant_references": 120
+  },
+  "supported_runtime_channels": [
+    "web",
+    "telegram"
+  ],
+  "simulated_only_channels": [
+    "zalo",
+    "hotline"
+  ],
+  "capability_gaps": [
+    "Dataset độc lập với database live; không tự tạo session, tài khoản đăng nhập, xác thực hay gửi tin nhắn.",
+    "Backend verify_identity đọc đủ 10 identity từ identities.json; runtime_profile hoa/minh giữ khóa memory cũ, các identity còn lại dùng số điện thoại. Đọc dataset không tự xác minh phiên.",
+    "Zalo/hotline chỉ là sự kiện mô phỏng, chưa có connector gửi nhận live.",
+    "Số điện thoại và external_id synthetic là khóa liên kết fixture, không là bằng chứng xác minh hoặc đăng nhập.",
+    "Các snapshot đối thủ là ngân hàng hoàn toàn hư cấu; chưa có tool runtime tra lãi ngân hàng khác.",
+    "Oracle chứa phản hồi mẫu và memory kỳ vọng, phải giữ tách khỏi prompt đầu vào của chatbot khi đánh giá.",
+    "Offer fixture không phải tool fact được backend phát hành; send_summary/calc_installment phải lấy fact_id thực tế cùng ngày trước khi tích hợp.",
+    "Khách hàng đều logged_in=false; verify_identity của từng phiên không mở quyền crm_lookup.",
+    "Bộ này tập trung vay mua nhà; chưa bao phủ thẻ tín dụng, vay tín chấp hoặc dữ liệu ngoài Q3/Q4 năm 2026."
+  ]
+}

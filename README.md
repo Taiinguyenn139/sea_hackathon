@@ -2,7 +2,7 @@
 
 Quy ước làm việc của team: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Memory Harness là chatbot fintech dùng dữ liệu ngân hàng hư cấu, gồm web chat,
+Bankwise là chatbot fintech dùng dữ liệu ngân hàng hư cấu, gồm web chat,
 console chuyên viên, benchmark và adapter Telegram. Backend FastAPI/SQLite;
 frontend React/Vite. Chạy một backend process để giữ hợp đồng SQLite/checkpoint.
 
@@ -40,13 +40,14 @@ guard và placeholder, không lưu nguyên văn hoặc các trường dư của 
 - `G8`: chặn các giá trị OTP/PIN/CVV, mật khẩu, khóa API/private key, số thẻ,
   số tài khoản và giấy tờ định danh nhận diện được. Các luật chuẩn hóa Unicode,
   đọc nhãn và kiểm tra checksum số thẻ. Câu hỏi về OTP/mật khẩu không chứa bí mật,
-  thu nhập, khoản vay, kỳ hạn và ngày sinh ở bước xác minh vẫn được xử lý.
+  thu nhập, khoản vay, kỳ hạn và nhận diện bằng số điện thoại demo vẫn được xử lý.
 - `G9`: chặn các mẫu prompt injection trực tiếp như ghi đè chỉ dẫn, giả vai system,
   yêu cầu lộ prompt nội bộ hoặc tắt kiểm soát. Khi `LLM_BACKEND=openai`, mỗi đầu
   vào vượt qua luật còn được phân loại ngữ nghĩa bằng một lần gọi LLM, chỉ nhận
   text hiện tại, không nhận lịch sử hoặc tools. Classifier dùng primary/backup
   và ngân sách thời gian như các bước LLM khác, ghi log `purpose=input_guard`.
-  Backend `rules` chỉ dùng luật.
+  Các token số điện thoại Việt Nam nhận diện được được thay bằng `[phone]` trước
+  khi gửi classifier. Backend `rules` chỉ dùng luật.
 - `G10`: nếu bộ phân loại LLM hết ngân sách/attempts hoặc gặp lỗi không thể retry,
   chặn yêu cầu hiện tại và đề nghị thử lại. Không tiếp tục agent khi chưa kiểm
   tra được đầu vào.
@@ -62,6 +63,9 @@ memory backlog, gọi LLM bốn lần: input classifier, plan, draft và memory 
 thất bại và cần backup. Turn bình thường không backlog có tối đa tám attempts;
 riêng classifier có tối đa hai. Identity/brief có thể flush memory trước khi trả
 lời; các lượt đã có memory backlog cần tính thêm các job đó.
+Tin nhắn có số điện thoại cũng đi qua guard trước nhánh nhận diện; nhánh này
+không chạy plan/draft hoặc enqueue nhu cầu vào memory. Contact được chia sẻ qua
+nút Telegram tiếp tục dùng kiểm tra quyền sở hữu riêng, không gửi classifier.
 
 Đây là phòng vệ nhiều lớp, chưa bảo đảm phát hiện mọi prompt injection hoặc mọi
 loại PII. Nội dung vượt qua luật được gửi tới classifier khi bật OpenAI; các luật
@@ -91,6 +95,12 @@ expected memory và cách bật checkpoint checks trong eval runner bằng
 `--memory-oracles eval/oracle_fixtures/memory`. Dữ liệu dùng chung mock ngân hàng
 hiện có; expected memory chỉ dành cho evaluator.
 
+[Bộ identity đa phiên](docs/IDENTITY_DATASET.md) cung cấp 10 người dùng theo số
+điện thoại, 40 phiên trên 4 kênh, lời khách và đáp án riêng cho các tình huống
+hỏi người nhà, so ngân hàng và tiếp tục hội thoại sau khi đổi kênh. Backend dùng
+cùng nguồn identity để nhận diện số điện thoại gửi trong từng phiên chat demo;
+không yêu cầu ngày sinh và CRM vẫn cần đăng nhập riêng.
+
 ## Deploy
 
 [Hướng dẫn GCP](docs/deployment.md) sở hữu cách cấu hình variables, OIDC/Secret Manager,
@@ -98,3 +108,11 @@ kích hoạt workflow, xem log, kiểm tra URL và rollback. [Workflow](.github/
 kiểm tra PR; sau merge vào `main`, chỉ deploy khi `GCP_DEPLOY_ENABLED=true` và môi trường
 `demo` đã được cấu hình. URL demo nằm trong biến `APP_URL` của environment này;
 kiểm tra health và revision theo hướng dẫn vận hành để xác nhận phiên bản đang chạy.
+
+## Tools ngân hàng
+
+[Hướng dẫn tích hợp](docs/INTEGRATION.md) mô tả 9 tool từ nhánh tuannv, quyền truy cập,
+ngày gọi bắt buộc và adapter agent trên main. [Dữ liệu giả lập](docs/DATA.md) giải thích
+fixtures nghiệp vụ. Backend nhận diện phone demo dùng
+`simulators/datasets/identity_v1/identities.json` qua registry `harness/identity.py`;
+alias `hoa`/`minh` được giữ để dùng tiếp memory cũ.

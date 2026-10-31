@@ -16,16 +16,20 @@ def extract(text):
         slots["product"] = ("personal_loan", "")
     elif any(x in low for x in ["thẻ", "credit_card"]):
         slots["product"] = ("credit_card", "")
+    previous_money_end = 0
     for match in re.finditer(r"(-?\d+(?:[.,]\d+)?)\s*(tỷ|triệu|nghìn|trieu|ty)", low):
         value = (
             Decimal(match[1].replace(",", "."))
             * {"tỷ": 10**9, "ty": 10**9, "triệu": 10**6, "trieu": 10**6, "nghìn": 1000}[match[2]]
         )
-        before = low[max(0, match.start() - 35) : match.start()]
+        before = low[max(previous_money_end, match.start() - 120) : match.start()]
+        previous_money_end = match.end()
         cues = {"income": ["thu nhập", "lương"], "debt": ["nợ", "trả nợ"], "property_value": ["giá nhà", "giá trị"]}
         nearest = [(before.rfind(cue), key) for key, words in cues.items() for cue in words if cue in before]
         key = max(nearest)[1] if nearest else "amount"
         slots[key] = (str(value.quantize(Decimal(1))), "đồng")
+    if re.search(r"không (?:có |còn )?nợ|(?:nợ|trả nợ)(?: hàng tháng)?\s*(?:là |: )?0(?:\s|$|[.,;])", low):
+        slots["debt"] = ("0", "đồng")
     term = re.search(r"(?:kỳ hạn|thời hạn|trong|vay)\s*(\d+)\s*(năm|tháng)", low)
     if not term:
         term = re.search(r"(\d+)\s*(năm|tháng)", low)
@@ -62,12 +66,15 @@ class Memory:
         )
 
     def flush(self, customer, target_seq=None, allow_llm=True):
+        wait_deadline = time.monotonic() + (self.settings.llm_call_budget_seconds if self.settings else 20)
+        waited = False
         with self.db.transaction() as c:
             row = c.execute("SELECT * FROM customer_sequences WHERE customer_id=?", (customer,)).fetchone()
             if not row:
                 return
             target = row["next_seq"] if target_seq is None else min(target_seq, row["next_seq"])
         while True:
+            busy = False
             with self.db.transaction() as c:
                 row = c.execute("SELECT * FROM customer_sequences WHERE customer_id=?", (customer,)).fetchone()
                 if row["processed_seq"] >= target:
@@ -85,13 +92,24 @@ class Memory:
                     self._finish(c, job, customer)
                     continue
                 if job["lease_until"] > time.time():
+                    if job["status"] != "processing":
+                        raise LLMUnavailable("memory_cooldown")
+                    busy = True
+                else:
+                    if waited and time.monotonic() >= wait_deadline:
+                        raise LLMUnavailable("memory_busy")
+                    lease = time.time() + self.settings.llm_call_budget_seconds + 10
+                    c.execute(
+                        "UPDATE memory_jobs SET status='processing',lease_until=?,error=NULL WHERE turn_id=?",
+                        (lease, job["turn_id"]),
+                    )
+                    payload = json.loads(job["payload"])
+            if busy:
+                waited = True
+                if time.monotonic() >= wait_deadline:
                     raise LLMUnavailable("memory_busy")
-                lease = time.time() + self.settings.llm_call_budget_seconds + 10
-                c.execute(
-                    "UPDATE memory_jobs SET status='processing',lease_until=?,error=NULL WHERE turn_id=?",
-                    (lease, job["turn_id"]),
-                )
-                payload = json.loads(job["payload"])
+                time.sleep(0.01)
+                continue
             try:
                 # Provider calls must never hold the shared SQLite transaction/lock.
                 suggestion = json_completion(
@@ -193,7 +211,9 @@ class Memory:
 
     def profile(self, customer):
         from bank_tools.service import FIXTURES
+        from harness.identity import resolve_identity
 
+        customer = resolve_identity(customer) or customer
         return next((x for x in FIXTURES["customers"] if x["id"] == customer), None) or self.db.one(
             "SELECT id,name,NULL AS cif FROM customer_profiles WHERE id=?", (customer,)
         ) or self.db.one(
@@ -201,6 +221,9 @@ class Memory:
         )
 
     def brief(self, customer):
+        from harness.identity import resolve_identity
+
+        customer = resolve_identity(customer) or customer
         self.flush(customer)
         profile = self.profile(customer)
         if not profile:
@@ -210,9 +233,10 @@ class Memory:
         return {
             "redacted": False,
             "customer_id": customer,
+            "user_id": profile.get("user_id", phone["phone_e164"] if phone else customer),
             "name": profile["name"],
             "cif": profile["cif"],
-            "phone": phone["phone_e164"] if phone else None,
+            "phone": phone["phone_e164"] if phone else profile.get("phone"),
             "facts": facts,
             "needs": [f for f in facts if f["source_type"] == "customer" and f["status"] == "active"],
             "conflicts": [f for f in facts if f["status"] == "conflicted"],

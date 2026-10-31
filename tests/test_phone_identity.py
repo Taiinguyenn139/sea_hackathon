@@ -45,7 +45,7 @@ def update(client, number, text=None, contact=None, target=111):
 
 
 def register(client):
-    update(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu")
+    update(client, 1, "Tôi cần thẻ tín dụng, thu nhập 40 triệu, không có nợ")
     customer = client.app.state.harness.db.one("SELECT customer_id FROM sessions WHERE external_id='111'")[
         "customer_id"
     ]
@@ -184,7 +184,7 @@ def test_code_cannot_survive_a_change_to_the_verified_channel_link(client):
 
 def test_code_is_sent_to_phone_owner_when_bank_profile_has_multiple_chats(client):
     client.app.state.harness.db.execute("INSERT INTO identity_links VALUES('telegram','111','hoa')")
-    update(client, 1, "1988-05-12")
+    update(client, 1, "0900000001")
     update(client, 2, contact={"phone_number": "0901234567", "user_id": 111})
     client.app.state.harness.db.execute("INSERT INTO identity_links VALUES('telegram','222','hoa')")
     proof = challenge(client)

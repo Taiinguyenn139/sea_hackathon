@@ -1,0 +1,22 @@
+disclosures:
+  home_loan:
+    valid_from: '2026-01-01'
+    valid_until: '2026-12-31'
+    rate: Lãi sau ưu đãi thả nổi theo công bố của ngân hàng; lãi suất chuẩn hiện tại chỉ là giả định tính minh họa.
+    installment: Khoản trả góp và tổng thanh toán chỉ để minh họa, giả định lãi suất không đổi trong từng giai đoạn và chưa bao gồm phí.
+    fee: Phí thực tế được xác nhận trong hồ sơ và hợp đồng.
+    promo: Ưu đãi phụ thuộc thời gian, kênh đăng ký và điều kiện chương trình.
+  personal_loan:
+    valid_from: '2026-01-01'
+    valid_until: '2026-12-31'
+    rate: Lãi sau ưu đãi áp dụng theo điều kiện được xác nhận khi thẩm định; lãi suất hiện tại chỉ dùng minh họa.
+    installment: Khoản trả góp và tổng thanh toán chỉ để minh họa, giả định lãi suất không đổi trong từng giai đoạn và chưa bao gồm phí.
+    fee: Phí thực tế được xác nhận trong hồ sơ và hợp đồng.
+    promo: Ưu đãi phụ thuộc thời gian, kênh đăng ký và điều kiện chương trình.
+  credit_card:
+    valid_from: '2026-01-01'
+    valid_until: '2026-12-31'
+    rate: Lãi thẻ và điều kiện miễn lãi cần được xác nhận trong biểu phí riêng trước khi tư vấn.
+    installment: Chưa cung cấp chương trình trả góp thẻ trong bản demo này.
+    fee: Phí thường niên và điều kiện miễn phí phụ thuộc gói thẻ được duyệt; chưa bao gồm các loại phí khác.
+    promo: Miễn phí theo chương trình có thời hạn và điều kiện áp dụng; không mặc định được miễn phí lâu dài.
