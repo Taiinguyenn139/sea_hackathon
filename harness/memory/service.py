@@ -4,7 +4,7 @@ import time
 from decimal import Decimal
 
 from bank_tools.service import canonical, ident
-from harness.llm import ExtractionSuggestion, json_completion
+from harness.llm import ExtractionSuggestion, LLMUnavailable, json_completion
 
 
 def extract(text):
@@ -83,29 +83,62 @@ class Memory:
                     raise RuntimeError("memory sequence gap")
                 if job["status"] == "failed":
                     raise RuntimeError("memory job failed")
-                # SQLite write transaction is the worker claim and atomic processing boundary.
+                use_llm = allow_llm and self.settings and self.settings.llm_backend == "openai"
+                if not use_llm:
+                    self._write(c, job["turn_id"], customer, json.loads(job["payload"]))
+                    self._finish(c, job, customer)
+                    continue
+                if job["lease_until"] > time.time():
+                    raise LLMUnavailable("memory_busy")
+                lease = time.time() + self.settings.llm_call_budget_seconds + 10
                 c.execute(
-                    "UPDATE memory_jobs SET status=?,lease_until=? WHERE turn_id=?",
-                    ("processing", time.time() + 30, job["turn_id"]),
+                    "UPDATE memory_jobs SET status='processing',lease_until=?,error=NULL WHERE turn_id=?",
+                    (lease, job["turn_id"]),
                 )
                 payload = json.loads(job["payload"])
-                self._write(c, job["turn_id"], customer, payload, allow_llm)
-                c.execute(
-                    "UPDATE memory_jobs SET status=?,lease_until=0 WHERE turn_id=?", ("processed", job["turn_id"])
+            try:
+                # Provider calls must never hold the shared SQLite transaction/lock.
+                suggestion = json_completion(
+                    self.settings,
+                    "Trích các đoạn nguyên văn chứa thông tin nhu cầu tài chính. Trả JSON {spans:[string]}. Mỗi span phải là chuỗi con nguyên văn của text. Không tự tạo giá trị.",
+                    {"text": payload["text"]},
+                    schema=ExtractionSuggestion,
+                    purpose="extract",
                 )
-                c.execute("UPDATE customer_sequences SET processed_seq=? WHERE customer_id=?", (job["seq"], customer))
+                with self.db.transaction() as c:
+                    current = c.execute("SELECT * FROM memory_jobs WHERE turn_id=?", (job["turn_id"],)).fetchone()
+                    sequence = c.execute(
+                        "SELECT processed_seq FROM customer_sequences WHERE customer_id=?", (customer,)
+                    ).fetchone()[0]
+                    if (
+                        current["status"] != "processing" or current["lease_until"] != lease
+                        or current["lease_until"] <= time.time() or sequence != job["seq"] - 1
+                    ):
+                        raise LLMUnavailable("memory_claim_lost")
+                    self._write(c, job["turn_id"], customer, payload, suggestion)
+                    self._finish(c, job, customer)
+            except Exception as exc:
+                # Preserve payload/order for a later request; no hot retry loop.
+                self.db.execute(
+                    "UPDATE memory_jobs SET status='pending',lease_until=?,error=? "
+                    "WHERE turn_id=? AND status='processing' AND lease_until=?",
+                    (
+                        time.time() + 30, exc.category if isinstance(exc, LLMUnavailable) else "processing_failed",
+                        job["turn_id"], lease,
+                    ),
+                )
+                raise
 
-    def _write(self, c, turn, customer, payload, allow_llm=True):
+    @staticmethod
+    def _finish(c, job, customer):
+        c.execute(
+            "UPDATE memory_jobs SET status='processed',lease_until=0,error=NULL WHERE turn_id=?", (job["turn_id"],)
+        )
+        c.execute("UPDATE customer_sequences SET processed_seq=? WHERE customer_id=?", (job["seq"], customer))
+
+    def _write(self, c, turn, customer, payload, suggestion=None):
         correction = any(x in payload["text"].lower() for x in ["xác nhận", "đính chính", "sửa lại", "chính xác"])
         extracted = extract(payload["text"])
-        suggestion = None
-        if allow_llm:
-            suggestion = json_completion(
-                self.settings,
-                "Trích các đoạn nguyên văn chứa thông tin nhu cầu tài chính. Trả JSON {spans:[string]}. Mỗi span phải là chuỗi con nguyên văn của text. Không tự tạo giá trị.",
-                {"text": payload["text"]},
-                schema=ExtractionSuggestion,
-            )
         if suggestion and isinstance(suggestion.get("spans"), list):
             for span in suggestion["spans"][:20]:
                 if isinstance(span, str) and span and span in payload["text"]:

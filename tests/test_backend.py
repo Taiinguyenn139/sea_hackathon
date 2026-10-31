@@ -14,7 +14,7 @@ ADMIN = {"Authorization": "Bearer admin-test"}
 @pytest.fixture
 def client(tmp_path):
     app = create_app(
-        Settings(db_path=str(tmp_path / "test.sqlite3"), admin_token="admin-test", staff_password="staff-test")
+        Settings(db_path=str(tmp_path / "test.sqlite3"), admin_token="admin-test", staff_password="staff-test", llm_backend="rules")
     )
     with TestClient(app) as c:
         yield c
@@ -500,8 +500,9 @@ def test_optional_llm_schema_fallback_and_extraction_source(client, monkeypatch)
     settings.llm_backend = "openai"
     settings.openai_key = "test-only"
     settings.openai_model = "test-model"
+    settings.openai_backup_model = "test-backup"
 
-    def fake_post(url, **kwargs):
+    async def fake_post(self, url, **kwargs):
         instruction = kwargs["json"]["messages"][0]["content"]
         if "Phân loại" in instruction:
             result = {"stage": "quote", "objection": None}
@@ -513,7 +514,7 @@ def test_optional_llm_schema_fallback_and_extraction_source(client, monkeypatch)
             200, json={"choices": [{"message": {"content": json.dumps(result)}}]}, request=httpx.Request("POST", url)
         )
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
     sid, a = session(client)
     verify(client, sid, a)
     r = send(client, sid, a, "Vay mua nhà 2 tỷ trong 20 năm. Thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ")
@@ -522,13 +523,15 @@ def test_optional_llm_schema_fallback_and_extraction_source(client, monkeypatch)
     brief = client.get("/customers/hoa/brief", headers=ADMIN).json()
     assert not any(f["value"] == "999000000" for f in brief["facts"])
 
-    def malformed(url, **kwargs):
+    async def malformed(self, url, **kwargs):
         return httpx.Response(
             200, json={"choices": [{"message": {"content": '{"unexpected":true}'}}]}, request=httpx.Request("POST", url)
         )
 
-    monkeypatch.setattr(httpx, "post", malformed)
-    assert "7,1" in send(client, sid, a, "Tiếp tục", "next")["reply"]
+    monkeypatch.setattr(httpx.AsyncClient, "post", malformed)
+    from harness.llm import DEFAULT_REPLY
+
+    assert send(client, sid, a, "Tiếp tục", "next")["reply"] == DEFAULT_REPLY
 
 
 def test_phone_not_persisted_in_verification_tool_arguments(client):
@@ -602,6 +605,7 @@ def test_candidate_preflight_recovers_memory_without_network(tmp_path, monkeypat
         llm_backend="openai",
         openai_key="test-only",
         openai_model="test-model",
+        openai_backup_model="test-backup",
     )
     app = create_app(settings)
     harness = app.state.harness
@@ -610,10 +614,10 @@ def test_candidate_preflight_recovers_memory_without_network(tmp_path, monkeypat
             conn, "pending-before-release", "hoa", "previous-session", "web", "Thu nhập 45 triệu"
         )
 
-    def forbid_network(*args, **kwargs):
+    async def forbid_network(*args, **kwargs):
         raise AssertionError("Candidate preflight must not make network requests")
 
-    monkeypatch.setattr(httpx, "post", forbid_network)
+    monkeypatch.setattr(httpx.AsyncClient, "post", forbid_network)
     with TestClient(app) as client:
         assert client.get("/healthz").status_code == 200
         job = harness.db.one("SELECT status FROM memory_jobs WHERE turn_id=?", ("pending-before-release",))
