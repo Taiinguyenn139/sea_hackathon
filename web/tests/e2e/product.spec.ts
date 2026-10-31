@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("customer verifies before chat; retry reuses message id and displays real reply", async ({
   page,
-}) => {
+}, testInfo) => {
   let verified = false;
   const messageIds: string[] = [];
   await page.route("**/api/**", async (route) => {
@@ -72,6 +72,8 @@ test("customer verifies before chat; retry reuses message id and displays real r
   await page.getByRole("button", { name: "Thử lại", exact: true }).click();
   await expect(page.getByRole("log")).toContainText("Mình đã ghi nhận");
   expect(messageIds[0]).toBe(messageIds[1]);
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({ path: testInfo.outputPath("chat-conversation.png"), fullPage: true });
 });
 
 test("staff auth gates private content and incomplete benchmark is not presented as complete", async ({
@@ -168,6 +170,7 @@ for (const [width, height] of [
     if (wasExpanded) await expect(page.getByRole("complementary", { name: "Thông tin hỗ trợ" })).toBeHidden();
     else await expect(page.getByRole("complementary", { name: "Thông tin hỗ trợ" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`chat-context-${width}.png`), fullPage: true });
   });
 
 test("staff queue uses real counts and supports search with reset", async ({ page }, testInfo) => {
@@ -205,5 +208,5 @@ test("staff login preview and reduced motion preference", async ({ page }, testI
   await page.screenshot({ path: testInfo.outputPath("staff-login.png"), fullPage: true });
   await page.route("**/api/demo/profiles", (route) => route.fulfill({ json: { profiles: [] } }));
   await page.goto("/chat");
-  await expect(page.locator(".visual-tile").first()).toHaveCSS("animation-name", "none");
+  await expect(page.locator(".illustrated-card")).toHaveCSS("animation-name", "none");
 });
