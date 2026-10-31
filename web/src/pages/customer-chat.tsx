@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
+  ArrowLeft,
   ArrowUp,
   Check,
   CheckCheck,
   CircleHelp,
   CreditCard,
   Home,
-  LockKeyhole,
   MessageSquarePlus,
   ShieldCheck,
   UserRound,
@@ -65,6 +65,9 @@ const suggestions = [
   },
 ];
 export function CustomerChat() {
+  const [view, setView] = useState<"home" | "conversation">(() =>
+    window.location.hash === "#conversation" ? "conversation" : "home",
+  );
   const [session, setSession] = useState<ChatSession | null>(savedSession);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profile, setProfile] = useState(savedSession()?.demo_profile ?? "hoa");
@@ -88,11 +91,28 @@ export function CustomerChat() {
   );
   const waiting =
     Boolean(session?.handoff_id) && session?.status !== "completed";
+  const isHome = view === "home" || !session;
+  function navigate(next: "home" | "conversation") {
+    setView(next);
+    window.location.hash = next;
+  }
+  useEffect(() => {
+    const syncView = () => {
+      if (window.location.hash === "#conversation") setView("conversation");
+      else if (["", "#home"].includes(window.location.hash)) setView("home");
+    };
+    window.addEventListener("hashchange", syncView);
+    return () => window.removeEventListener("hashchange", syncView);
+  }, []);
+  useEffect(() => {
+    if (isHome) document.getElementById("chat-home-title")?.focus();
+    else input.current?.focus();
+  }, [isHome]);
   useEffect(() => {
     if (!input.current) return;
     input.current.style.height = "auto";
     input.current.style.height = `${Math.min(input.current.scrollHeight, 150)}px`;
-  }, [draft, verified]);
+  }, [draft, verified, isHome]);
   function save(next: ChatSession | null) {
     setSession(next);
     if (next) sessionStorage.setItem(STORAGE, JSON.stringify(next));
@@ -137,14 +157,14 @@ export function CustomerChat() {
     };
   }, [session?.session_id]);
   useEffect(() => {
-    if (turns.length || pending)
+    if (!isHome && (turns.length || pending))
       end.current?.scrollIntoView({
         behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
           ? "instant"
           : "smooth",
         block: "nearest",
       });
-  }, [turns, pending]);
+  }, [turns, pending, isHome]);
   useEffect(() => {
     if (!session?.handoff_id) return;
     const timer = setInterval(() => {
@@ -176,6 +196,7 @@ export function CustomerChat() {
       });
       save({ ...next, demo_profile: profile });
       setTurns([]);
+      navigate("conversation");
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -267,7 +288,10 @@ export function CustomerChat() {
     setPromptNotice("");
     setError("");
     setHint("");
+    setLastFailed(null);
+    setPhoneLogin(false);
     setPending(false);
+    navigate("home");
   }
   function selectPrompt(message: string) {
     setDraft(message);
@@ -276,16 +300,26 @@ export function CustomerChat() {
         ? "Gợi ý đã sẵn sàng. Bạn có thể chỉnh lại trước khi gửi."
         : "Đã chọn nội dung tư vấn. Bắt đầu phiên hỗ trợ để gửi câu hỏi.",
     );
-    if (session) input.current?.focus();
-    else document.getElementById("demo-profile")?.focus();
+    if (session) {
+      navigate("conversation");
+      input.current?.focus();
+    } else document.getElementById("demo-profile")?.focus();
   }
   const chosenProfile = profiles.find((p) => p.id === profile);
   return (
     <div className={`chat-layout ${railOpen ? "rail-open" : ""}`}>
       <section
-        className={`chat-main ${!turns.length ? "is-welcome" : ""}`}
+        className={`chat-main ${isHome ? "is-welcome" : ""}`}
         aria-label="Hỗ trợ khách hàng ngân hàng"
       >
+        {!isHome && (
+          <nav className="chat-navigation" aria-label="Điều hướng hội thoại">
+            <a href="#home" className="home-return" aria-label="Về màn hình chính">
+              <ArrowLeft size={17} /> Trang chủ
+            </a>
+            <span>Cuộc trò chuyện của bạn</span>
+          </nav>
+        )}
         <header className="chat-heading">
           <div className="assistant-identity">
             <BrandMark small />
@@ -334,15 +368,25 @@ export function CustomerChat() {
             </button>
           </div>
         </header>
+        {error && (
+          <div className="chat-feedback">
+            <ErrorBanner
+              message={error}
+              onRetry={lastFailed
+                ? () => { navigate("conversation"); void send(lastFailed.text, lastFailed.id); }
+                : !profiles.length ? loadProfiles : undefined}
+            />
+          </div>
+        )}
         <div className="conversation-scroll">
-          {!turns.length && (
+          {isHome && (
             <section className="welcome">
               <div className="welcome-hero">
                 <div className="hero-copy">
                   <div className="eyebrow welcome-tag">
                     <span /> TÀI CHÍNH CÁ NHÂN, THẬT GẦN GŨI
                   </div>
-                  <h2>
+                  <h2 id="chat-home-title" tabIndex={-1}>
                     Mỗi dự định.
                     <br />
                     <em>Một khởi đầu mới.</em>
@@ -399,8 +443,28 @@ export function CustomerChat() {
               </div>
             </section>
           )}
-          {loading && <Spinner label="Đang khôi phục hội thoại…" />}
-          {!!turns.length && (
+          {isHome && session && (
+            <section className="session-resume" aria-label="Cuộc trò chuyện hiện tại">
+              <div className="resume-icon"><MessageCircle size={24} /></div>
+              <div>
+                <span className="section-index">TIẾP NỐI CUỘC TRÒ CHUYỆN</span>
+                <h3>{waiting ? "Yêu cầu của bạn đang chờ chuyên viên." : "Sẵn sàng tiếp tục khi bạn muốn."}</h3>
+                <p>Nội dung hội thoại và câu hỏi đang soạn vẫn được giữ lại.</p>
+              </div>
+              <button className="button primary" onClick={() => navigate("conversation")}>
+                Tiếp tục trò chuyện <ArrowRight size={16} />
+              </button>
+            </section>
+          )}
+          {!isHome && !turns.length && !loading && (
+            <div className="conversation-empty">
+              <span className="resume-icon"><MessageCircle size={26} /></span>
+              <h2>Bạn muốn trao đổi điều gì?</h2>
+              <p>Gửi câu hỏi để bắt đầu. Trợ lý đã sẵn sàng hỗ trợ bạn.</p>
+            </div>
+          )}
+          {!isHome && loading && <Spinner label="Đang khôi phục hội thoại…" />}
+          {!isHome && !!turns.length && (
             <div className="messages" role="log" aria-label="Lịch sử hội thoại">
               {turns.map((turn, index) => (
                 <article
@@ -423,7 +487,7 @@ export function CustomerChat() {
               ))}
             </div>
           )}
-          {pending && session && (
+          {!isHome && pending && session && (
             <div className="typing" role="status">
               <BrandMark small />
               <span className="typing-dots" aria-hidden="true">
@@ -434,7 +498,7 @@ export function CustomerChat() {
               <span>Trợ lý đang xử lý yêu cầu…</span>
             </div>
           )}
-          {waiting && (
+          {!isHome && waiting && (
             <div className="handoff-notice">
               <Users size={20} />
               <div>
@@ -445,7 +509,7 @@ export function CustomerChat() {
               </div>
             </div>
           )}
-          {hint && (
+          {!isHome && hint && (
             <p className="success-message" role="status">
               <Check size={16} />
               {hint}
@@ -453,8 +517,8 @@ export function CustomerChat() {
           )}
           <div ref={end} />
         </div>
-        <div className="composer-area">
-          {!turns.length && (
+        {(!isHome || !session) && <div className="composer-area">
+          {isHome && (
             <div className="conversation-intro">
               <span className="section-index">02 / KẾT NỐI</span>
               <strong>Câu chuyện của bạn bắt đầu tại đây.</strong>
@@ -490,18 +554,6 @@ export function CustomerChat() {
               {promptNotice}
             </p>
           )}
-          {error && (
-            <ErrorBanner
-              message={error}
-              onRetry={
-                lastFailed
-                  ? () => void send(lastFailed.text, lastFailed.id)
-                  : !profiles.length
-                    ? loadProfiles
-                    : undefined
-              }
-            />
-          )}
           {!session && phoneLogin && (
             <PhoneLogin
               onCancel={() => setPhoneLogin(false)}
@@ -513,6 +565,7 @@ export function CustomerChat() {
                   "Đã kết nối hồ sơ từ Telegram. Bạn có thể tiếp tục nhu cầu đã trao đổi.",
                 );
                 setError("");
+                navigate("conversation");
               }}
             />
           )}
@@ -564,22 +617,18 @@ export function CustomerChat() {
             </div>
           )}
           {session && !verified && (
-            <div className="verify-bar" role="note">
-              <LockKeyhole size={21} />
-              <div>
-                <strong>Xác minh hồ sơ demo bằng số điện thoại</strong>
+            <details className="identity-help">
+              <summary>Tiếp nối hồ sơ và đặt lịch</summary>
                 <p>
-                  Gửi số điện thoại trong khung chat bên dưới để xem lịch sử và
-                  đặt lịch. Bạn vẫn có thể hỏi thông tin công khai trước xác
-                  minh.
+                  Bạn có thể trò chuyện ngay. Khi cần xem lịch sử hoặc đặt lịch,
+                  gửi số điện thoại demo trong khung chat để kết nối hồ sơ.
                 </p>
                 {chosenProfile?.phone && (
                   <small>
                     Số điện thoại demo đã chọn: {chosenProfile.phone}
                   </small>
                 )}
-              </div>
-            </div>
+            </details>
           )}
           <form
             className="composer"
@@ -609,9 +658,7 @@ export function CustomerChat() {
               placeholder={
                 !session
                   ? "Bắt đầu phiên hỗ trợ để gửi tin nhắn…"
-                  : !verified
-                    ? "Gửi số điện thoại demo hoặc hỏi thông tin công khai…"
-                    : waiting
+                  : waiting
                       ? "Chuyên viên sẽ tiếp nhận yêu cầu của bạn…"
                       : "Nhập câu hỏi cần hỗ trợ…"
               }
@@ -636,7 +683,7 @@ export function CustomerChat() {
             Không chia sẻ mật khẩu, PIN hoặc OTP. Đây là ngân hàng giả định; mọi
             hồ sơ và sản phẩm đều hư cấu.
           </p>
-        </div>
+        </div>}
       </section>
       <aside
         className="context-rail"
@@ -675,18 +722,12 @@ export function CustomerChat() {
                 current: !session,
               },
               {
-                label: "Xác minh thông tin",
-                detail: "Kết nối đúng hồ sơ của bạn",
-                done: verified,
-                current: Boolean(session) && !verified,
-              },
-              {
                 label: "Trao đổi cùng trợ lý",
                 detail: waiting
                   ? "Chuyên viên sẽ tiếp nối"
                   : "Tư vấn theo nhu cầu của bạn",
                 done: false,
-                current: verified,
+                current: Boolean(session),
               },
             ].map((step, index) => (
               <li

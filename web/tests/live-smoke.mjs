@@ -139,6 +139,7 @@ try {
     fullPage: true,
   });
   await page.goto(`${base}/chat`);
+  await page.getByRole("button", { name: "Tiếp tục trò chuyện", exact: true }).click();
   await page.waitForFunction(
     () =>
       !document.querySelector('textarea[aria-label="Tin nhắn cho trợ lý"]')

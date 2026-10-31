@@ -208,10 +208,7 @@ test("demo phone in chat verifies the session; public questions and retry work",
   await expect(composer).toHaveValue("Tôi muốn tìm hiểu vay mua nhà.");
   await page.getByRole("button", { name: "Bắt đầu", exact: true }).click();
   await expect(
-    page.getByText("Xác minh hồ sơ demo bằng số điện thoại", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Số điện thoại demo đã chọn: 0900000001", { exact: true }),
+    page.getByText("Tiếp nối hồ sơ và đặt lịch", { exact: true }),
   ).toBeVisible();
   await expect(composer).toBeEnabled();
   await expect(page.locator('input[type="date"], #dob')).toHaveCount(0);
@@ -223,13 +220,17 @@ test("demo phone in chat verifies the session; public questions and retry work",
   await expect(page.getByRole("log")).toContainText("công khai trước xác minh");
   expect(publicQuestions).toBe(1);
   await expect(
-    page.getByText("Xác minh hồ sơ demo bằng số điện thoại", { exact: true }),
+    page.getByText("Tiếp nối hồ sơ và đặt lịch", { exact: true }),
+  ).toBeVisible();
+  await page.getByText("Tiếp nối hồ sơ và đặt lịch", { exact: true }).click();
+  await expect(
+    page.getByText("Số điện thoại demo đã chọn: 0900000001", { exact: true }),
   ).toBeVisible();
   await composer.fill("0900000001");
   await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
   await expect(page.getByRole("log")).toContainText("Đã xác minh hồ sơ demo");
   await expect(
-    page.getByText("Xác minh hồ sơ demo bằng số điện thoại", { exact: true }),
+    page.getByText("Tiếp nối hồ sơ và đặt lịch", { exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Gặp chuyên viên", exact: true }),
