@@ -28,8 +28,8 @@ import {
   loadTurns,
   errorMessage,
   request,
+  streamReply,
   type ChatSession,
-  type Reply,
   type Turn,
 } from "../api";
 import { BrandMark, ErrorBanner, Spinner } from "../ui";
@@ -99,6 +99,9 @@ export function CustomerChat() {
     }
   });
   const [pending, setPending] = useState(false);
+  const [streamStatus, setStreamStatus] = useState(
+    "Trợ lý đang xử lý yêu cầu…",
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lastFailed, setLastFailed] = useState<{
@@ -109,7 +112,7 @@ export function CustomerChat() {
   const [railOpen, setRailOpen] = useState(false);
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-  const sending = useRef(false);
+  const activeStream = useRef<AbortController | null>(null);
   const currentSession = useRef(session);
   const freshSession = useRef<string | null>(null);
   const cached = useRef(
@@ -161,6 +164,13 @@ export function CustomerChat() {
       );
     }
   }, [entries, session]);
+  useEffect(
+    () => () => {
+      activeStream.current?.abort();
+      activeStream.current = null;
+    },
+    [],
+  );
   function navigate(next: "home" | "conversation") {
     setView(next);
     window.location.hash = next;
@@ -234,7 +244,7 @@ export function CustomerChat() {
       });
   }
   function openConversation(next: ChatSession) {
-    if (pending || sending.current) return;
+    if (pending || activeStream.current) return;
     if (next.session_id !== session?.session_id) {
       rememberView();
       const previous = cached.current.get(next.session_id);
@@ -357,38 +367,43 @@ export function CustomerChat() {
     if (
       !text.trim() ||
       pending ||
+      waiting ||
       loading ||
       historyError ||
       ended ||
-      waiting ||
-      sending.current
+      activeStream.current
     )
       return;
-    // Lock synchronously: repeated Enter events must share one in-flight request.
-    sending.current = true;
-    setPending(true);
-    setError("");
-    setLastFailed(null);
+    const controller = new AbortController();
+    activeStream.current = controller;
     navigate("conversation");
     const message = text.trim();
     const retrying = turns.some((turn) => turn.clientId === id);
-    setTurns((prev) =>
-      retrying
-        ? prev.map((turn) =>
-            turn.clientId === id ? { ...turn, delivery: "sending" } : turn,
-          )
-        : [
-            ...prev,
+    const assistantId = `stream:${id}`;
+    const userId = `user:${id}`;
+    setTurns((prev) => [
+      ...prev
+        .filter((turn) => turn.id !== assistantId)
+        .map((turn): ChatTurn =>
+          turn.clientId === id ? { ...turn, delivery: "sending" } : turn,
+        ),
+      ...(!prev.some((turn) => turn.id === userId)
+        ? [
             {
-              id: `local-${id}`,
+              id: userId,
               clientId: id,
               role: "user",
               text: message,
-              delivery: "sending",
+              delivery: "sending" as const,
             },
-          ],
-    );
-    // Keep a different, unsent draft when retrying an older failed message.
+          ]
+        : []),
+      { id: assistantId, role: "assistant", text: "" },
+    ]);
+    setPending(true);
+    setStreamStatus("Trợ lý đang xử lý yêu cầu…");
+    setError("");
+    setLastFailed(null);
     if (!retrying) setDraft("");
     try {
       let activeSession = currentSession.current;
@@ -397,20 +412,44 @@ export function CustomerChat() {
         freshSession.current = activeSession.session_id;
         save(activeSession);
       }
-      const data = await request<Reply>(
-        `/sessions/${activeSession.session_id}/messages`,
-        {
-          method: "POST",
-          body: { text: message, client_message_id: id },
-          token: activeSession.session_token,
+      const data = await streamReply(
+        activeSession,
+        text.trim(),
+        id,
+        (event) => {
+          if (controller.signal.aborted) return;
+          if (event.type === "text") {
+            setTurns((prev) =>
+              prev.map((turn) =>
+                turn.id === assistantId ? { ...turn, text: event.text } : turn,
+              ),
+            );
+          } else {
+            const labels: Record<string, string> = {
+              preparing: "Đang tiếp nối cuộc trò chuyện…",
+              planning: "Đang tìm hiểu yêu cầu của bạn…",
+              tools: "Đang tra cứu thông tin phù hợp…",
+              drafting: "Trợ lý đang trả lời…",
+              checking: "Đang kiểm tra thông tin trả lời…",
+              backup: "Đang thử lại phản hồi…",
+            };
+            setStreamStatus(
+              labels[event.stage] ?? "Trợ lý đang xử lý yêu cầu…",
+            );
+          }
         },
+        controller.signal,
       );
-      setTurns((prev) => [
-        ...prev.map((turn): ChatTurn =>
-          turn.clientId === id ? { ...turn, delivery: "sent" } : turn,
+      if (controller.signal.aborted) return;
+      setTurns((prev) =>
+        prev.map((turn) =>
+          turn.id === assistantId
+            ? { ...turn, text: data.reply }
+            : turn.clientId === id
+              ? { ...turn, delivery: "sent" }
+              : turn,
         ),
-        { id: `reply-${id}`, role: "assistant", text: data.reply },
-      ]);
+      );
       if (
         !data.guard_events?.some(
           (event) =>
@@ -440,16 +479,21 @@ export function CustomerChat() {
           status: data.handoff_id ? "waiting_human" : activeSession.status,
         });
     } catch (e) {
+      if (controller.signal.aborted) return;
       setTurns((prev) =>
-        prev.map((turn) =>
-          turn.clientId === id ? { ...turn, delivery: "failed" } : turn,
-        ),
+        prev
+          .filter((turn) => turn.id !== assistantId)
+          .map((turn): ChatTurn =>
+            turn.clientId === id ? { ...turn, delivery: "failed" } : turn,
+          ),
       );
       setError(errorMessage(e));
-      setLastFailed({ text: message, id });
+      setLastFailed({ text, id });
     } finally {
-      sending.current = false;
-      setPending(false);
+      if (activeStream.current === controller) {
+        activeStream.current = null;
+        setPending(false);
+      }
     }
   }
   async function handoff() {
@@ -478,7 +522,7 @@ export function CustomerChat() {
     }
   }
   async function newChat() {
-    if (pending || sending.current) return;
+    if (pending || activeStream.current) return;
     setPending(true);
     setError("");
     try {
@@ -754,54 +798,56 @@ export function CustomerChat() {
           {!isHome && loading && <Spinner label="Đang khôi phục hội thoại…" />}
           {!isHome && !!turns.length && (
             <div className="messages" role="log" aria-label="Lịch sử hội thoại">
-              {turns.map((turn, index) => (
-                <article
-                  className={`message ${turn.role === "user" ? "from-user" : "from-assistant"}`}
-                  key={turn.turn_id ?? turn.id ?? index}
-                >
-                  {turn.role !== "user" && <BrandMark small />}
-                  <div>
-                    <div className="message-label">
-                      {turn.role === "user" ? "Bạn" : "Trợ lý Bankwise"}
+              {turns
+                .filter((turn) => turn.text)
+                .map((turn, index) => (
+                  <article
+                    className={`message ${turn.role === "user" ? "from-user" : "from-assistant"}`}
+                    key={turn.turn_id ?? turn.id ?? index}
+                  >
+                    {turn.role !== "user" && <BrandMark small />}
+                    <div>
+                      <div className="message-label">
+                        {turn.role === "user" ? "Bạn" : "Trợ lý Bankwise"}
+                      </div>
+                      <div className="message-bubble">{turn.text}</div>
+                      {turn.role === "user" && (
+                        <span
+                          className={`delivered ${turn.delivery === "failed" ? "delivery-failed" : ""}`}
+                        >
+                          {turn.delivery === "sending" ? (
+                            <>
+                              <Clock3 size={13} /> Đang gửi…
+                            </>
+                          ) : turn.delivery === "failed" ? (
+                            <>
+                              Chưa gửi được
+                              <button
+                                type="button"
+                                disabled={
+                                  pending ||
+                                  loading ||
+                                  !!historyError ||
+                                  ended ||
+                                  waiting
+                                }
+                                onClick={() =>
+                                  void send(turn.text, turn.clientId)
+                                }
+                              >
+                                <RotateCcw size={12} /> Gửi lại
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCheck size={13} /> Đã gửi
+                            </>
+                          )}
+                        </span>
+                      )}
                     </div>
-                    <div className="message-bubble">{turn.text}</div>
-                    {turn.role === "user" && (
-                      <span
-                        className={`delivered ${turn.delivery === "failed" ? "delivery-failed" : ""}`}
-                      >
-                        {turn.delivery === "sending" ? (
-                          <>
-                            <Clock3 size={13} /> Đang gửi…
-                          </>
-                        ) : turn.delivery === "failed" ? (
-                          <>
-                            Chưa gửi được
-                            <button
-                              type="button"
-                              disabled={
-                                pending ||
-                                loading ||
-                                !!historyError ||
-                                ended ||
-                                waiting
-                              }
-                              onClick={() =>
-                                void send(turn.text, turn.clientId)
-                              }
-                            >
-                              <RotateCcw size={12} /> Gửi lại
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCheck size={13} /> Đã gửi
-                          </>
-                        )}
-                      </span>
-                    )}
-                  </div>
-                </article>
-              ))}
+                  </article>
+                ))}
             </div>
           )}
           {!isHome && turns.some((turn) => turn.delivery === "sending") && (
@@ -812,7 +858,7 @@ export function CustomerChat() {
                 <i />
                 <i />
               </span>
-              <span>Trợ lý đang xử lý yêu cầu…</span>
+              <span>{streamStatus}</span>
             </div>
           )}
           {!isHome && waiting && (

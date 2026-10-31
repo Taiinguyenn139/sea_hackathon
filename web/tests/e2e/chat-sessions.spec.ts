@@ -1,4 +1,22 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
+
+async function fulfillApi(
+  route: Route,
+  options: Parameters<Route["fulfill"]>[0],
+) {
+  if (
+    route.request().url().endsWith("/messages/stream") &&
+    options.json &&
+    (options.status ?? 200) < 400
+  )
+    return route.fulfill({
+      ...options,
+      json: undefined,
+      contentType: "text/event-stream",
+      body: `event: result\ndata: ${JSON.stringify(options.json)}\n\n`,
+    });
+  return route.fulfill(options);
+}
 
 for (const width of [375, 1440]) {
   test(`separate conversations preserve drafts, names and server history at ${width}px`, async ({
@@ -25,33 +43,35 @@ for (const width of [375, 1440]) {
       const path = new URL(route.request().url()).pathname.replace("/api", "");
       if (path === "/sessions") {
         expect(route.request().postDataJSON()).toEqual({ mode: "harness" });
-        return route.fulfill({ json: create() });
+        return fulfillApi(route, { json: create() });
       }
-      const match = path.match(/^\/sessions\/(chat-\d+)(?:\/(\w+))?$/);
-      if (!match) return route.fulfill({ status: 404, json: {} });
+      const match = path.match(
+        /^\/sessions\/(chat-\d+)(?:\/(\w+)(?:\/stream)?)?$/,
+      );
+      if (!match) return fulfillApi(route, { status: 404, json: {} });
       const [, id, action] = match;
       expect(route.request().headers().authorization).toBe(
         `Bearer token-${id}`,
       );
       if (action === "new") {
         siblings++;
-        return route.fulfill({ json: create() });
+        return fulfillApi(route, { json: create() });
       }
       if (action === "end") {
         ends++;
-        return route.fulfill({ json: {} });
+        return fulfillApi(route, { json: {} });
       }
       if (action === "turns")
-        return route.fulfill({ json: { items: turns[id] } });
+        return fulfillApi(route, { json: { items: turns[id] } });
       if (action === "messages") {
         const body = route.request().postDataJSON();
         const reply = `Trả lời riêng của ${id}`;
         turns[id].push({ id: body.client_message_id, text: body.text, reply });
-        return route.fulfill({
+        return fulfillApi(route, {
           json: { session_id: id, reply, guard_events: [] },
         });
       }
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           session_id: id,
           status: "active",
@@ -184,15 +204,15 @@ test("a slow history load cannot replace the newly selected conversation", async
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith("/a/turns")) {
       await slow;
-      return route.fulfill({
+      return fulfillApi(route, {
         json: { items: [{ id: "a", text: "Nội dung A", reply: "Trả lời A" }] },
       });
     }
     if (path.endsWith("/b/turns"))
-      return route.fulfill({
+      return fulfillApi(route, {
         json: { items: [{ id: "b", text: "Nội dung B", reply: "Trả lời B" }] },
       });
-    return route.fulfill({ json: { status: "active" } });
+    return fulfillApi(route, { json: { status: "active" } });
   });
   await page.goto("/chat#conversation");
   await page

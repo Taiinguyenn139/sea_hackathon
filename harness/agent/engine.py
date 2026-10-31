@@ -13,6 +13,7 @@ from langgraph.types import Command, interrupt
 from bank_tools.service import BankTools, canonical, ident, now
 from harness.llm import DEFAULT_REPLY, DraftSuggestion, LLMUnavailable, PlanSuggestion, json_completion
 from harness.memory.service import Memory, extract
+from harness.streaming import emit, stream_sink
 
 
 class TurnState(TypedDict, total=False):
@@ -205,6 +206,7 @@ class Engine:
                 return state
 
     def load_context(self, s):
+        emit("status", stage="preparing")
         session = s["session"]
         customer = session["customer_id"]
         job = self.db.one("SELECT seq FROM memory_jobs WHERE turn_id=?", (s["turn_id"],))
@@ -283,6 +285,7 @@ class Engine:
         return {"known": known, "facts": facts, "context_parts": parts, "confirmations": sorted(set(confirmations))}
 
     def plan(self, s):
+        emit("status", stage="planning")
         low = s["text"].lower()
         known = s["known"]
         product = known.get("product", "home_loan")
@@ -354,6 +357,7 @@ class Engine:
         return {"cards": [candidates[0]]}
 
     def call_tools(self, s):
+        emit("status", stage="tools")
         p, known, session = s["plan"], s["known"], s["session"]
         facts, calls, disclosures, notes = dict(s["facts"]), [], [], []
         error, unsuitable = False, False
@@ -570,7 +574,32 @@ class Engine:
         return reply
 
     def draft(self, s):
+        emit("status", stage="drafting")
         draft = self.rules_draft(s)
+        last_prefix = ""
+
+        def preview(text):
+            nonlocal last_prefix
+            if not text:
+                last_prefix = ""
+                emit("text", text="")
+                emit("status", stage="backup")
+                return
+            if s["tool_error"] or s["unsuitable"] or s.get("action_notes") or s.get("confirmations"):
+                return
+            boundaries = list(re.finditer(r"[.!?。](?:\s|$)|\n", text))
+            if not boundaries:
+                return
+            prefix = text[:boundaries[-1].end()]
+            if len(prefix) <= len(last_prefix) or len(prefix) >= 8000:
+                return
+            if any(draft_problem(prefix, s["facts"], self.db.setting("clock"))):
+                return
+            # Snapshot includes rendered trusted facts and required disclosures.
+            # Full schema and guard still decide the final persisted response.
+            rendered = self.render({**s, "draft": prefix})["reply"]
+            emit("text", text=rendered)
+            last_prefix = prefix
         candidate = json_completion(
             self.settings,
             "Trả lời trực tiếp tin nhắn khách hàng bằng tiếng Việt, theo intent và ý chính của rules_draft. "
@@ -581,12 +610,14 @@ class Engine:
              "known": s["known"], "facts": s["facts"], "context_parts": s["context_parts"]},
             schema=DraftSuggestion,
             purpose="draft",
+            on_delta=preview if stream_sink.get() else None,
         )
         if candidate and isinstance(candidate.get("draft"), str) and 0 < len(candidate["draft"]) < 8000:
             draft = candidate["draft"]
         return {"draft": draft}
 
     def guard(self, s):
+        emit("status", stage="checking")
         events = []
         if not s["session"].get("verified", False):
             events.append(event("G7", "public_tools_only", "restrict_private"))

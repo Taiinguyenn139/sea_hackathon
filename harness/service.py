@@ -11,7 +11,7 @@ from bank_tools.service import canonical, ident, now
 from harness.agent.engine import Engine, event
 from harness.identity import extract_phone_claims, get_profile, normalize_phone, validate_own_phone_claim
 from harness.input_guard import inspect_input
-from harness.llm import completion_budget
+from harness.llm import LLMUnavailable, completion_budget
 from harness.phone_identity import PhoneIdentity
 
 
@@ -397,8 +397,17 @@ class Harness:
                 "guard_events": state.get("guard_events", []),
                 "handoff_id": state.get("handoff_id"),
             }
-            if session["verified"]:
-                response["brief"] = self.engine.memory.brief(session["customer_id"], flush=False)
+            if self.can_chat(session):
+                with self.engine.lock(session["customer_id"]):
+                    if self.identity_status(session) == "identified":
+                        try:
+                            # Preserve OTP's immediate update within the shared
+                            # budget; demo/channel memory remains asynchronous.
+                            self.engine.memory.flush(session["customer_id"])
+                        except LLMUnavailable:
+                            # Persist completed tools even if extraction waits.
+                            pass
+                    response["brief"] = self.engine.memory.brief(session["customer_id"], flush=False)
             trace = {
                 "turn_id": turn,
                 "context_parts": state.get("context_parts", []),

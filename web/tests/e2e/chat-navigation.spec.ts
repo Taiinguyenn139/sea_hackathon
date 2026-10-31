@@ -1,4 +1,22 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
+
+async function fulfillApi(
+  route: Route,
+  options: Parameters<Route["fulfill"]>[0],
+) {
+  if (
+    route.request().url().endsWith("/messages/stream") &&
+    options.json &&
+    (options.status ?? 200) < 400
+  )
+    return route.fulfill({
+      ...options,
+      json: undefined,
+      contentType: "text/event-stream",
+      body: `event: result\ndata: ${JSON.stringify(options.json)}\n\n`,
+    });
+  return route.fulfill(options);
+}
 
 for (const width of [375, 768, 1440]) {
   test(`anonymous chat, home, draft, reload and new chat work at ${width}px`, async ({
@@ -22,7 +40,7 @@ for (const width of [375, 768, 1440]) {
         starts += 1;
         const sessionId = `navigation-session-${starts}`;
         turns.set(sessionId, []);
-        return route.fulfill({
+        return fulfillApi(route, {
           json: {
             session_id: sessionId,
             session_token: "navigation-capability",
@@ -34,8 +52,10 @@ for (const width of [375, 768, 1440]) {
       }
       const sessionId = path.split("/")[2];
       if (path.endsWith("/turns"))
-        return route.fulfill({ json: { items: turns.get(sessionId) ?? [] } });
-      if (path.endsWith("/messages")) {
+        return fulfillApi(route, {
+          json: { items: turns.get(sessionId) ?? [] },
+        });
+      if (path.endsWith("/messages/stream")) {
         expect(route.request().headers().authorization).toBe(
           "Bearer navigation-capability",
         );
@@ -45,7 +65,7 @@ for (const width of [375, 768, 1440]) {
         turns
           .get(sessionId)
           ?.push({ id: body.client_message_id, text: body.text, reply });
-        return route.fulfill({
+        return fulfillApi(route, {
           json: {
             session_id: sessionId,
             user_id: null,
@@ -57,9 +77,9 @@ for (const width of [375, 768, 1440]) {
       if (path.endsWith("/verify")) verifications += 1;
       if (path.endsWith("/end")) {
         ends += 1;
-        return route.fulfill({ json: { status: "ended" } });
+        return fulfillApi(route, { json: { status: "ended" } });
       }
-      return route.fulfill({
+      return fulfillApi(route, {
         status: 404,
         json: { detail: "Unexpected request" },
       });
@@ -175,7 +195,7 @@ test("new conversations leave a waiting staff handoff available in history", asy
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api", "");
     if (path.endsWith("/new"))
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           session_id: "new-session",
           session_token: "new-capability",
@@ -185,7 +205,7 @@ test("new conversations leave a waiting staff handoff available in history", asy
         },
       });
     if (path.endsWith("/turns"))
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           items: path.includes("waiting-session")
             ? [
@@ -200,12 +220,12 @@ test("new conversations leave a waiting staff handoff available in history", asy
       });
     if (path.endsWith("/end")) {
       ends += 1;
-      return route.fulfill({
+      return fulfillApi(route, {
         status: 409,
         json: { detail: "Complete handoff before ending session" },
       });
     }
-    return route.fulfill({
+    return fulfillApi(route, {
       json: {
         status: path.includes("waiting-session") ? "waiting_human" : "active",
       },

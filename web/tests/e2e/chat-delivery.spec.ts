@@ -1,5 +1,23 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+async function fulfillApi(
+  route: Route,
+  options: Parameters<Route["fulfill"]>[0],
+) {
+  if (
+    route.request().url().endsWith("/messages/stream") &&
+    options.json &&
+    (options.status ?? 200) < 400
+  )
+    return route.fulfill({
+      ...options,
+      json: undefined,
+      contentType: "text/event-stream",
+      body: `event: result\ndata: ${JSON.stringify(options.json)}\n\n`,
+    });
+  return route.fulfill(options);
+}
+
 const session = {
   session_id: "delivery-session",
   session_token: "delivery-capability",
@@ -35,14 +53,16 @@ async function mockChat(
     const path = new URL(route.request().url()).pathname.replace("/api", "");
     if (path === "/sessions") {
       expect(route.request().postDataJSON()).toEqual({ mode: "harness" });
-      return route.fulfill({ json: session });
+      return fulfillApi(route, { json: session });
     }
     if (path === `/sessions/${session.session_id}`)
-      return route.fulfill({ json: session });
+      return fulfillApi(route, { json: session });
     if (path.endsWith("/turns"))
-      return history ? history(route) : route.fulfill({ json: { items: [] } });
-    if (path.endsWith("/messages")) return messages(route);
-    return route.fulfill({
+      return history
+        ? history(route)
+        : fulfillApi(route, { json: { items: [] } });
+    if (path.endsWith("/messages/stream")) return messages(route);
+    return fulfillApi(route, {
       status: 404,
       json: { detail: "Unexpected request" },
     });
@@ -62,7 +82,7 @@ for (const width of [375, 1440]) {
         "Điều kiện vay mua nhà?",
       );
       await response.ready;
-      await route.fulfill({ json: reply });
+      await fulfillApi(route, { json: reply });
     });
     await page.goto("/chat#conversation");
     const composer = composerFor(page);
@@ -110,11 +130,11 @@ test("failed messages stay visible and retry reuses the ID without losing a new 
   await mockChat(page, async (route) => {
     ids.push(route.request().postDataJSON().client_message_id);
     if (ids.length === 1)
-      return route.fulfill({
+      return fulfillApi(route, {
         status: 503,
         json: { detail: "Dịch vụ tạm thời chưa sẵn sàng." },
       });
-    return route.fulfill({ json: reply });
+    return fulfillApi(route, { json: reply });
   });
   await page.goto("/chat#conversation");
   const composer = composerFor(page);
@@ -145,7 +165,7 @@ test("Shift+Enter and IME composition keep text; Enter submits once", async ({
   const texts: string[] = [];
   await mockChat(page, async (route) => {
     texts.push(route.request().postDataJSON().text);
-    return route.fulfill({ json: reply });
+    return fulfillApi(route, { json: reply });
   });
   await page.goto("/chat#conversation");
   const composer = composerFor(page);
@@ -181,11 +201,11 @@ test("restoring a long mobile conversation keeps the composer visible and preven
     page,
     async (route) => {
       requests += 1;
-      return route.fulfill({ json: reply });
+      return fulfillApi(route, { json: reply });
     },
     async (route) => {
       await history.ready;
-      await route.fulfill({
+      await fulfillApi(route, {
         json: {
           items: Array.from({ length: 20 }, (_, index) => ({
             id: `history-${index}`,

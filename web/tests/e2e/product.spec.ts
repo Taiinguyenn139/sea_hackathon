@@ -1,4 +1,94 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
+
+async function fulfillApi(
+  route: Route,
+  options: Parameters<Route["fulfill"]>[0],
+) {
+  if (
+    route.request().url().endsWith("/messages/stream") &&
+    options.json &&
+    (options.status ?? 200) < 400
+  )
+    return route.fulfill({
+      ...options,
+      json: undefined,
+      contentType: "text/event-stream",
+      body: `event: result\ndata: ${JSON.stringify(options.json)}\n\n`,
+    });
+  return route.fulfill(options);
+}
+
+test("chat shows partial text while the streamed reply is still in progress", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    sessionStorage.setItem(
+      "bankwise-chat-session",
+      JSON.stringify({
+        session_id: "stream-session",
+        session_token: "stream-capability",
+        identity_status: "unverified",
+        user_id: null,
+        status: "active",
+      }),
+    );
+    const original = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      if (!String(input).endsWith("/messages/stream"))
+        return original(input, init);
+      const encoder = new TextEncoder();
+      let timer: ReturnType<typeof setTimeout>;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  'event: text\ndata: {"text":"Đoạn đầu đã kiểm tra."}\n\n',
+                ),
+              );
+              timer = setTimeout(() => {
+                controller.enqueue(
+                  encoder.encode(
+                    'event: result\ndata: {"session_id":"stream-session","reply":"Đoạn đầu đã kiểm tra. Đoạn tiếp theo.","used_fact_ids":[],"guard_events":[]}\n\n',
+                  ),
+                );
+                controller.close();
+              }, 1800);
+            },
+            cancel() {
+              clearTimeout(timer);
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    };
+  });
+  await page.route("**/api/**", (route) =>
+    route.fulfill({
+      json: { items: [] },
+    }),
+  );
+  await page.goto("/chat#conversation");
+  const composer = page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" });
+  await expect(composer).toBeEnabled();
+  await composer.fill("Tư vấn giúp tôi");
+  await composer.press("Enter");
+  await expect(
+    page.getByText("Đoạn đầu đã kiểm tra.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Đoạn đầu đã kiểm tra. Đoạn tiếp theo.", { exact: true }),
+  ).not.toBeVisible();
+  await expect(
+    page.getByText("Đoạn đầu đã kiểm tra. Đoạn tiếp theo.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("log").getByText("Tư vấn giúp tôi", { exact: true }),
+  ).toHaveCount(1);
+  await expect(composer).toBeEnabled();
+});
 
 async function mockAgentChat(page: Page, failFirstMessage = false) {
   const state = {
@@ -13,7 +103,7 @@ async function mockAgentChat(page: Page, failFirstMessage = false) {
     if (path === "/sessions") {
       expect(body).toEqual({ mode: "harness" });
       state.starts += 1;
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           session_id: "anonymous-session",
           session_token: "anonymous-capability",
@@ -24,14 +114,14 @@ async function mockAgentChat(page: Page, failFirstMessage = false) {
       });
     }
     if (path.endsWith("/turns"))
-      return route.fulfill({ json: { items: state.turns } });
-    if (path.endsWith("/messages")) {
+      return fulfillApi(route, { json: { items: state.turns } });
+    if (path.endsWith("/messages/stream")) {
       expect(route.request().headers().authorization).toBe(
         "Bearer anonymous-capability",
       );
       state.messageIds.push(body.client_message_id);
       if (failFirstMessage && state.messageIds.length === 1)
-        return route.fulfill({
+        return fulfillApi(route, {
           status: 503,
           json: { detail: "Dịch vụ tạm thời chưa sẵn sàng." },
         });
@@ -46,7 +136,7 @@ async function mockAgentChat(page: Page, failFirstMessage = false) {
           "Chưa tìm thấy hồ sơ phù hợp với số điện thoại này. Bạn vẫn có thể hỏi thông tin công khai.";
       }
       state.turns.push({ id: body.client_message_id, text: body.text, reply });
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           session_id: "anonymous-session",
           user_id: state.claimed,
@@ -60,7 +150,7 @@ async function mockAgentChat(page: Page, failFirstMessage = false) {
         },
       });
     }
-    return route.fulfill({
+    return fulfillApi(route, {
       status: 404,
       json: { detail: "Unexpected request" },
     });
@@ -182,7 +272,7 @@ test("staff auth gates private content and incomplete benchmark is not presented
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api", "");
     if (path === "/staff/me")
-      return route.fulfill({
+      return fulfillApi(route, {
         status: loggedIn ? 200 : 401,
         json: loggedIn
           ? { authenticated: true, csrf_token: "test-csrf" }
@@ -190,17 +280,17 @@ test("staff auth gates private content and incomplete benchmark is not presented
       });
     if (path === "/staff/login") {
       loggedIn = true;
-      return route.fulfill({ json: { csrf_token: "test-csrf" } });
+      return fulfillApi(route, { json: { csrf_token: "test-csrf" } });
     }
     if (path === "/eval/runs")
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           schema_version: 1,
           runs: [{ run_id: "run-test", status: "incomplete", split: "dev" }],
         },
       });
     if (path === "/eval/runs/run-test")
-      return route.fulfill({
+      return fulfillApi(route, {
         json: {
           schema_version: 1,
           run_id: "run-test",
@@ -210,7 +300,7 @@ test("staff auth gates private content and incomplete benchmark is not presented
           judge: { status: "skipped" },
         },
       });
-    return route.fulfill({ status: 404, json: { detail: "Not found" } });
+    return fulfillApi(route, { status: 404, json: { detail: "Not found" } });
   });
   await page.goto("/benchmark");
   await expect(
@@ -305,11 +395,12 @@ test("staff queue uses real counts and supports search with reset", async ({
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api", "");
     if (path === "/staff/me")
-      return route.fulfill({ json: { csrf_token: "test-csrf" } });
+      return fulfillApi(route, { json: { csrf_token: "test-csrf" } });
     if (path === "/handoffs")
-      return route.fulfill({ json: { items: handoffs } });
-    if (path === "/callbacks") return route.fulfill({ json: { items: [] } });
-    return route.fulfill({ status: 404, json: { detail: "Not found" } });
+      return fulfillApi(route, { json: { items: handoffs } });
+    if (path === "/callbacks")
+      return fulfillApi(route, { json: { items: [] } });
+    return fulfillApi(route, { status: 404, json: { detail: "Not found" } });
   });
   await page.goto("/staff");
   await expect(
@@ -346,7 +437,7 @@ test("staff login preview and reduced motion preference", async ({
 }, testInfo) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.route("**/api/staff/me", (route) =>
-    route.fulfill({ status: 401, json: { detail: "Unauthorized" } }),
+    fulfillApi(route, { status: 401, json: { detail: "Unauthorized" } }),
   );
   await page.goto("/staff");
   await expect(

@@ -41,11 +41,11 @@ GitHub dùng OIDC để lấy credential ngắn hạn. VM được đọc Artifa
 
 ## OpenAI chính và backup
 
-Backend OpenAI dùng `OPENAI_MODEL=gpt-6-luna`, `OPENAI_BACKUP_MODEL=gpt-6.1-sol` và `OPENAI_API_KEY` phía server. Cấu hình `LLM_BACKEND=openai` yêu cầu đủ cả ba, hai model phải khác nhau; thiếu cấu hình làm startup thất bại rõ ràng. `rules` vẫn là chế độ chủ động chạy không credential.
+Backend OpenAI dùng `OPENAI_MODEL`, `OPENAI_BACKUP_MODEL` và `OPENAI_API_KEY` phía server. Cấu hình `LLM_BACKEND=openai` yêu cầu đủ cả ba, hai model phải khác nhau; thiếu cấu hình làm startup thất bại rõ ràng. `rules` vẫn là chế độ chủ động chạy không credential, không chứng minh AI đã chọn gọi tool.
 
-Mỗi bước phân loại (`plan`), soạn trả lời (`draft`) và trích xuất memory (`extract`) gọi primary trước. Primary thành công không gọi backup. Timeout, lỗi mạng, lỗi model, 5xx, rate limit tạm thời hoặc JSON/schema không hợp lệ có thể gọi backup đúng một lần. Lỗi xác thực hoặc quota/billing chung tài khoản kết thúc ngay vì đổi model cùng key không giải quyết được. Tôn trọng Retry-After trong ngân sách; không retry vòng lặp.
+Chat OpenAI hiện dùng classifier đầu vào, các vòng function calling (`agent_tools`) và trích xuất memory khi cần; không còn cố định một lượt `plan` rồi `draft`. Mỗi bước gọi primary trước; primary thành công không gọi backup. Timeout, lỗi mạng, lỗi model, 5xx, rate limit tạm thời hoặc JSON/schema không hợp lệ có thể gọi backup đúng một lần. Lỗi xác thực hoặc quota/billing chung tài khoản kết thúc ngay vì đổi model cùng key không giải quyết được. Tôn trọng Retry-After trong ngân sách; không retry vòng lặp. Các helper `plan`/`draft` của graph cũ vẫn phục vụ luồng legacy và kiểm thử riêng.
 
-`LLM_CALL_BUDGET_SECONDS` mặc định 20 giây, tối đa 120, áp dụng cho cả hai attempts của một bước. Primary được dùng nửa thời gian còn lại để dành phần cho backup. Deadline hủy async I/O đang chạy. Một lượt chat có thể có nhiều bước nên latency toàn lượt cần đo riêng. Cả hai model cùng OpenAI không bảo vệ khỏi outage hoặc quota chung.
+`LLM_CALL_BUDGET_SECONDS` mặc định 20 giây, tối đa 120, áp dụng cho cả hai attempts của một bước. Primary được dùng nửa thời gian còn lại để dành phần cho backup. Classifier, agent và memory/handoff đồng bộ cùng chịu ngân sách message 60 giây; agent còn giới hạn 8 vòng model và 12 lần tool. Mỗi bước bị chặn bởi phần thời gian chung còn lại, deadline hủy async I/O đang chạy. Job memory chạy nền sau response có ngân sách riêng. Đây không phải bảo đảm chính xác thời gian truyền HTTP; cả hai model cùng OpenAI cũng không bảo vệ khỏi outage hoặc quota chung.
 
 Khi hết hai model, khách nhận đúng câu: “Hiện tại hệ thống tư vấn đang tạm gián đoạn. Anh/chị vui lòng thử lại sau ít phút.” Không tạo tư vấn bằng rules do lỗi API, không gọi lại bank tools và không đưa chi tiết lỗi nội bộ cho khách. Guard số liệu, nguồn span, phép tính ngân hàng và template bảo vệ vẫn tất định.
 
@@ -61,3 +61,15 @@ Memory gọi provider ngoài transaction SQLite. Job được claim bằng lease
 Thử lỗi cưỡng bức và eval chỉ chạy trên server localhost có DB tạm; runner eval reset dữ liệu. Không inject lỗi hoặc reset production để kiểm tra backup. Trước smoke ghi dữ liệu production, giữ backup nhất quán theo quy trình release.
 
 Rollback cấu hình bằng cách xuất bản lại payload đã biết tốt thành version mới nhất rồi chạy loader/release image tương thích. Loader luôn đọc latest, không tự quay về version cũ. Giữ version secret và digest/revision trước đó để phục hồi; không khôi phục snapshot DB cũ sau khi mở traffic nếu sẽ làm mất lượt mới.
+
+## Streaming trên web chat
+
+Web dùng `POST /sessions/{sid}/messages/stream` với bearer session token và JSON `{text, client_message_id}`. Backend trả `text/event-stream`: `status` báo tiến độ, `text` chứa **toàn bộ snapshot** thay cho nội dung assistant đang hiện, `result` chứa response cuối theo hợp đồng route JSON, `error` chứa `message` và `status`. Client phải nhận `result` mới coi lượt đã hoàn tất; EOF thiếu terminal là lỗi có thể gửi lại cùng message ID. Heartbeat là SSE comment. Route `/messages` trả JSON và Telegram vẫn dùng hợp đồng cũ.
+
+Luồng chat AI hiện dùng `AgentLoop`: các message function calling và draft được giữ nội bộ trong khi backend thực thi tool, cập nhật quyền/ngữ cảnh và kiểm tra số liệu. Client nhận `status`/heartbeat trong thời gian chờ; đó là tiến độ giao diện, không thay cho receipt chứng minh một tool đã chạy. Sau khi phản hồi toàn văn đã qua guard, placeholder đã render bằng fact hợp lệ và receipt đã lưu bền vững, backend mới phát snapshot `text` rồi `result` cuối. Vì vậy phần tư vấn ngân hàng không hiện token thô trước khi kiểm tra; thời gian tới nội dung đầu tiên gồm classifier, memory, tools và guard.
+
+Khi hết primary/backup, khách nhận phản hồi gián đoạn đã được chốt, không nhận lỗi provider. `AgentLoop` không dùng provider token streaming trong luồng này; không suy ra `streamed: true` hoặc model đã stream thật chỉ vì endpoint trả SSE. Helper stream `draft` cũ vẫn còn cho graph legacy/kiểm thử riêng, gồm snapshot reset khi đổi backup; nó không mô tả đường function calling của chat hiện tại.
+
+Queue mỗi request giới hạn 32 events và không giữ dữ liệu khi browser đã disconnect. Worker tiếp tục hoàn tất/lưu receipt trong ngân sách đồng bộ chung để retry cùng ID không gọi lại side effects; shutdown chờ worker đang chạy. Memory chạy nền sau response có ngân sách riêng. Giữ shutdown grace đủ cho lượt đang chạy khi vận hành ngoài `release.sh`.
+
+Giữ SSE không cache, không biến đổi nội dung và không buffer tại proxy/CDN; backend có `X-Accel-Buffering: no`. Kiểm tra header và thứ tự `status` → `text` → `result` qua URL HTTPS thực tế sau triển khai. Với AgentLoop, snapshot `text` cuối có thể đến sát `result`, không cần có nhiều chunk nội dung. Không cần secret hoặc biến môi trường streaming mới; giữ cấu hình OpenAI hiện tại.
