@@ -10,6 +10,7 @@ import httpx
 from fastapi import HTTPException
 
 from bank_tools.service import canonical, ident
+from harness.llm import DEFAULT_REPLY, LLMUnavailable
 
 
 class Dispatcher:
@@ -98,6 +99,12 @@ class Dispatcher:
                     self.reply(row["id"], target, reply)
                     self.db.set("telegram_last:" + target, max(previous, stamp))
                     self.db.execute("UPDATE provider_events SET status='processed',error=NULL WHERE id=?", (row["id"],))
+                except LLMUnavailable:
+                    self.reply(row["id"], target, DEFAULT_REPLY)
+                    self.db.execute(
+                        "UPDATE provider_events SET status='processed',error=? WHERE id=?",
+                        ("llm_unavailable", row["id"]),
+                    )
                 except HTTPException as e:
                     self.reply(row["id"], target, str(e.detail))
                     self.db.execute(
@@ -108,7 +115,10 @@ class Dispatcher:
                     self.db.execute("UPDATE provider_events SET error='processing_failed' WHERE id=?", (row["id"],))
                     break
             for row in self.db.all("SELECT customer_id FROM customer_sequences WHERE processed_seq<next_seq"):
-                self.harness.engine.memory.flush(row["customer_id"])
+                try:
+                    self.harness.engine.memory.flush(row["customer_id"])
+                except LLMUnavailable:
+                    continue
             self.send_pending()
 
     def send_pending(self):

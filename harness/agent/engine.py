@@ -12,7 +12,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
 
 from bank_tools.service import BankTools, canonical, ident, now
-from harness.llm import DraftSuggestion, PlanSuggestion, json_completion
+from harness.llm import DEFAULT_REPLY, DraftSuggestion, LLMUnavailable, PlanSuggestion, json_completion
 from harness.memory.service import Memory, extract
 
 
@@ -124,23 +124,40 @@ class Engine:
 
     def run(self, session, text, turn_id):
         with self.lock(session["customer_id"]):
-            return self.graph.invoke(
-                {
-                    "session": session,
-                    "text": text,
-                    "turn_id": turn_id,
-                    "guard_events": [],
-                    "tool_calls": [],
-                    "handoff_id": None,
-                    "attempt": 0,
-                    "tool_error": False,
-                    "unsuitable": False,
-                    "source_spans": [],
-                    "used_fact_ids": [],
-                    "disclosures": [],
-                },
-                {"configurable": {"thread_id": session["id"]}},
-            )
+            config = {"configurable": {"thread_id": session["id"]}}
+            try:
+                return self.graph.invoke(
+                    {
+                        "session": session,
+                        "text": text,
+                        "turn_id": turn_id,
+                        "guard_events": [],
+                        "tool_calls": [],
+                        "handoff_id": None,
+                        "attempt": 0,
+                        "tool_error": False,
+                        "unsuitable": False,
+                        "source_spans": [],
+                        "used_fact_ids": [],
+                        "disclosures": [],
+                        "cards": [],
+                        "confirmations": [],
+                        "facts": {},
+                        "known": {},
+                        "plan": {},
+                        "draft": "",
+                        "reply": "",
+                    },
+                    config,
+                )
+            except LLMUnavailable:
+                # Preserve any completed tool receipts, but never replay the graph
+                # or render stale facts when planning/drafting/memory is unavailable.
+                state = dict(self.graph.get_state(config).values)
+                if state.get("turn_id") != turn_id:
+                    state = {}
+                state.update(reply=DEFAULT_REPLY, used_fact_ids=[], source_spans=[], disclosures=[])
+                return state
 
     def load_context(self, s):
         session = s["session"]
@@ -224,6 +241,7 @@ class Engine:
             "Phân loại hội thoại tư vấn. Trả JSON {stage:discover|quote|objection|followup|apply, objection:rate_high|need_spouse|null}. Không trả số liệu hoặc tool arguments.",
             {"text": s["text"], "known": known},
             schema=PlanSuggestion,
+            purpose="plan",
         )
         stage = "apply" if handoff else "discover"
         objection = known.get("objection")
@@ -370,6 +388,7 @@ class Engine:
             "Viết câu tư vấn ngân hàng tiếng Việt. Mọi số phải dùng {fact:id} từ facts. Không tạo fact. Giữ ý nghĩa rules_draft. Trả JSON {draft:string}.",
             {"rules_draft": draft, "known": s["known"], "facts": s["facts"], "context_parts": s["context_parts"]},
             schema=DraftSuggestion,
+            purpose="draft",
         )
         if candidate and isinstance(candidate.get("draft"), str) and 0 < len(candidate["draft"]) < 8000:
             draft = candidate["draft"]
