@@ -64,8 +64,8 @@ def main():
             session = request("/sessions", {"mode": "harness", "demo_profile": "hoa"})
             sid, token = session["session_id"], session["session_token"]
             request(f"/sessions/{sid}/verify", {"dob": "1988-05-12"}, token)
-            reply = request(f"/sessions/{sid}/messages", {"text": "Tôi muốn vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu", "client_message_id": "smoke-1"}, token)
-            assert "2 tỷ" in reply["reply"] and reply["used_fact_ids"]
+            reply = request(f"/sessions/{sid}/messages", {"text": "Tôi muốn vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, không có nợ, giá nhà 3 tỷ", "client_message_id": "smoke-1"}, token)
+            assert "2 tỷ" in reply["reply"] and "7,1" in reply["reply"] and reply["used_fact_ids"]
             docker("restart", name)
             # Docker may reassign an ephemeral host port when restarting.
             base = "http://" + docker("port", name, "8080/tcp").splitlines()[0]
