@@ -30,6 +30,45 @@ Khách mới có hồ sơ riêng và chat ngay; chia sẻ số điện thoại �
 ngữ cảnh trên web. Liên kết hồ sơ demo là tùy chọn. Script kiểm tra kết
 nối và đăng ký webhook mà không in credential.
 
+## Kiểm tra an toàn đầu vào
+
+Web chat, nội dung yêu cầu handoff và Telegram đều được kiểm tra trước khi ghi
+turn, enqueue memory hoặc gọi agent, áp dụng cho cả `harness`, `no_memory` và
+`full_history`. Telegram kiểm tra trước khi lưu inbox; tin bị chặn chỉ lưu mã
+guard và placeholder, không lưu nguyên văn hoặc các trường dư của provider.
+
+- `G8`: chặn các giá trị OTP/PIN/CVV, mật khẩu, khóa API/private key, số thẻ,
+  số tài khoản và giấy tờ định danh nhận diện được. Các luật chuẩn hóa Unicode,
+  đọc nhãn và kiểm tra checksum số thẻ. Câu hỏi về OTP/mật khẩu không chứa bí mật,
+  thu nhập, khoản vay, kỳ hạn và ngày sinh ở bước xác minh vẫn được xử lý.
+- `G9`: chặn các mẫu prompt injection trực tiếp như ghi đè chỉ dẫn, giả vai system,
+  yêu cầu lộ prompt nội bộ hoặc tắt kiểm soát. Khi `LLM_BACKEND=openai`, mỗi đầu
+  vào vượt qua luật còn được phân loại ngữ nghĩa bằng một lần gọi LLM, chỉ nhận
+  text hiện tại, không nhận lịch sử hoặc tools. Classifier dùng primary/backup
+  và ngân sách thời gian như các bước LLM khác, ghi log `purpose=input_guard`.
+  Backend `rules` chỉ dùng luật.
+- `G10`: nếu bộ phân loại LLM hết ngân sách/attempts hoặc gặp lỗi không thể retry,
+  chặn yêu cầu hiện tại và đề nghị thử lại. Không tiếp tục agent khi chưa kiểm
+  tra được đầu vào.
+
+Guard trả `guard_events` với `stage=input`, `action=block` và câu trả lời cố định,
+không lặp lại dữ liệu bị chặn. Web chat không lưu turn bị chặn hoặc giữ
+`client_message_id` của turn đó; handoff trả HTTP 400 nếu reason bị chặn.
+Retry của turn đã hoàn tất không gọi lại classifier; Telegram retry cùng update
+cũng không phân loại lại. Với OpenAI, một turn tư vấn được chấp nhận, không có
+memory backlog, gọi LLM bốn lần: input classifier, plan, draft và memory extraction.
+Đầu vào bị luật chặn không gọi LLM; bị classifier chặn chỉ gọi classifier một lần.
+Đây là số bước logic: mỗi bước có thể gửi tối đa hai HTTP attempts khi primary
+thất bại và cần backup. Turn bình thường không backlog có tối đa tám attempts;
+riêng classifier có tối đa hai. Identity/brief có thể flush memory trước khi trả
+lời; các lượt đã có memory backlog cần tính thêm các job đó.
+
+Đây là phòng vệ nhiều lớp, chưa bảo đảm phát hiện mọi prompt injection hoặc mọi
+loại PII. Nội dung vượt qua luật được gửi tới classifier khi bật OpenAI; các luật
+chưa bao phủ mọi cách che giấu/mã hóa bí mật. Không tự làm sạch lịch sử đã lưu.
+Quyền truy cập, xác minh danh tính, kiểm tra tool và guard đầu ra vẫn cần được giữ.
+Hướng dẫn tham khảo: [OWASP Prompt Injection Prevention](https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html).
+
 ## Kiểm tra và build
 
 ```sh

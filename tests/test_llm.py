@@ -208,6 +208,8 @@ def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
         settings.openai_backup_model = "backup"
 
         async def post(self, url, **kwargs):
+            if "INPUT_SECURITY_CLASSIFIER" in kwargs["json"]["messages"][0]["content"]:
+                return result({"category": "safe"})
             if "Phân loại" in kwargs["json"]["messages"][0]["content"]:
                 return result({"stage": "quote", "objection": None})
             return httpx.Response(503)

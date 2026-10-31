@@ -492,7 +492,9 @@ def test_optional_llm_schema_fallback_and_extraction_source(client, monkeypatch)
 
     async def fake_post(self, url, **kwargs):
         instruction = kwargs["json"]["messages"][0]["content"]
-        if "Phân loại" in instruction:
+        if "INPUT_SECURITY_CLASSIFIER" in instruction:
+            result = {"category": "safe"}
+        elif "Phân loại" in instruction:
             result = {"stage": "quote", "objection": None}
         elif "Trích" in instruction:
             result = {"spans": ["thu nhập 999 triệu", "Thu nhập 45 triệu"]}
@@ -512,6 +514,11 @@ def test_optional_llm_schema_fallback_and_extraction_source(client, monkeypatch)
     assert not any(f["value"] == "999000000" for f in brief["facts"])
 
     async def malformed(self, url, **kwargs):
+        if "INPUT_SECURITY_CLASSIFIER" in kwargs["json"]["messages"][0]["content"]:
+            return httpx.Response(
+                200, json={"choices": [{"message": {"content": '{"category":"safe"}'}}]},
+                request=httpx.Request("POST", url),
+            )
         return httpx.Response(
             200, json={"choices": [{"message": {"content": '{"unexpected":true}'}}]}, request=httpx.Request("POST", url)
         )

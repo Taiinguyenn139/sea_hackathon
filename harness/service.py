@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from bank_tools.service import FIXTURES, canonical, ident, now
 from harness.agent.engine import Engine, event
+from harness.input_guard import inspect_input
 from harness.phone_identity import PhoneIdentity
 
 
@@ -122,7 +123,7 @@ class Harness:
             c.execute("UPDATE sessions SET verified=1 WHERE id=?", (session["id"],))
         return {"identity_status": "verified", "brief": self.engine.memory.brief(identity)}
 
-    def message(self, sid, text, client_id):
+    def message(self, sid, text, client_id, *, input_checked=False):
         session = self.session(sid)
         with self.engine.lock(session["customer_id"]):
             session = self.session(sid)
@@ -133,6 +134,14 @@ class Harness:
                 return json.loads(existing["result"])
             if session["status"] != "active":
                 raise HTTPException(409, "Session is waiting for staff or ended")
+            blocked = inspect_input(text, self.settings, semantic=not input_checked)
+            if blocked:
+                return {
+                    "session_id": sid,
+                    **blocked,
+                    "used_fact_ids": [],
+                    "handoff_id": None,
+                }
             if not self.can_chat(session):
                 return {
                     "session_id": sid,
@@ -190,11 +199,13 @@ class Harness:
         )
         if previous:
             return self.handoff_detail(previous)
-        self.message(
+        response = self.message(
             sid,
             "Yêu cầu chuyên viên: " + reason,
             "handoff-request:" + str(self.db.one("SELECT count(*) AS n FROM handoffs WHERE session_id=?", (sid,))["n"]),
         )
+        if any(e.get("stage") == "input" and e["action"] == "block" for e in response["guard_events"]):
+            raise HTTPException(400, response["reply"])
         return self.handoff_detail(
             self.db.one("SELECT * FROM handoffs WHERE session_id=? ORDER BY created_at DESC LIMIT 1", (sid,))
         )
