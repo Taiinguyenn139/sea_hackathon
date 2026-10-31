@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from bank_tools.service import FIXTURES, canonical, ident, now
 from harness.agent.engine import Engine, event
+from harness.phone_identity import PhoneIdentity
 
 
 def token_hash(value):
@@ -20,6 +21,7 @@ class Harness:
         self.db = db
         self.settings = settings
         self.engine = Engine(db, settings)
+        self.phone_identity = PhoneIdentity(db)
 
     def telegram_customer(self, target, name):
         """Resolve an explicit bank link or create a private prospect identity."""
@@ -43,7 +45,19 @@ class Harness:
         return bool(session["verified"]) or self.db.one(
             "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
             (session["customer_id"], session["channel"], session["external_id"]),
+        ) is not None or self.db.one(
+            "SELECT session_id FROM phone_sessions WHERE session_id=? AND customer_id=?",
+            (session["id"], session["customer_id"]),
         ) is not None
+
+    def identity_status(self, session):
+        if session["verified"]:
+            return "verified"
+        if self.can_chat(session):
+            return "identified" if self.db.one(
+                "SELECT id FROM customer_profiles WHERE id=?", (session["customer_id"],)
+            ) else "guest"
+        return "unverified"
 
     def new_session(self, profile, mode="harness", channel="web", external_id=None):
         guest = channel == "telegram" and self.db.one(
@@ -52,18 +66,28 @@ class Harness:
         ) is not None
         if profile not in {p["id"] for p in FIXTURES["customers"]} and not guest:
             raise HTTPException(400, "Unknown demo profile")
+        return self._create_session(profile, mode, channel, external_id)
+
+    def phone_session(self, challenge, code):
+        customer = self.phone_identity.confirm(challenge, code)
+        return self._create_session(customer, phone_authenticated=True)
+
+    def _create_session(self, profile, mode="harness", channel="web", external_id=None, phone_authenticated=False):
         self.engine.memory.flush(profile)
         sid = "s_" + secrets.token_hex(12)
         token = secrets.token_urlsafe(32)
-        self.db.execute(
-            "INSERT INTO sessions(id,customer_id,channel,external_id,mode,token_hash,created_at) VALUES(?,?,?,?,?,?,?)",
-            (sid, profile, channel, external_id or sid, mode, token_hash(token), now()),
-        )
+        with self.db.transaction() as c:
+            c.execute(
+                "INSERT INTO sessions(id,customer_id,channel,external_id,mode,token_hash,created_at) VALUES(?,?,?,?,?,?,?)",
+                (sid, profile, channel, external_id or sid, mode, token_hash(token), now()),
+            )
+            if phone_authenticated:
+                c.execute("INSERT INTO phone_sessions VALUES(?,?)", (sid, profile))
         return {
             "session_id": sid,
             "session_token": token,
-            "identity_status": "guest" if guest else "unverified",
-            "brief": {"redacted": True},
+            "identity_status": self.identity_status(self.session(sid)),
+            "brief": self.engine.memory.brief(profile) if phone_authenticated else {"redacted": True},
         }
 
     def session(self, sid):
@@ -198,6 +222,8 @@ class Harness:
             self.engine.checkpointer.delete_thread(sid)
         tables = [
             "sessions",
+            "phone_sessions",
+            "phone_challenges",
             "turns",
             "facts",
             "tool_calls",

@@ -1,8 +1,66 @@
 import { expect, test } from "@playwright/test";
 
+test("phone confirmation restores Telegram context before enabling web chat", async ({ page }, testInfo) => {
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname.replace("/api", "");
+    const body = route.request().postDataJSON();
+    if (path === "/demo/profiles") return route.fulfill({ json: { profiles: [{ id: "hoa", name: "Hoa", dob: "1988-05-12" }] } });
+    if (path === "/auth/phone/start") {
+      expect(body.phone).toBe("0901234567");
+      return route.fulfill({ json: { challenge_id: "test-phone-challenge", expires_in: 600 } });
+    }
+    if (path === "/auth/phone/confirm") {
+      expect(body.challenge_id).toBe("test-phone-challenge");
+      if (body.code !== "654321") return route.fulfill({ status: 400, json: { detail: "Mã xác nhận không hợp lệ hoặc đã hết hạn." } });
+      return route.fulfill({ json: {
+        session_id: "phone-session", session_token: "phone-capability", identity_status: "identified",
+        brief: { customer_id: "customer-test", name: "Khách từ Telegram", phone: "+84901234567",
+          needs: [{ id: "income", key: "income", value: "40000000", unit: "đồng", source_type: "customer", channel: "telegram" }] },
+      } });
+    }
+    if (path.endsWith("/turns")) return route.fulfill({ json: { items: [] } });
+    if (path.endsWith("/messages")) {
+      expect(route.request().headers().authorization).toBe("Bearer phone-capability");
+      return route.fulfill({ json: { session_id: "phone-session", reply: "Dựa trên nhu cầu đã trao đổi qua Telegram, hạn mức thẻ tham khảo đến 100 triệu đồng.", used_fact_ids: [], guard_events: [] } });
+    }
+    return route.fulfill({ status: 404, json: { detail: "Not found" } });
+  });
+  await page.goto("/chat");
+  await page.getByRole("button", { name: "Tiếp tục bằng số điện thoại" }).click();
+  await page.getByLabel("Số điện thoại", { exact: true }).fill("0901234567");
+  await page.getByRole("button", { name: "Nhận mã qua Telegram" }).click();
+  const composer = page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" });
+  await expect(composer).toBeDisabled();
+  await page.getByLabel("Mã xác nhận", { exact: true }).fill("111111");
+  await page.getByRole("button", { name: "Xác nhận và tiếp tục" }).click();
+  await expect(page.getByRole("alert")).toContainText("không hợp lệ");
+  await expect(composer).toBeDisabled();
+  await page.getByLabel("Mã xác nhận", { exact: true }).fill("654321");
+  await page.getByRole("button", { name: "Xác nhận và tiếp tục" }).click();
+  await expect(composer).toBeEnabled();
+  await expect(page.locator("#dob")).toHaveCount(0);
+  await page.getByRole("button", { name: "Hiện thông tin hỗ trợ" }).click();
+  await page.getByText("Thông tin đã ghi nhận từ Telegram", { exact: true }).click();
+  await expect(page.locator(".phone-context")).toContainText("40.000.000");
+  await composer.fill("Tiếp tục tư vấn thẻ tín dụng");
+  await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
+  await expect(page.getByRole("log")).toContainText("100 triệu đồng");
+  await page.screenshot({ path: testInfo.outputPath("phone-context-desktop.png"), fullPage: true });
+});
+
+test("phone onboarding fits a narrow screen", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.route("**/api/**", (route) => route.fulfill({ json: { profiles: [] } }));
+  await page.goto("/chat");
+  await page.getByRole("button", { name: "Tiếp tục bằng số điện thoại" }).click();
+  await expect(page.getByLabel("Số điện thoại", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
+  await page.screenshot({ path: testInfo.outputPath("phone-login-mobile.png"), fullPage: true });
+});
+
 test("customer verifies before chat; retry reuses message id and displays real reply", async ({
   page,
-}) => {
+}, testInfo) => {
   let verified = false;
   const messageIds: string[] = [];
   await page.route("**/api/**", async (route) => {
@@ -72,6 +130,8 @@ test("customer verifies before chat; retry reuses message id and displays real r
   await page.getByRole("button", { name: "Thử lại", exact: true }).click();
   await expect(page.getByRole("log")).toContainText("Mình đã ghi nhận");
   expect(messageIds[0]).toBe(messageIds[1]);
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({ path: testInfo.outputPath("chat-conversation.png"), fullPage: true, animations: "disabled" });
 });
 
 test("staff auth gates private content and incomplete benchmark is not presented as complete", async ({
@@ -148,7 +208,13 @@ for (const [width, height] of [
         name: "Chúng tôi có thể hỗ trợ gì cho bạn?",
       }),
     ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Dành cho chuyên viên" })).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
+    await page.screenshot({
+      path: testInfo.outputPath(`chat-${width}.png`),
+      fullPage: true,
+      animations: "disabled",
+    });
     expect(await page.locator(".conversation-scroll").evaluate(
       (element) => element.scrollHeight <= element.clientHeight,
     )).toBe(true);
@@ -157,10 +223,6 @@ for (const [width, height] of [
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true);
-    await page.screenshot({
-      path: testInfo.outputPath(`chat-${width}.png`),
-      fullPage: true,
-    });
     const toggle = page.getByRole("button", { name: /thông tin hỗ trợ/ });
     const wasExpanded = await toggle.getAttribute("aria-expanded") === "true";
     await toggle.click();
@@ -168,6 +230,7 @@ for (const [width, height] of [
     if (wasExpanded) await expect(page.getByRole("complementary", { name: "Thông tin hỗ trợ" })).toBeHidden();
     else await expect(page.getByRole("complementary", { name: "Thông tin hỗ trợ" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`chat-context-${width}.png`), fullPage: true, animations: "disabled" });
   });
 
 test("staff queue uses real counts and supports search with reset", async ({ page }, testInfo) => {
@@ -186,7 +249,7 @@ test("staff queue uses real counts and supports search with reset", async ({ pag
   await expect(page.getByRole("button", { name: /Tư vấn hồ sơ vay mua nhà/ })).toBeVisible();
   await expect(page.getByLabel("Tổng quan công việc")).toContainText("1");
   await page.evaluate(() => document.fonts.ready);
-  await page.screenshot({ path: testInfo.outputPath("staff-desktop.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("staff-desktop.png"), fullPage: true, animations: "disabled" });
   await page.getByRole("searchbox", { name: "Tìm yêu cầu hỗ trợ" }).fill("hoa");
   await expect(page.getByRole("button", { name: /Tư vấn hồ sơ vay mua nhà/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Hướng dẫn mở thẻ/ })).toHaveCount(0);
@@ -202,8 +265,8 @@ test("staff login preview and reduced motion preference", async ({ page }, testI
   await page.goto("/staff");
   await expect(page.getByRole("heading", { name: "Chào mừng trở lại" })).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-  await page.screenshot({ path: testInfo.outputPath("staff-login.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("staff-login.png"), fullPage: true, animations: "disabled" });
   await page.route("**/api/demo/profiles", (route) => route.fulfill({ json: { profiles: [] } }));
   await page.goto("/chat");
-  await expect(page.locator(".visual-tile").first()).toHaveCSS("animation-name", "none");
+  await expect(page.locator(".illustrated-card")).toHaveCSS("animation-name", "none");
 });

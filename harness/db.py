@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,customer_id TEXT,channel TEXT,external_id TEXT,mode TEXT,token_hash TEXT UNIQUE,verified INTEGER DEFAULT 0,status TEXT DEFAULT 'active',created_at TEXT);
 CREATE TABLE IF NOT EXISTS identity_links(channel TEXT,external_id TEXT,customer_id TEXT,PRIMARY KEY(channel,external_id));
 CREATE TABLE IF NOT EXISTS guest_customers(id TEXT PRIMARY KEY,channel TEXT NOT NULL,external_id TEXT NOT NULL,name TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(channel,external_id));
+CREATE TABLE IF NOT EXISTS customer_profiles(id TEXT PRIMARY KEY,phone_e164 TEXT NOT NULL UNIQUE,telegram_id TEXT NOT NULL UNIQUE,name TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS phone_challenges(id TEXT PRIMARY KEY,customer_id TEXT,phone_e164 TEXT NOT NULL,telegram_target TEXT,code_hash TEXT NOT NULL,expires REAL NOT NULL,attempts INTEGER DEFAULT 0,consumed_at REAL,created_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS phone_sessions(session_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY,session_id TEXT,client_id TEXT,text TEXT,reply TEXT,result TEXT,created_at TEXT,UNIQUE(session_id,client_id));
 CREATE TABLE IF NOT EXISTS facts(id TEXT,customer_id TEXT,key TEXT,value TEXT,unit TEXT,source_type TEXT,source_ref TEXT,channel TEXT,observed_at TEXT,valid_until TEXT,status TEXT,confidence REAL,PRIMARY KEY(id,customer_id));
 CREATE TABLE IF NOT EXISTS tool_calls(id TEXT PRIMARY KEY,session_id TEXT,tool TEXT,args TEXT,result TEXT,created_at TEXT);
@@ -21,7 +24,7 @@ CREATE TABLE IF NOT EXISTS callbacks(id TEXT PRIMARY KEY,customer_id TEXT,sessio
 CREATE TABLE IF NOT EXISTS auth_attempts(identity TEXT,source TEXT,at REAL);
 CREATE TABLE IF NOT EXISTS staff_sessions(token_hash TEXT PRIMARY KEY,csrf TEXT,expires REAL);
 CREATE TABLE IF NOT EXISTS provider_events(id TEXT PRIMARY KEY,channel TEXT,payload TEXT,status TEXT,received_at REAL,error TEXT);
-CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,channel TEXT,target TEXT,text TEXT,status TEXT,receipt TEXT,attempts INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,channel TEXT,target TEXT,text TEXT,status TEXT,receipt TEXT,attempts INTEGER DEFAULT 0,reply_markup TEXT);
 CREATE TABLE IF NOT EXISTS faults(tool TEXT PRIMARY KEY,mode TEXT,count INTEGER);
 """
 
@@ -43,7 +46,9 @@ class Database:
                 "BEGIN IMMEDIATE; ALTER TABLE handoffs RENAME TO handoffs_v1; CREATE TABLE handoffs(id TEXT PRIMARY KEY,session_id TEXT,status TEXT,summary TEXT,receipt TEXT,created_at TEXT); INSERT INTO handoffs SELECT * FROM handoffs_v1; DROP TABLE handoffs_v1; COMMIT;"
             )
         self.conn.executescript(SCHEMA)
-        self.conn.execute("INSERT OR REPLACE INTO settings VALUES('schema_version','3')")
+        if "reply_markup" not in {row["name"] for row in self.conn.execute("PRAGMA table_info(outbox)")}:
+            self.conn.execute("ALTER TABLE outbox ADD COLUMN reply_markup TEXT")
+        self.conn.execute("INSERT OR REPLACE INTO settings VALUES('schema_version','4')")
         self.conn.execute("INSERT OR IGNORE INTO settings VALUES('clock','\"2026-10-31\"')")
         self.conn.execute("INSERT OR IGNORE INTO settings VALUES('playbook','\"v1\"')")
 

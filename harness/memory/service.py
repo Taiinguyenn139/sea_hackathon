@@ -195,6 +195,8 @@ class Memory:
         from bank_tools.service import FIXTURES
 
         return next((x for x in FIXTURES["customers"] if x["id"] == customer), None) or self.db.one(
+            "SELECT id,name,NULL AS cif FROM customer_profiles WHERE id=?", (customer,)
+        ) or self.db.one(
             "SELECT id,name,NULL AS cif FROM guest_customers WHERE id=?", (customer,)
         )
 
@@ -204,11 +206,13 @@ class Memory:
         if not profile:
             raise ValueError("Unknown customer")
         facts = self.facts(customer)
+        phone = self.db.one("SELECT phone_e164 FROM customer_profiles WHERE id=?", (customer,))
         return {
             "redacted": False,
             "customer_id": customer,
             "name": profile["name"],
             "cif": profile["cif"],
+            "phone": phone["phone_e164"] if phone else None,
             "facts": facts,
             "needs": [f for f in facts if f["source_type"] == "customer" and f["status"] == "active"],
             "conflicts": [f for f in facts if f["status"] == "conflicted"],
