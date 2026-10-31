@@ -256,11 +256,16 @@ def create_app(settings=None):
                 for p in FIXTURES["customers"]
             ],
             "fictional": True,
+            "demo_phone_identity": settings.demo_phone_identity,
         }
 
     @app.post("/sessions")
     def create(body: SessionInput):
         return harness.new_session(body.demo_profile, body.mode)
+
+    @app.post("/demo/phone/session")
+    def demo_phone_session(body: PhoneLoginInput):
+        return harness.demo_phone_session(body.phone)
 
     @app.get("/sessions/{sid}")
     def get_session(sid: str, request: Request):
