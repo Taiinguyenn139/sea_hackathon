@@ -22,9 +22,9 @@ import {
   loadTurns,
   errorMessage,
   request,
+  streamReply,
   type ChatSession,
   type Profile,
-  type Reply,
   type Turn,
 } from "../api";
 import { BrandMark, ErrorBanner, Spinner } from "../ui";
@@ -75,6 +75,9 @@ export function CustomerChat() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
+  const [streamStatus, setStreamStatus] = useState(
+    "Trợ lý đang xử lý yêu cầu…",
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [lastFailed, setLastFailed] = useState<{
@@ -86,12 +89,20 @@ export function CustomerChat() {
   const [promptNotice, setPromptNotice] = useState("");
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const activeStream = useRef<AbortController | null>(null);
   const verified = ["verified", "identified"].includes(
     session?.identity_status ?? "",
   );
   const waiting =
     Boolean(session?.handoff_id) && session?.status !== "completed";
   const isHome = view === "home" || !session;
+  useEffect(() => {
+    setPending(false);
+    return () => {
+      activeStream.current?.abort();
+      activeStream.current = null;
+    };
+  }, [session?.session_id]);
   function navigate(next: "home" | "conversation") {
     setView(next);
     window.location.hash = next;
@@ -204,26 +215,67 @@ export function CustomerChat() {
     }
   }
   async function send(text = draft, id: string = crypto.randomUUID()) {
-    if (!session || !text.trim() || pending || waiting) return;
+    if (
+      !session ||
+      !text.trim() ||
+      pending ||
+      waiting ||
+      loading ||
+      activeStream.current
+    )
+      return;
+    const controller = new AbortController();
+    activeStream.current = controller;
+    const assistantId = `stream:${id}`;
+    const userId = `user:${id}`;
+    setTurns((prev) => [
+      ...prev.filter((turn) => turn.id !== assistantId),
+      ...(!prev.some((turn) => turn.id === userId)
+        ? [{ id: userId, role: "user", text: text.trim() }]
+        : []),
+      { id: assistantId, role: "assistant", text: "" },
+    ]);
     setPending(true);
+    setStreamStatus("Trợ lý đang xử lý yêu cầu…");
     setError("");
     setLastFailed(null);
+    setDraft("");
+    setPromptNotice("");
     try {
-      const data = await request<Reply>(
-        `/sessions/${session.session_id}/messages`,
-        {
-          method: "POST",
-          body: { text: text.trim(), client_message_id: id },
-          token: session.session_token,
+      const data = await streamReply(
+        session,
+        text.trim(),
+        id,
+        (event) => {
+          if (controller.signal.aborted) return;
+          if (event.type === "text") {
+            setTurns((prev) =>
+              prev.map((turn) =>
+                turn.id === assistantId ? { ...turn, text: event.text } : turn,
+              ),
+            );
+          } else {
+            const labels: Record<string, string> = {
+              preparing: "Đang tiếp nối cuộc trò chuyện…",
+              planning: "Đang tìm hiểu yêu cầu của bạn…",
+              tools: "Đang tra cứu thông tin phù hợp…",
+              drafting: "Trợ lý đang trả lời…",
+              checking: "Đang kiểm tra thông tin trả lời…",
+              backup: "Đang thử lại phản hồi…",
+            };
+            setStreamStatus(
+              labels[event.stage] ?? "Trợ lý đang xử lý yêu cầu…",
+            );
+          }
         },
+        controller.signal,
       );
-      setTurns((prev) => [
-        ...prev,
-        { role: "user", text: text.trim() },
-        { role: "assistant", text: data.reply },
-      ]);
-      setDraft("");
-      setPromptNotice("");
+      if (controller.signal.aborted) return;
+      setTurns((prev) =>
+        prev.map((turn) =>
+          turn.id === assistantId ? { ...turn, text: data.reply } : turn,
+        ),
+      );
       if (data.identity_status || data.user_id || data.handoff_id || data.brief)
         save({
           ...session,
@@ -234,10 +286,15 @@ export function CustomerChat() {
           status: data.handoff_id ? "waiting_human" : session.status,
         });
     } catch (e) {
+      if (controller.signal.aborted) return;
+      setTurns((prev) => prev.filter((turn) => turn.id !== assistantId));
       setError(errorMessage(e));
       setLastFailed({ text, id });
     } finally {
-      setPending(false);
+      if (activeStream.current === controller) {
+        activeStream.current = null;
+        setPending(false);
+      }
     }
   }
   async function handoff() {
@@ -314,7 +371,11 @@ export function CustomerChat() {
       >
         {!isHome && (
           <nav className="chat-navigation" aria-label="Điều hướng hội thoại">
-            <a href="#home" className="home-return" aria-label="Về màn hình chính">
+            <a
+              href="#home"
+              className="home-return"
+              aria-label="Về màn hình chính"
+            >
               <ArrowLeft size={17} /> Trang chủ
             </a>
             <span>Cuộc trò chuyện của bạn</span>
@@ -372,9 +433,16 @@ export function CustomerChat() {
           <div className="chat-feedback">
             <ErrorBanner
               message={error}
-              onRetry={lastFailed
-                ? () => { navigate("conversation"); void send(lastFailed.text, lastFailed.id); }
-                : !profiles.length ? loadProfiles : undefined}
+              onRetry={
+                lastFailed
+                  ? () => {
+                      navigate("conversation");
+                      void send(lastFailed.text, lastFailed.id);
+                    }
+                  : !profiles.length
+                    ? loadProfiles
+                    : undefined
+              }
             />
           </div>
         )}
@@ -444,21 +512,35 @@ export function CustomerChat() {
             </section>
           )}
           {isHome && session && (
-            <section className="session-resume" aria-label="Cuộc trò chuyện hiện tại">
-              <div className="resume-icon"><MessageCircle size={24} /></div>
+            <section
+              className="session-resume"
+              aria-label="Cuộc trò chuyện hiện tại"
+            >
+              <div className="resume-icon">
+                <MessageCircle size={24} />
+              </div>
               <div>
                 <span className="section-index">TIẾP NỐI CUỘC TRÒ CHUYỆN</span>
-                <h3>{waiting ? "Yêu cầu của bạn đang chờ chuyên viên." : "Sẵn sàng tiếp tục khi bạn muốn."}</h3>
+                <h3>
+                  {waiting
+                    ? "Yêu cầu của bạn đang chờ chuyên viên."
+                    : "Sẵn sàng tiếp tục khi bạn muốn."}
+                </h3>
                 <p>Nội dung hội thoại và câu hỏi đang soạn vẫn được giữ lại.</p>
               </div>
-              <button className="button primary" onClick={() => navigate("conversation")}>
+              <button
+                className="button primary"
+                onClick={() => navigate("conversation")}
+              >
                 Tiếp tục trò chuyện <ArrowRight size={16} />
               </button>
             </section>
           )}
           {!isHome && !turns.length && !loading && (
             <div className="conversation-empty">
-              <span className="resume-icon"><MessageCircle size={26} /></span>
+              <span className="resume-icon">
+                <MessageCircle size={26} />
+              </span>
               <h2>Bạn muốn trao đổi điều gì?</h2>
               <p>Gửi câu hỏi để bắt đầu. Trợ lý đã sẵn sàng hỗ trợ bạn.</p>
             </div>
@@ -466,25 +548,30 @@ export function CustomerChat() {
           {!isHome && loading && <Spinner label="Đang khôi phục hội thoại…" />}
           {!isHome && !!turns.length && (
             <div className="messages" role="log" aria-label="Lịch sử hội thoại">
-              {turns.map((turn, index) => (
-                <article
-                  className={`message ${turn.role === "user" ? "from-user" : "from-assistant"}`}
-                  key={turn.turn_id ?? turn.id ?? index}
-                >
-                  {turn.role !== "user" && <BrandMark small />}
-                  <div>
-                    <div className="message-label">
-                      {turn.role === "user" ? "Bạn" : "Trợ lý Bankwise"}
+              {turns
+                .filter((turn) => turn.text)
+                .map((turn, index) => (
+                  <article
+                    className={`message ${turn.role === "user" ? "from-user" : "from-assistant"}`}
+                    key={turn.turn_id ?? turn.id ?? index}
+                  >
+                    {turn.role !== "user" && <BrandMark small />}
+                    <div>
+                      <div className="message-label">
+                        {turn.role === "user" ? "Bạn" : "Trợ lý Bankwise"}
+                      </div>
+                      <div className="message-bubble">{turn.text}</div>
+                      {turn.role === "user" && (
+                        <span className="delivered">
+                          <CheckCheck size={13} />{" "}
+                          {turn.id === `user:${lastFailed?.id}`
+                            ? "Chưa hoàn tất"
+                            : "Đã gửi"}
+                        </span>
+                      )}
                     </div>
-                    <div className="message-bubble">{turn.text}</div>
-                    {turn.role === "user" && (
-                      <span className="delivered">
-                        <CheckCheck size={13} /> Đã gửi
-                      </span>
-                    )}
-                  </div>
-                </article>
-              ))}
+                  </article>
+                ))}
             </div>
           )}
           {!isHome && pending && session && (
@@ -495,7 +582,7 @@ export function CustomerChat() {
                 <i />
                 <i />
               </span>
-              <span>Trợ lý đang xử lý yêu cầu…</span>
+              <span>{streamStatus}</span>
             </div>
           )}
           {!isHome && waiting && (
@@ -517,108 +604,109 @@ export function CustomerChat() {
           )}
           <div ref={end} />
         </div>
-        {(!isHome || !session) && <div className="composer-area">
-          {isHome && (
-            <div className="conversation-intro">
-              <span className="section-index">02 / KẾT NỐI</span>
-              <strong>Câu chuyện của bạn bắt đầu tại đây.</strong>
-              <span>
-                <ShieldCheck size={14} /> Có thể hỏi thông tin công khai
-              </span>
-            </div>
-          )}
-          {verified && !waiting && !pending && turns.length > 0 && (
-            <div
-              className="quick-prompts"
-              aria-label="Gợi ý tiếp tục hội thoại"
-            >
-              <button
-                onClick={() =>
-                  selectPrompt("Tôi muốn hỏi thêm về lãi suất sau ưu đãi.")
-                }
-              >
-                Lãi sau ưu đãi <ArrowRight size={13} />
-              </button>
-              <button
-                onClick={() =>
-                  selectPrompt("Tôi cần chuẩn bị những giấy tờ nào?")
-                }
-              >
-                Hồ sơ cần chuẩn bị <ArrowRight size={13} />
-              </button>
-            </div>
-          )}
-          {promptNotice && (
-            <p className="prompt-notice" role="status">
-              <Check size={14} />
-              {promptNotice}
-            </p>
-          )}
-          {!session && phoneLogin && (
-            <PhoneLogin
-              onCancel={() => setPhoneLogin(false)}
-              onSuccess={(next) => {
-                save(next);
-                setTurns([]);
-                setPhoneLogin(false);
-                setHint(
-                  "Đã kết nối hồ sơ từ Telegram. Bạn có thể tiếp tục nhu cầu đã trao đổi.",
-                );
-                setError("");
-                navigate("conversation");
-              }}
-            />
-          )}
-          {!session && !phoneLogin && (
-            <div className="phone-continuation">
-              <button
-                className="button secondary"
-                onClick={() => setPhoneLogin(true)}
-                disabled={pending}
-              >
-                Tiếp tục bằng số điện thoại <ArrowRight size={16} />
-              </button>
-            </div>
-          )}
-          {!session && !phoneLogin && (
-            <div className="onboarding-bar">
-              <div>
-                <span className="mini-label">THÔNG TIN KHÁCH HÀNG</span>
-                <label htmlFor="demo-profile">
-                  Chọn hồ sơ để bắt đầu hỗ trợ
-                </label>
+        {(!isHome || !session) && (
+          <div className="composer-area">
+            {isHome && (
+              <div className="conversation-intro">
+                <span className="section-index">02 / KẾT NỐI</span>
+                <strong>Câu chuyện của bạn bắt đầu tại đây.</strong>
+                <span>
+                  <ShieldCheck size={14} /> Có thể hỏi thông tin công khai
+                </span>
               </div>
-              <select
-                id="demo-profile"
-                value={profile}
-                onChange={(e) => setProfile(e.target.value)}
-                disabled={!profiles.length}
+            )}
+            {verified && !waiting && !pending && turns.length > 0 && (
+              <div
+                className="quick-prompts"
+                aria-label="Gợi ý tiếp tục hội thoại"
               >
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name ?? p.full_name ?? p.id}
-                    {p.phone ? ` · ${p.phone}` : ""}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="button primary"
-                onClick={start}
-                disabled={pending || !profiles.length}
-              >
-                {pending ? (
-                  <Spinner label="Đang mở…" />
-                ) : (
-                  <>
-                    Bắt đầu <ArrowRight size={16} />
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-          {session && !verified && (
-            <details className="identity-help">
-              <summary>Tiếp nối hồ sơ và đặt lịch</summary>
+                <button
+                  onClick={() =>
+                    selectPrompt("Tôi muốn hỏi thêm về lãi suất sau ưu đãi.")
+                  }
+                >
+                  Lãi sau ưu đãi <ArrowRight size={13} />
+                </button>
+                <button
+                  onClick={() =>
+                    selectPrompt("Tôi cần chuẩn bị những giấy tờ nào?")
+                  }
+                >
+                  Hồ sơ cần chuẩn bị <ArrowRight size={13} />
+                </button>
+              </div>
+            )}
+            {promptNotice && (
+              <p className="prompt-notice" role="status">
+                <Check size={14} />
+                {promptNotice}
+              </p>
+            )}
+            {!session && phoneLogin && (
+              <PhoneLogin
+                onCancel={() => setPhoneLogin(false)}
+                onSuccess={(next) => {
+                  save(next);
+                  setTurns([]);
+                  setPhoneLogin(false);
+                  setHint(
+                    "Đã kết nối hồ sơ từ Telegram. Bạn có thể tiếp tục nhu cầu đã trao đổi.",
+                  );
+                  setError("");
+                  navigate("conversation");
+                }}
+              />
+            )}
+            {!session && !phoneLogin && (
+              <div className="phone-continuation">
+                <button
+                  className="button secondary"
+                  onClick={() => setPhoneLogin(true)}
+                  disabled={pending}
+                >
+                  Tiếp tục bằng số điện thoại <ArrowRight size={16} />
+                </button>
+              </div>
+            )}
+            {!session && !phoneLogin && (
+              <div className="onboarding-bar">
+                <div>
+                  <span className="mini-label">THÔNG TIN KHÁCH HÀNG</span>
+                  <label htmlFor="demo-profile">
+                    Chọn hồ sơ để bắt đầu hỗ trợ
+                  </label>
+                </div>
+                <select
+                  id="demo-profile"
+                  value={profile}
+                  onChange={(e) => setProfile(e.target.value)}
+                  disabled={!profiles.length}
+                >
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name ?? p.full_name ?? p.id}
+                      {p.phone ? ` · ${p.phone}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="button primary"
+                  onClick={start}
+                  disabled={pending || !profiles.length}
+                >
+                  {pending ? (
+                    <Spinner label="Đang mở…" />
+                  ) : (
+                    <>
+                      Bắt đầu <ArrowRight size={16} />
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+            {session && !verified && (
+              <details className="identity-help">
+                <summary>Tiếp nối hồ sơ và đặt lịch</summary>
                 <p>
                   Bạn có thể trò chuyện ngay. Khi cần xem lịch sử hoặc đặt lịch,
                   gửi số điện thoại demo trong khung chat để kết nối hồ sơ.
@@ -628,62 +716,65 @@ export function CustomerChat() {
                     Số điện thoại demo đã chọn: {chosenProfile.phone}
                   </small>
                 )}
-            </details>
-          )}
-          <form
-            className="composer"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void send();
-            }}
-          >
-            <textarea
-              ref={input}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (
-                  e.key === "Enter" &&
-                  !e.shiftKey &&
-                  !e.nativeEvent.isComposing
-                ) {
-                  e.preventDefault();
-                  void send();
-                }
+              </details>
+            )}
+            <form
+              className="composer"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void send();
               }}
-              rows={2}
-              maxLength={4000}
-              disabled={!session || waiting || pending}
-              aria-label="Tin nhắn cho trợ lý"
-              placeholder={
-                !session
-                  ? "Bắt đầu phiên hỗ trợ để gửi tin nhắn…"
-                  : waiting
+            >
+              <textarea
+                ref={input}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    !e.shiftKey &&
+                    !e.nativeEvent.isComposing
+                  ) {
+                    e.preventDefault();
+                    void send();
+                  }
+                }}
+                rows={2}
+                maxLength={4000}
+                disabled={!session || waiting || pending || loading}
+                aria-label="Tin nhắn cho trợ lý"
+                placeholder={
+                  !session
+                    ? "Bắt đầu phiên hỗ trợ để gửi tin nhắn…"
+                    : waiting
                       ? "Chuyên viên sẽ tiếp nhận yêu cầu của bạn…"
                       : "Nhập câu hỏi cần hỗ trợ…"
-              }
-            />
-            <div className="composer-footer">
-              <span>
-                <Sparkles size={14} />{" "}
-                {verified
-                  ? "Enter để gửi · Shift + Enter để xuống dòng"
-                  : "Câu chuyện của bạn bắt đầu từ đây"}
-              </span>
-              <button
-                className="send-button"
-                disabled={!session || !draft.trim() || pending || waiting}
-                aria-label="Gửi tin nhắn"
-              >
-                <ArrowUp size={21} />
-              </button>
-            </div>
-          </form>
-          <p className="composer-disclaimer">
-            Không chia sẻ mật khẩu, PIN hoặc OTP. Đây là ngân hàng giả định; mọi
-            hồ sơ và sản phẩm đều hư cấu.
-          </p>
-        </div>}
+                }
+              />
+              <div className="composer-footer">
+                <span>
+                  <Sparkles size={14} />{" "}
+                  {verified
+                    ? "Enter để gửi · Shift + Enter để xuống dòng"
+                    : "Câu chuyện của bạn bắt đầu từ đây"}
+                </span>
+                <button
+                  className="send-button"
+                  disabled={
+                    !session || !draft.trim() || pending || waiting || loading
+                  }
+                  aria-label="Gửi tin nhắn"
+                >
+                  <ArrowUp size={21} />
+                </button>
+              </div>
+            </form>
+            <p className="composer-disclaimer">
+              Không chia sẻ mật khẩu, PIN hoặc OTP. Đây là ngân hàng giả định;
+              mọi hồ sơ và sản phẩm đều hư cấu.
+            </p>
+          </div>
+        )}
       </section>
       <aside
         className="context-rail"

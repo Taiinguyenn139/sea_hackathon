@@ -8,6 +8,7 @@ from typing import Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic_core import from_json
 
 from bank_tools.service import canonical
 
@@ -42,13 +43,13 @@ class DraftSuggestion(BaseModel):
     draft: str = Field(min_length=1, max_length=7999)
 
 
-def json_completion(settings, instruction, data, schema=None, *, purpose):
+def json_completion(settings, instruction, data, schema=None, *, purpose, on_delta=None):
     if not settings or settings.llm_backend != "openai":
         return None
-    return asyncio.run(_completion(settings, instruction, data, schema, purpose))
+    return asyncio.run(_completion(settings, instruction, data, schema, purpose, on_delta))
 
 
-def _record(purpose, model, attempt, status, started, category=None, usage=None):
+def _record(purpose, model, attempt, status, started, category=None, usage=None, streamed=False):
     metadata = {
         "purpose": purpose,
         "model": model,
@@ -58,6 +59,8 @@ def _record(purpose, model, attempt, status, started, category=None, usage=None)
     }
     if category:
         metadata["category"] = category
+    if streamed:
+        metadata["streamed"] = True
     if isinstance(usage, dict):
         metadata["usage"] = {
             k: v for k, v in usage.items()
@@ -80,7 +83,46 @@ def _http_failure(response):
     return "http_error", response.status_code in (403, 404, 408, 429) or response.status_code >= 500
 
 
-async def _completion(settings, instruction, data, schema, purpose):
+async def _read_stream(response, on_delta):
+    raw = ""
+    finish = None
+    done = False
+    usage = None
+    async for line in response.aiter_lines():
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            done = True
+            break
+        if not data:
+            continue
+        chunk = json.loads(data)
+        if chunk.get("usage"):
+            usage = chunk["usage"]
+        choices = chunk.get("choices", [])
+        if not choices:
+            continue
+        choice = choices[0]
+        finish = choice.get("finish_reason") or finish
+        delta = choice.get("delta", {}).get("content") or ""
+        if not isinstance(delta, str):
+            raise TypeError("Invalid streamed delta")
+        raw += delta
+        if len(raw) > 64000:
+            raise ValueError("Streamed JSON exceeds size limit")
+        try:
+            partial = from_json(raw, allow_partial="trailing-strings")
+        except ValueError:
+            continue
+        if isinstance(partial, dict) and isinstance(partial.get("draft"), str):
+            on_delta(partial["draft"])
+    if not done or finish != "stop":
+        raise ValueError("Incomplete streamed completion")
+    return {"choices": [{"message": {"content": raw}, "finish_reason": finish}], "usage": usage}
+
+
+async def _completion(settings, instruction, data, schema, purpose, on_delta):
     started = time.monotonic()
     deadline = started + settings.llm_call_budget_seconds
     models = (settings.openai_model, settings.openai_backup_model)
@@ -99,19 +141,31 @@ async def _completion(settings, instruction, data, schema, purpose):
             limit = remaining / (2 - index)
             try:
                 async with asyncio.timeout(limit):
-                    response = await client.post(
-                        "https://api.openai.com/v1/chat/completions",
-                        headers={"Authorization": "Bearer " + settings.openai_key},
-                        json={
-                            "model": model,
-                            "messages": [
-                                {"role": "system", "content": instruction},
-                                {"role": "user", "content": canonical(data)},
-                            ],
-                            "response_format": {"type": "json_object"},
-                        },
-                        timeout=limit,
-                    )
+                    payload: dict = {
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": instruction},
+                            {"role": "user", "content": canonical(data)},
+                        ],
+                        "response_format": {"type": "json_object"},
+                    }
+                    headers = {"Authorization": "Bearer " + settings.openai_key}
+                    if on_delta:
+                        payload.update(stream=True, stream_options={"include_usage": True})
+                        async with client.stream(
+                            "POST", "https://api.openai.com/v1/chat/completions",
+                            headers=headers, json=payload, timeout=limit,
+                        ) as response:
+                            if response.is_success:
+                                body = await _read_stream(response, on_delta)
+                            else:
+                                await response.aread()
+                    else:
+                        response = await client.post(
+                            "https://api.openai.com/v1/chat/completions",
+                            headers=headers, json=payload, timeout=limit,
+                        )
+                        body = response.json() if response.is_success else None
                     if not response.is_success:
                         category, retryable = _http_failure(response)
                         if response.status_code in (429, 503):
@@ -120,7 +174,6 @@ async def _completion(settings, instruction, data, schema, purpose):
                             except ValueError:
                                 delay = 0.0
                     else:
-                        body = response.json()
                         choice = body["choices"][0]
                         if choice.get("finish_reason", "stop") != "stop":
                             raise ValueError("Incomplete completion")
@@ -128,7 +181,10 @@ async def _completion(settings, instruction, data, schema, purpose):
                         if not isinstance(result, dict):
                             raise ValueError("JSON object required")
                         result = schema.model_validate(result).model_dump() if schema else result
-                        _record(purpose, model, attempt, "success", attempt_started, usage=body.get("usage"))
+                        _record(
+                            purpose, model, attempt, "success", attempt_started,
+                            usage=body.get("usage"), streamed=on_delta is not None,
+                        )
                         return result
             except (TimeoutError, httpx.TimeoutException):
                 category = "timeout"
@@ -142,6 +198,8 @@ async def _completion(settings, instruction, data, schema, purpose):
             if not retryable or index == 1 or delay >= deadline - time.monotonic():
                 break
             _record(purpose, model, attempt, "failover", started, category)
+            if on_delta:
+                on_delta("")
             if delay:
                 await asyncio.sleep(delay)
     _record(purpose, models[-1], "none", "exhausted", started, category)
