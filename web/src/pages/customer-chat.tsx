@@ -540,6 +540,13 @@ export function CustomerChat() {
               {hint}
             </p>
           )}
+          {!isHome && session?.telegram_url && (
+            <p className="success-message">
+              <a href={session.telegram_url} target="_blank" rel="noopener noreferrer">
+                Tiếp tục trên Telegram
+              </a>{" "}— chia sẻ cùng số điện thoại để dùng chung ngữ cảnh.
+            </p>
+          )}
           <div ref={end} />
         </div>
         {(!isHome || !session) && <div className="composer-area">
@@ -588,7 +595,7 @@ export function CustomerChat() {
                 setTurns([]);
                 setPhoneLogin(false);
                 setHint(
-                  "Đã kết nối hồ sơ từ Telegram. Bạn có thể tiếp tục nhu cầu đã trao đổi.",
+                  "Đã mở hồ sơ theo số điện thoại. Ngữ cảnh được dùng chung trên web và Telegram.",
                 );
                 setError("");
                 navigate("conversation");
@@ -598,7 +605,7 @@ export function CustomerChat() {
           {!session && !phoneLogin && (
             <div className="phone-continuation">
               <button
-                className="button secondary"
+                className="button primary"
                 onClick={() => setPhoneLogin(true)}
                 disabled={pending}
               >
@@ -609,9 +616,9 @@ export function CustomerChat() {
           {!session && !phoneLogin && (
             <div className="onboarding-bar">
               <div>
-                <span className="mini-label">THÔNG TIN KHÁCH HÀNG</span>
+                <span className="mini-label">HOẶC THỬ DỮ LIỆU GIẢ LẬP</span>
                 <label htmlFor="demo-profile">
-                  Chọn hồ sơ để bắt đầu hỗ trợ
+                  Hồ sơ demo (không dùng để liên kết Telegram)
                 </label>
               </div>
               <select
@@ -846,7 +853,7 @@ export function CustomerChat() {
         </div>
         {session?.identity_status === "identified" && session.brief && (
           <details className="phone-context">
-            <summary>Thông tin đã ghi nhận từ Telegram</summary>
+            <summary>Thông tin đã ghi nhớ giữa các kênh</summary>
             <BriefView brief={session.brief} />
           </details>
         )}

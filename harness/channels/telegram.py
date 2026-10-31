@@ -118,28 +118,37 @@ class Dispatcher:
                         self.harness.engine.memory.flush(customer)
                         self.db.execute("UPDATE sessions SET status='ended' WHERE id=?", (session["id"],))
                         session = None
-                    new_session = not session
                     if not session:
                         created = self.harness.new_session(customer, "harness", "telegram", target)
                         session = self.harness.session(created["session_id"])
                     if late:
                         reply = "Tin nhắn đến trễ so với cuộc trao đổi hiện tại. Anh/chị vui lòng gửi lại thông tin cần cập nhật để em xác nhận."
                     elif isinstance(contact, dict):
-                        # Contact binding is a separate proof path. Existing
-                        # fixture sessions must first match their bound demo phone.
-                        if not self.harness.can_chat(session):
-                            raise HTTPException(403, "Vui lòng gửi số điện thoại demo trong chat để nhận diện phiên này trước.")
                         profile = self.harness.engine.memory.profile(customer)
-                        self.harness.phone_identity.bind(
+                        linked_customer = self.harness.phone_identity.bind(
                             customer, profile["name"], target, contact, message.get("from", {}).get("id")
                         )
+                        if linked_customer != customer:
+                            self.db.execute("UPDATE sessions SET status='ended' WHERE id=?", (session["id"],))
+                            customer = linked_customer
+                            created = self.harness._create_session(customer, channel="telegram", external_id=target,
+                                                                   phone_authenticated=True)
+                            session = self.harness.session(created["session_id"])
                         reply = (
                             "Đã lưu số điện thoại và giữ lại thông tin anh/chị đã chia sẻ. "
-                            "Anh/chị có thể dùng số này để tiếp tục hội thoại trên website."
+                            "Anh/chị có thể bắt đầu chat ngay: muốn tìm hiểu vay mua nhà, vay tiêu dùng hay thẻ tín dụng? "
+                            "Khi mở website, dùng cùng số điện thoại để tiếp tục ngữ cảnh này."
                         )
                         markup = {"remove_keyboard": True}
                     elif session["status"] == "waiting_human":
                         reply = "Chuyên viên đang tiếp nhận yêu cầu. Em sẽ tiếp tục khi chuyên viên hoàn tất."
+                    elif not self.db.one("SELECT id FROM customer_profiles WHERE id=?", (customer,)):
+                        reply = (
+                            "Chào anh/chị! Để bắt đầu tư vấn sản phẩm và giữ ngữ cảnh giữa Telegram với website, "
+                            "anh/chị vui lòng bấm Chia sẻ số điện thoại bên dưới. "
+                            "Hồ sơ cá nhân sẽ được tạo tự động, không cần chọn hồ sơ demo."
+                        )
+                        markup = PHONE_KEYBOARD
                     elif start or command == "/phone":
                         reply = (
                             "Chào anh/chị! Em có thể tư vấn vay mua nhà, vay tiêu dùng và thẻ tín dụng. "
@@ -150,16 +159,6 @@ class Dispatcher:
                             session["id"], text, row["id"], "telegram:" + target,
                             input_checked=payload.get("input_guard_version") == VERSION,
                         )["reply"]
-                    if self.harness.can_chat(session) and session["status"] == "active" and not contact and not late and (
-                        start or command == "/phone" or new_session
-                    ) and not self.db.one(
-                        "SELECT id FROM customer_profiles WHERE id=?", (customer,)
-                    ):
-                        reply += (
-                            "\n\nAnh/chị có thể chia sẻ số điện thoại để tiếp tục hội thoại trên website "
-                            "và giữ các thông tin đã trao đổi."
-                        )
-                        markup = PHONE_KEYBOARD
                     self.reply(row["id"], target, reply, markup)
                     self.db.set("telegram_last:" + target, max(previous, stamp))
                     self.db.execute("UPDATE provider_events SET status='processed',error=NULL WHERE id=?", (row["id"],))

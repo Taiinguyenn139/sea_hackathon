@@ -84,6 +84,7 @@ export type Profile = {
   label?: string;
 };
 export type ChatSession = {
+  telegram_url?: string;
   session_id: string;
   user_id?: string;
   session_token: string;

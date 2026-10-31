@@ -240,6 +240,13 @@ def create_app(settings=None):
             "handoff_id": h["id"] if h else None,
         }
 
+    @app.post("/auth/phone/login")
+    def phone_demo_login(body: PhoneLoginInput):
+        customer = harness.phone_identity.demo_customer(body.phone)
+        result = harness._create_session(customer, phone_authenticated=True)
+        result["telegram_url"] = "https://t.me/" + settings.telegram_bot_username
+        return result
+
     @app.post("/auth/phone/start")
     def phone_start(body: PhoneLoginInput, request: Request, tasks: BackgroundTasks):
         result = harness.phone_identity.begin(body.phone, request.client.host if request.client else "unknown")

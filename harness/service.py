@@ -26,12 +26,12 @@ class Harness:
         self.phone_identity = PhoneIdentity(db)
 
     def telegram_customer(self, target, name):
-        """Resolve an explicit bank link or create a private prospect identity."""
+        """Use a private customer even when an old admin link points at a demo."""
         with self.db.transaction() as c:
             link = c.execute(
                 "SELECT customer_id FROM identity_links WHERE channel='telegram' AND external_id=?", (target,)
             ).fetchone()
-            if link:
+            if link and not get_profile(link["customer_id"]):
                 return link["customer_id"]
             customer = ident("guest_", ["telegram", target])
             display_name = name.strip()[:100] if isinstance(name, str) and name.strip() else "Khách Telegram"
@@ -69,7 +69,12 @@ class Harness:
             "SELECT id FROM guest_customers WHERE id=? AND channel=? AND external_id=?",
             (profile, channel, external_id),
         ) is not None
-        if not identity and not guest:
+        linked = channel == "telegram" and self.db.one(
+            "SELECT p.id FROM customer_profiles p JOIN identity_links l ON l.customer_id=p.id "
+            "WHERE l.channel='telegram' AND l.external_id=? AND p.id=? AND p.telegram_id=?",
+            (external_id, profile, external_id),
+        ) is not None
+        if not identity and not guest and not linked:
             raise HTTPException(400, "Unknown demo profile")
         return self._create_session(profile, mode, channel, external_id)
 
@@ -85,6 +90,12 @@ class Harness:
         return self._create_session(customer, phone_authenticated=True)
 
     def _create_session(self, profile, mode="harness", channel="web", external_id=None, phone_authenticated=False):
+        if channel == "telegram" and self.db.one(
+            "SELECT p.id FROM customer_profiles p JOIN identity_links l ON l.customer_id=p.id "
+            "WHERE l.channel='telegram' AND l.external_id=? AND p.id=? AND p.telegram_id=?",
+            (external_id, profile, external_id),
+        ):
+            phone_authenticated = True
         self.engine.memory.flush(profile)
         sid = "s_" + secrets.token_hex(12)
         token = secrets.token_urlsafe(32)

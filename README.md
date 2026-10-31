@@ -26,8 +26,9 @@ Backend `rules` chạy không cần API key. Telegram và backend LLM cần cred
 qua kho secret, không đưa giá trị vào Git hoặc chat.
 
 [Cấu hình Telegram](docs/telegram.md): tạo bot, nạp credential và đăng ký webhook.
-Khách mới có hồ sơ riêng và chat ngay; chia sẻ số điện thoại để tiếp tục cùng
-ngữ cảnh trên web. Liên kết hồ sơ demo là tùy chọn. Script kiểm tra kết
+Khách mới chia sẻ số điện thoại trên Telegram rồi chat ngay. Trên web chỉ cần
+nhập cùng số để dùng chung ngữ cảnh, không cần OTP hay liên kết demo thủ công.
+Có thể bắt đầu từ kênh nào cũng được; đây là cơ chế truy cập đơn giản dành cho demo. Script kiểm tra kết
 nối và đăng ký webhook mà không in credential.
 
 ## Kiểm tra an toàn đầu vào

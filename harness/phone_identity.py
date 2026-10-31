@@ -1,4 +1,4 @@
-"""Verified phone keys shared by customer profiles across chat channels."""
+"""Phone-keyed profiles shared across demo chat channels."""
 
 import hashlib
 import secrets
@@ -28,22 +28,48 @@ class PhoneIdentity:
     def __init__(self, db):
         self.db = db
 
+    def demo_customer(self, raw_phone):
+        """Demo-only access: knowing a phone is enough, by product choice."""
+        phone = normalize_phone(raw_phone)
+        with self.db.transaction() as c:
+            profile = c.execute("SELECT id FROM customer_profiles WHERE phone_e164=?", (phone,)).fetchone()
+            if profile:
+                return profile["id"]
+            customer = ident("phone_", [phone])
+            c.execute(
+                "INSERT INTO customer_profiles VALUES(?,?,?,?,?)",
+                (customer, phone, "web:" + customer, "Khách hàng", now()),
+            )
+        return customer
+
     def bind(self, customer, name, target, contact, sender_id):
+        from harness.identity import get_profile
+
         if not isinstance(sender_id, int) or contact.get("user_id") != sender_id or str(sender_id) != target:
             raise HTTPException(400, "Vui lòng bấm Chia sẻ số điện thoại để gửi số của chính anh/chị.")
+        if get_profile(customer):
+            raise HTTPException(400, "Vui lòng bắt đầu với bot để tạo hồ sơ riêng.")
         phone = normalize_phone(contact.get("phone_number", ""))
         with self.db.transaction() as c:
             existing = c.execute("SELECT * FROM customer_profiles WHERE phone_e164=?", (phone,)).fetchone()
             current = c.execute("SELECT * FROM customer_profiles WHERE id=?", (customer,)).fetchone()
-            if (existing and (existing["id"] != customer or existing["telegram_id"] != target)) or (
-                current and current["phone_e164"] != phone
-            ):
-                raise HTTPException(409, "Số điện thoại đã có liên kết khác. Anh/chị vui lòng liên hệ hỗ trợ.")
-            c.execute(
-                "INSERT OR IGNORE INTO customer_profiles VALUES(?,?,?,?,?)", (customer, phone, target, name, now())
-            )
+            if current and current["phone_e164"] != phone:
+                raise HTTPException(409, "Hồ sơ đang liên kết số khác. Vui lòng dùng số đã chia sẻ trước đó.")
+            if existing:
+                if existing["telegram_id"] != target and not existing["telegram_id"].startswith("web:"):
+                    raise HTTPException(409, "Số điện thoại đã có liên kết khác. Anh/chị vui lòng liên hệ hỗ trợ.")
+                if get_profile(existing["id"]):
+                    # Same owner may replace an old fixture binding; shared demo
+                    # conversation must never become the person's private memory.
+                    c.execute("DELETE FROM customer_profiles WHERE id=?", (existing["id"],))
+                    existing = None
+                else:
+                    customer = existing["id"]
+                    c.execute("UPDATE customer_profiles SET telegram_id=?,name=? WHERE id=?", (target, name, customer))
+            if not existing:
+                c.execute("INSERT OR IGNORE INTO customer_profiles VALUES(?,?,?,?,?)", (customer, phone, target, name, now()))
             c.execute("INSERT OR REPLACE INTO identity_links VALUES('telegram',?,?)", (target, customer))
-        return phone
+        return customer
 
     def begin(self, raw_phone, source):
         phone = normalize_phone(raw_phone)

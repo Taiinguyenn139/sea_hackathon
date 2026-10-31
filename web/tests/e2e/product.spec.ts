@@ -10,7 +10,7 @@ const demoProfiles = Array.from({ length: 10 }, (_, index) => {
   };
 });
 
-test("phone confirmation restores Telegram context before enabling web chat", async ({
+test("phone-only demo login restores Telegram context without an OTP", async ({
   page,
 }, testInfo) => {
   await page.route("**/api/**", async (route) => {
@@ -18,19 +18,8 @@ test("phone confirmation restores Telegram context before enabling web chat", as
     const body = route.request().postDataJSON();
     if (path === "/demo/profiles")
       return route.fulfill({ json: { profiles: demoProfiles } });
-    if (path === "/auth/phone/start") {
+    if (path === "/auth/phone/login") {
       expect(body.phone).toBe("0901234567");
-      return route.fulfill({
-        json: { challenge_id: "test-phone-challenge", expires_in: 600 },
-      });
-    }
-    if (path === "/auth/phone/confirm") {
-      expect(body.challenge_id).toBe("test-phone-challenge");
-      if (body.code !== "654321")
-        return route.fulfill({
-          status: 400,
-          json: { detail: "Mã xác nhận không hợp lệ hoặc đã hết hạn." },
-        });
       return route.fulfill({
         json: {
           session_id: "phone-session",
@@ -76,20 +65,15 @@ test("phone confirmation restores Telegram context before enabling web chat", as
     .getByRole("button", { name: "Tiếp tục bằng số điện thoại" })
     .click();
   await page.getByLabel("Số điện thoại", { exact: true }).fill("0901234567");
-  await page.getByRole("button", { name: "Nhận mã qua Telegram" }).click();
   const composer = page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" });
   await expect(composer).toBeDisabled();
-  await page.getByLabel("Mã xác nhận", { exact: true }).fill("111111");
-  await page.getByRole("button", { name: "Xác nhận và tiếp tục" }).click();
-  await expect(page.getByRole("alert")).toContainText("không hợp lệ");
-  await expect(composer).toBeDisabled();
-  await page.getByLabel("Mã xác nhận", { exact: true }).fill("654321");
-  await page.getByRole("button", { name: "Xác nhận và tiếp tục" }).click();
+  await page.getByRole("button", { name: "Bắt đầu trò chuyện" }).click();
+  await expect(page.getByLabel("Mã xác nhận", { exact: true })).toHaveCount(0);
   await expect(composer).toBeEnabled();
   await expect(page.locator("#dob")).toHaveCount(0);
   await page.getByRole("button", { name: "Hiện thông tin hỗ trợ" }).click();
   await page
-    .getByText("Thông tin đã ghi nhận từ Telegram", { exact: true })
+    .getByText("Thông tin đã ghi nhớ giữa các kênh", { exact: true })
     .click();
   await expect(page.locator(".phone-context")).toContainText("40.000.000");
   await composer.fill("Tiếp tục tư vấn thẻ tín dụng");
