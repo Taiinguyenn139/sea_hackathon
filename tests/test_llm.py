@@ -66,6 +66,36 @@ def test_primary_success_never_calls_backup(monkeypatch, caplog):
     assert "test-only-secret" not in caplog.text and "customer-input" not in caplog.text
 
 
+def test_openai_draft_receives_current_message_and_conversational_intent(tmp_path, monkeypatch):
+    drafts = []
+
+    async def post(self, url, **kwargs):
+        messages = kwargs["json"]["messages"]
+        instruction = messages[0]["content"]
+        payload = json.loads(messages[1]["content"])
+        if "INPUT_SECURITY_CLASSIFIER" in instruction:
+            return result({"category": "safe"})
+        if "Phân loại hội thoại" in instruction:
+            return result({"stage": "discover", "objection": None, "intent": "advice"})
+        if "Trích các đoạn" in instruction:
+            return result({"spans": []})
+        drafts.append(payload)
+        return result({"draft": payload["rules_draft"]})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    app = create_app(configured(db_path=str(tmp_path / "conversation.sqlite3"), telegram_secret="test-webhook"))
+    with TestClient(app) as client:
+        sid = client.post("/sessions", json={"demo_profile": "hoa"}).json()
+        auth = {"Authorization": "Bearer " + sid["session_token"]}
+        for index, text in enumerate(["Hello", "Có những sản phẩm vay nào ???"]):
+            response = client.post(f"/sessions/{sid['session_id']}/messages", headers=auth,
+                                  json={"text": text, "client_message_id": str(index)})
+            assert response.status_code == 200
+            assert "số tiền muốn vay" not in response.json()["reply"]
+    assert [payload["text"] for payload in drafts] == ["Hello", "Có những sản phẩm vay nào ???"]
+    assert [payload["intent"] for payload in drafts] == ["greeting", "loan_catalog"]
+
+
 @pytest.mark.parametrize("failure", ["timeout", "connection", "http", "schema", "json", "truncated"])
 def test_backup_after_primary_failure(monkeypatch, failure):
     calls = []
