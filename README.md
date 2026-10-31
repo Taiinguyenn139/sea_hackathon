@@ -53,7 +53,7 @@ hiện có để bật tư vấn chuyên sâu. Mặc định tính năng tắt; 
 được dùng để bật chuyên viên. Không cần model, dependency hoặc dịch vụ mới.
 
 Sau khi kết nối danh tính, chọn **Gặp chuyên viên** hoặc nhắn yêu cầu gặp chuyên
-viên. Vai trò **Chuyên viên tư vấn** tiếp nhận nhu cầu đã ghi nhớ và trả lời nhiều
+viên. Vai trò **Chuyên viên AI** tiếp nhận nhu cầu đã ghi nhớ và trả lời nhiều
 lượt trong cùng phiên; ô nhập vẫn mở. Trong demo, vai trò này được mô phỏng bằng
 LLM. Từng phản hồi giữ nhãn vai trò khi tải lại lịch sử.
 
@@ -61,6 +61,10 @@ LLM. Từng phản hồi giữ nhãn vai trò khi tải lại lịch sử.
   không cần LLM, kể cả khi bước tiếp nhận hoặc provider đang lỗi.
 - **Yêu cầu nhân viên thật**, yêu cầu rõ ràng gặp người thật, khiếu nại, nộp hồ sơ
   hoặc ký hợp đồng đi vào hàng chờ hiện có. Phiên lúc này mới chờ nhân viên.
+- Trong hàng chờ, **Để chuyên viên AI hỗ trợ ngay** cho phép khách chủ động đổi
+  sang AI khi tính năng đang bật. Biên nhận ghi rõ AI tiếp nhận, không có nhân
+  viên thật tư vấn và không tạo cam kết gọi lại. Nếu provider lỗi sau khi đổi,
+  thử lại cùng yêu cầu sẽ tiếp tục bước tiếp nhận AI.
 - Tạo cuộc trò chuyện mới bắt đầu với trợ lý và memory được phép đọc; không
   nhận hoặc kết thúc handoff của phiên nguồn.
 - Khi tiếp nhận lỗi, gửi tin nhắn để thử tiếp nhận lại hoặc quay lại trợ lý.
@@ -82,7 +86,8 @@ kết thúc specialist qua API dành cho khách.
 
 API mới cần capability của phiên:
 
-- `POST /sessions/{sid}/specialist/start`: `reason`, `idempotency_key`.
+- `POST /sessions/{sid}/specialist/start`: `reason`, `idempotency_key`, tùy chọn
+  `resume_from_human=true` để tiếp nhận từ hàng chờ nhân viên; mặc định `false`.
 - `POST /sessions/{sid}/specialist/complete`: `handoff_id`, `idempotency_key`;
   chính `handoff_id` là phạm vi idempotency để retry không đóng yêu cầu mới.
 - Tin nhắn tiếp theo dùng API messages/stream cũ. Session/reply bổ sung
