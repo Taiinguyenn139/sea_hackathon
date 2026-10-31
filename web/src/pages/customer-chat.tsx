@@ -89,6 +89,11 @@ export function CustomerChat() {
     window.location.hash === "#conversation" ? "conversation" : "home",
   );
   const [session, setSession] = useState<ChatSession | null>(initial.current);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [profile, setProfile] = useState(initial.current?.demo_profile ?? "hoa");
+  const [phoneLogin, setPhoneLogin] = useState(false);
+  const [demoPhoneIdentity, setDemoPhoneIdentity] = useState(false);
+  const [entryPhone, setEntryPhone] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState(() => {
     const saved = readDraft(initial.current?.session_id);
@@ -261,6 +266,21 @@ export function CustomerChat() {
     setHistoryOpen(false);
     navigate("conversation");
   }
+  const loadProfiles = () =>
+    request<{ profiles: Profile[]; demo_phone_identity?: boolean }>("/demo/profiles")
+      .then((data) => {
+        setProfiles(data.profiles);
+        setDemoPhoneIdentity(data.demo_phone_identity === true);
+        setProfile(
+          (current) =>
+            data.profiles.find(
+              (item) => item.id === current || item.runtime_profile === current,
+            )?.id ??
+            data.profiles[0]?.id ??
+            current,
+        );
+      })
+      .catch((e) => setError(errorMessage(e)));
   useEffect(() => {
     try {
       const key = DRAFT_PREFIX + (session?.session_id ?? "anonymous");
@@ -363,6 +383,28 @@ export function CustomerChat() {
       clearInterval(timer);
     };
   }, [session?.session_id, session?.handoff_id, ended]);
+  async function start() {
+    if (pending || activeStream.current) return;
+    if (demoPhoneIdentity && !entryPhone.trim()) { document.getElementById("entry-phone")?.focus(); return; }
+    setError("");
+    setPending(true);
+    try {
+      const next = await request<ChatSession>(demoPhoneIdentity ? "/demo/phone/session" : "/sessions", {
+        method: "POST",
+        body: demoPhoneIdentity ? { phone: entryPhone.trim() } : { mode: "harness", demo_profile: profile },
+      });
+      setLoading(true);
+      rememberView();
+      save(demoPhoneIdentity ? next : { ...next, demo_profile: profile });
+      if (session) setDraft("");
+      setTurns([]);
+      navigate("conversation");
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setPending(false);
+    }
+  }
   async function send(text = draft, id: string = crypto.randomUUID()) {
     if (
       !text.trim() ||
@@ -527,28 +569,20 @@ export function CustomerChat() {
     setError("");
     try {
       let next: ChatSession;
-      if (session) {
-        try {
-          next = await request<ChatSession>(
-            `/sessions/${session.session_id}/new`,
-            { method: "POST", body: {}, token: session.session_token },
-          );
-        } catch (e) {
-          if (!(e instanceof ApiError) || ![401, 403, 404].includes(e.status))
-            throw e;
-          next = await createChatSession();
-        }
-        rememberView();
-      } else next = await createChatSession();
-      freshSession.current = next.session_id;
-      save(next);
-      setTurns([]);
-      setDraft("");
-      setLastFailed(null);
-      setHint("");
-      setLoading(false);
-      setHistoryError("");
-      setHistoryOpen(false);
+      try {
+        next = await request<ChatSession>(`/sessions/${session.session_id}/new`, { method: "POST", body: {}, token: session.session_token });
+      } catch (e) {
+        if (!(e instanceof ApiError) || ![401, 403, 404].includes(e.status)) throw e;
+        next = await request<ChatSession>(demoPhoneIdentity ? "/demo/phone/session" : "/sessions", {
+          method: "POST", body: demoPhoneIdentity
+            ? { phone: session.user_id ?? entryPhone.trim() }
+            : { mode: "harness", demo_profile: profile },
+        });
+      }
+      rememberView();
+      save(demoPhoneIdentity ? next : { ...next, demo_profile: session.demo_profile ?? profile });
+      setTurns([]); setDraft(""); setLastFailed(null); setHint(""); setPromptNotice("");
+      setLoading(true); setHistoryError(""); setPhoneLogin(false); setHistoryOpen(false);
       navigate("conversation");
     } catch (e) {
       setError(errorMessage(e));
@@ -557,7 +591,16 @@ export function CustomerChat() {
     }
   }
   function selectPrompt(message: string) {
-    void send(message);
+    setDraft(message);
+    setPromptNotice(
+      session
+        ? "Gợi ý đã sẵn sàng. Bạn có thể chỉnh lại trước khi gửi."
+        : "Đã chọn nội dung tư vấn. Bắt đầu phiên hỗ trợ để gửi câu hỏi.",
+    );
+    if (session) {
+      navigate("conversation");
+      input.current?.focus();
+    } else document.getElementById(demoPhoneIdentity ? "entry-phone" : "demo-profile")?.focus();
   }
   const historyProps = {
     entries,
@@ -695,6 +738,23 @@ export function CustomerChat() {
           </div>
         )}
         <div className="conversation-scroll">
+          {demoPhoneIdentity && (!session || !verified) && (
+            <form className="demo-phone-entry" onSubmit={(e) => { e.preventDefault(); void start(); }}>
+              <span className="mini-label">BẮT ĐẦU HỘI THOẠI</span>
+              <label htmlFor="entry-phone">Số điện thoại của bạn</label>
+              <p>Dùng cùng số với Telegram để kết nối hồ sơ và thông tin đã ghi nhớ.</p>
+              <div className="demo-phone-entry-row">
+                <input id="entry-phone" type="tel" inputMode="tel" autoComplete="tel"
+                  placeholder="Ví dụ: 0901234567" value={entryPhone}
+                  onChange={(e) => setEntryPhone(e.target.value)} disabled={pending} required maxLength={32}
+                  aria-describedby="entry-phone-note" />
+                <button className="button primary" type="submit" disabled={pending || !entryPhone.trim()}>
+                  {pending ? <Spinner label="Đang kết nối…" /> : <>Bắt đầu chat <ArrowRight size={16} /></>}
+                </button>
+              </div>
+              <small id="entry-phone-note">Bản demo không yêu cầu mã xác nhận. Mỗi phiên có hội thoại riêng, cùng đóng góp vào bộ nhớ hồ sơ.</small>
+            </form>
+          )}
           {isHome && (
             <section className="welcome">
               <div className="welcome-hero">
@@ -899,44 +959,20 @@ export function CustomerChat() {
           )}
           <div ref={end} />
         </div>
-        {(!isHome || !session) && (
-          <div className="composer-area">
-            {isHome && (
-              <div className="conversation-intro">
-                <span className="section-index">02 / KẾT NỐI</span>
-                <strong>Câu chuyện của bạn bắt đầu tại đây.</strong>
-                <span>
-                  <ShieldCheck size={14} /> Có thể hỏi thông tin công khai
-                </span>
-              </div>
-            )}
-            {verified && !waiting && !pending && turns.length > 0 && (
-              <div
-                className="quick-prompts"
-                aria-label="Gợi ý tiếp tục hội thoại"
-              >
-                <button
-                  onClick={() =>
-                    selectPrompt("Tôi muốn hỏi thêm về lãi suất sau ưu đãi.")
-                  }
-                >
-                  Lãi sau ưu đãi <ArrowRight size={13} />
-                </button>
-                <button
-                  onClick={() =>
-                    selectPrompt("Tôi cần chuẩn bị những giấy tờ nào?")
-                  }
-                >
-                  Hồ sơ cần chuẩn bị <ArrowRight size={13} />
-                </button>
-              </div>
-            )}
-            <form
-              className="composer"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void send();
-              }}
+        {(!isHome || !session) && (!demoPhoneIdentity || session) && <div className="composer-area">
+          {isHome && (
+            <div className="conversation-intro">
+              <span className="section-index">02 / KẾT NỐI</span>
+              <strong>Câu chuyện của bạn bắt đầu tại đây.</strong>
+              <span>
+                <ShieldCheck size={14} /> Có thể hỏi thông tin công khai
+              </span>
+            </div>
+          )}
+          {verified && !waiting && !pending && turns.length > 0 && (
+            <div
+              className="quick-prompts"
+              aria-label="Gợi ý tiếp tục hội thoại"
             >
               <textarea
                 ref={input}
@@ -967,36 +1003,151 @@ export function CustomerChat() {
                         ? "Chuyên viên sẽ tiếp nhận yêu cầu của bạn…"
                         : "Nhập câu hỏi cần hỗ trợ…"
                 }
-              />
-              <div className="composer-footer">
-                <span>
-                  <Sparkles size={14} />{" "}
-                  {verified
-                    ? "Enter để gửi · Shift + Enter để xuống dòng"
-                    : "Câu chuyện của bạn bắt đầu từ đây"}
-                </span>
-                <button
-                  className="send-button"
-                  disabled={
-                    !draft.trim() ||
-                    loading ||
-                    !!historyError ||
-                    ended ||
-                    pending ||
-                    waiting
-                  }
-                  aria-label="Gửi tin nhắn"
-                >
-                  <ArrowUp size={21} />
-                </button>
-              </div>
-            </form>
-            <p className="composer-disclaimer">
-              Không chia sẻ mật khẩu, PIN hoặc OTP. Đây là ngân hàng giả định;
-              mọi hồ sơ và sản phẩm đều hư cấu.
+              >
+                Hồ sơ cần chuẩn bị <ArrowRight size={13} />
+              </button>
+            </div>
+          )}
+          {promptNotice && (
+            <p className="prompt-notice" role="status">
+              <Check size={14} />
+              {promptNotice}
             </p>
-          </div>
-        )}
+          )}
+          {!session && phoneLogin && (
+            <PhoneLogin
+              onCancel={() => setPhoneLogin(false)}
+              onSuccess={(next) => {
+                setLoading(true);
+                save(next);
+                setTurns([]);
+                setPhoneLogin(false);
+                setHint(
+                  "Đã kết nối hồ sơ từ Telegram. Bạn có thể tiếp tục nhu cầu đã trao đổi.",
+                );
+                setError("");
+                navigate("conversation");
+              }}
+            />
+          )}
+          {!session && !phoneLogin && !demoPhoneIdentity && (
+            <div className="phone-continuation">
+              <button
+                className="button secondary"
+                onClick={() => setPhoneLogin(true)}
+                disabled={pending}
+              >
+                Tiếp tục bằng số điện thoại <ArrowRight size={16} />
+              </button>
+            </div>
+          )}
+          {!session && !phoneLogin && !demoPhoneIdentity && (
+            <div className="onboarding-bar">
+              <div>
+                <span className="mini-label">THÔNG TIN KHÁCH HÀNG</span>
+                <label htmlFor="demo-profile">
+                  Chọn hồ sơ để bắt đầu hỗ trợ
+                </label>
+              </div>
+              <select
+                id="demo-profile"
+                value={profile}
+                onChange={(e) => setProfile(e.target.value)}
+                disabled={!profiles.length}
+              >
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name ?? p.full_name ?? p.id}
+                    {p.phone ? ` · ${p.phone}` : ""}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="button primary"
+                onClick={start}
+                disabled={pending || !profiles.length}
+              >
+                {pending ? (
+                  <Spinner label="Đang mở…" />
+                ) : (
+                  <>
+                    Bắt đầu <ArrowRight size={16} />
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+          {session && !verified && !demoPhoneIdentity && (
+            <details className="identity-help">
+              <summary>Tiếp nối hồ sơ và đặt lịch</summary>
+                <p>
+                  {demoPhoneIdentity
+                    ? "Nhập số điện thoại trong chat để kết nối hồ sơ. Dùng cùng số trên Telegram để tiếp tục thông tin đã ghi nhớ."
+                    : "Bạn có thể trò chuyện ngay. Khi cần xem lịch sử hoặc đặt lịch, gửi số điện thoại demo trong khung chat để kết nối hồ sơ."}
+                </p>
+                {chosenProfile?.phone && (
+                  <small>
+                    Số điện thoại demo đã chọn: {chosenProfile.phone}
+                  </small>
+                )}
+            </details>
+          )}
+          <form
+            className="composer"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void send();
+            }}
+          >
+            <textarea
+              ref={input}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (
+                  e.key === "Enter" &&
+                  !e.shiftKey &&
+                  !e.nativeEvent.isComposing
+                ) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              rows={2}
+              maxLength={4000}
+              disabled={!session || loading || !!historyError || ended || waiting || pending}
+              aria-label="Tin nhắn cho trợ lý"
+              placeholder={
+                !session
+                  ? "Bắt đầu phiên hỗ trợ để gửi tin nhắn…"
+                  : ended ? "Cuộc trò chuyện đã kết thúc. Tạo phiên mới để tiếp tục…" : loading
+                    ? "Đang khôi phục hội thoại…"
+                    : waiting
+                      ? "Chuyên viên sẽ tiếp nhận yêu cầu của bạn…"
+                      : "Nhập câu hỏi cần hỗ trợ…"
+              }
+            />
+            <div className="composer-footer">
+              <span>
+                <Sparkles size={14} />{" "}
+                {verified
+                  ? "Enter để gửi · Shift + Enter để xuống dòng"
+                  : "Câu chuyện của bạn bắt đầu từ đây"}
+              </span>
+              <button
+                className="send-button"
+                disabled={!session || !draft.trim() || loading || !!historyError || ended || pending || waiting}
+                aria-label="Gửi tin nhắn"
+              >
+                <ArrowUp size={21} />
+              </button>
+            </div>
+          </form>
+          <p className="composer-disclaimer">
+            Không chia sẻ mật khẩu, PIN hoặc OTP. Đây là ngân hàng giả định; mọi
+            hồ sơ và sản phẩm đều hư cấu.
+          </p>
+        </div>}
       </section>
       <aside
         className="context-rail"
@@ -1059,6 +1210,47 @@ export function CustomerChat() {
             </button>
           ))}
         </div>
+        <div className="support-session">
+          <span className="mini-label">PHIÊN HỖ TRỢ</span>
+          <dl>
+            <div>
+              <dt>Khách hàng</dt>
+              <dd>
+                {session?.brief?.name
+                  ? String(session.brief.name)
+                  : (chosenProfile?.name ??
+                    chosenProfile?.full_name ??
+                    "Chưa chọn hồ sơ")}
+              </dd>
+            </div>
+            <div>
+              <dt>Xác minh</dt>
+              <dd className={verified ? "session-verified" : ""}>
+                {demoPhoneIdentity && verified ? "Đã kết nối hồ sơ demo" : session?.identity_status === "identified"
+                  ? "Đã xác nhận SĐT"
+                  : verified
+                    ? "Đã xác minh"
+                    : "Chưa xác minh"}
+              </dd>
+            </div>
+            <div>
+              <dt>Trạng thái</dt>
+              <dd>
+                {waiting
+                  ? "Chờ chuyên viên"
+                  : session
+                    ? "Đang hỗ trợ"
+                    : "Chưa bắt đầu"}
+              </dd>
+            </div>
+          </dl>
+        </div>
+        {session?.identity_status === "identified" && session.brief && (
+          <details className="phone-context">
+            <summary>Thông tin đã ghi nhớ từ các kênh</summary>
+            <BriefView brief={session.brief} />
+          </details>
+        )}
         <button
           className="human-help"
           onClick={handoff}

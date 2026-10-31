@@ -317,7 +317,9 @@ class Memory:
         if not profile:
             raise ValueError("Unknown customer")
         facts = self.facts(customer)
-        phone = self.db.one("SELECT phone_e164 FROM customer_profiles WHERE id=?", (customer,))
+        phone = self.db.one("SELECT phone_e164 FROM customer_profiles WHERE id=?", (customer,)) or self.db.one(
+            "SELECT phone_e164 FROM demo_phone_links WHERE customer_id=?", (customer,)
+        )
         return {
             "redacted": False,
             "customer_id": customer,

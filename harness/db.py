@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS guest_customers(id TEXT PRIMARY KEY,channel TEXT NOT 
 CREATE TABLE IF NOT EXISTS customer_profiles(id TEXT PRIMARY KEY,phone_e164 TEXT NOT NULL UNIQUE,telegram_id TEXT NOT NULL UNIQUE,name TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS phone_challenges(id TEXT PRIMARY KEY,customer_id TEXT,phone_e164 TEXT NOT NULL,telegram_target TEXT,code_hash TEXT NOT NULL,expires REAL NOT NULL,attempts INTEGER DEFAULT 0,consumed_at REAL,created_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS phone_sessions(session_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS demo_phone_links(phone_e164 TEXT PRIMARY KEY,customer_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY,session_id TEXT,client_id TEXT,text TEXT,reply TEXT,result TEXT,created_at TEXT,UNIQUE(session_id,client_id));
 CREATE TABLE IF NOT EXISTS facts(id TEXT,customer_id TEXT,key TEXT,value TEXT,unit TEXT,source_type TEXT,source_ref TEXT,channel TEXT,observed_at TEXT,valid_until TEXT,status TEXT,confidence REAL,PRIMARY KEY(id,customer_id));
 CREATE TABLE IF NOT EXISTS tool_calls(id TEXT PRIMARY KEY,session_id TEXT,tool TEXT,args TEXT,result TEXT,created_at TEXT);
@@ -54,7 +55,7 @@ class Database:
         self.conn.executescript(SCHEMA)
         if "reply_markup" not in {row["name"] for row in self.conn.execute("PRAGMA table_info(outbox)")}:
             self.conn.execute("ALTER TABLE outbox ADD COLUMN reply_markup TEXT")
-        self.conn.execute("INSERT OR REPLACE INTO settings VALUES('schema_version','4')")
+        self.conn.execute("INSERT OR REPLACE INTO settings VALUES('schema_version','5')")
         self.conn.execute("INSERT OR IGNORE INTO settings VALUES('clock','\"2026-10-31\"')")
         self.conn.execute("INSERT OR IGNORE INTO settings VALUES('playbook','\"v1\"')")
 

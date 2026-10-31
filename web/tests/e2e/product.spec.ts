@@ -88,6 +88,19 @@ test("chat shows partial text while the streamed reply is still in progress", as
     page.getByRole("log").getByText("Tư vấn giúp tôi", { exact: true }),
   ).toHaveCount(1);
   await expect(composer).toBeEnabled();
+  await expect(page.locator("#dob")).toHaveCount(0);
+  await page.getByRole("button", { name: "Hiện thông tin hỗ trợ" }).click();
+  await page
+    .getByText("Thông tin đã ghi nhớ từ các kênh", { exact: true })
+    .click();
+  await expect(page.locator(".phone-context")).toContainText("40.000.000");
+  await composer.fill("Tiếp tục tư vấn thẻ tín dụng");
+  await page.getByRole("button", { name: "Gửi tin nhắn" }).click();
+  await expect(page.getByRole("log")).toContainText("100 triệu đồng");
+  await page.screenshot({
+    path: testInfo.outputPath("phone-context-desktop.png"),
+    fullPage: true,
+  });
 });
 
 async function mockAgentChat(page: Page, failFirstMessage = false) {
