@@ -252,7 +252,7 @@ def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
         session = client.post("/sessions", json={"demo_profile": "hoa", "mode": "harness"}).json()
         sid = session["session_id"]
         auth = {"Authorization": "Bearer " + session["session_token"]}
-        assert client.post(f"/sessions/{sid}/verify", headers=auth, json={"phone": session["user_id"]}).status_code == 200
+        assert client.post(f"/sessions/{sid}/verify", headers=auth, json={"phone": "0900000001"}).status_code == 200
         settings.llm_backend = "openai"
         settings.openai_key = "test-only"
         settings.openai_model = "primary"
@@ -261,8 +261,12 @@ def test_default_reply_preserves_tool_idempotency(tmp_path, monkeypatch):
         async def post(self, url, **kwargs):
             if "INPUT_SECURITY_CLASSIFIER" in kwargs["json"]["messages"][0]["content"]:
                 return result({"category": "safe"})
-            if "Phân loại" in kwargs["json"]["messages"][0]["content"]:
-                return result({"stage": "quote", "objection": None})
+            if "tools" in kwargs["json"] and not any(m["role"] == "tool" for m in kwargs["json"]["messages"]):
+                return httpx.Response(200, json={"choices": [{"finish_reason": "tool_calls", "message": {"tool_calls": [
+                    {"id": "callback", "type": "function", "function": {
+                        "name": "schedule_callback", "arguments": '{"time":"2026-11-02T09:00:00+07:00"}',
+                    }},
+                ]}}]})
             return httpx.Response(503)
 
         monkeypatch.setattr(httpx.AsyncClient, "post", post)

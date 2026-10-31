@@ -141,6 +141,31 @@ class BankTools:
         with self._lock:
             return deepcopy({"messages": self._messages, "callbacks": self._callbacks})
 
+    def _restore_issued_facts(self, facts, *, as_of):
+        """Backend recovery only: restore facts from authenticated durable receipts.
+
+        The SQLite adapter checks the issuing session, customer, channel and
+        audit receipt before calling this. Never expose this helper as a tool.
+        """
+        _date(as_of)
+        restored = {}
+        for fact in facts:
+            if (
+                not isinstance(fact, dict)
+                or fact.get("source_type") != "bank_tool"
+                or fact.get("status") != "active"
+                or fact.get("observed_at") != as_of
+                or _date(fact["valid_until"]) < _date(as_of)
+                or fact.get("tool") not in TOOL_NAMES
+                or not isinstance(fact.get("fact_id"), str)
+                or not isinstance(fact.get("source_ref"), str)
+                or not isinstance(fact.get("metadata"), dict)
+            ):
+                raise ValueError("invalid recovered source fact")
+            restored[fact["fact_id"]] = deepcopy(fact)
+        with self._lock:
+            self._facts.update(restored)
+
     def call(self, tool_name, arguments, *, context=None):
         """Dispatcher chèn customer_id từ context backend, không lấy quyền từ JSON."""
         if not isinstance(tool_name, str) or tool_name not in TOOL_NAMES:

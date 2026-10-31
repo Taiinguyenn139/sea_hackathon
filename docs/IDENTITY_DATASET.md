@@ -35,14 +35,14 @@ nghiệp vụ dạng `YYYY-MM-DD` dùng để kiểm tra hiệu lực báo giá.
 
 `channel_links` nối từng kênh với một `external_id` có tiền tố `synthetic:`.
 Trong ứng dụng thật, backend phải tự tra liên kết từ tài khoản kênh đã được xác
-thực. Không dùng số điện thoại do khách gõ trong tin nhắn để đọc lịch sử riêng
-của số đó.
+thực. Luồng nhận diện bằng lời khai phone bên dưới chỉ mở hồ sơ hư cấu của
+môi trường demo, không chứng minh quyền sở hữu số điện thoại thật.
 
 `identity_status` và `verified_at` thuộc **từng phiên**. Một phiên đã xác minh
 không làm phiên ở kênh khác tự được xác minh. Các trường này trong JSON chỉ mô
 tả bối cảnh giả lập, không phải bằng chứng đăng nhập hoặc kết quả gọi dịch vụ
-xác thực thật. `date_of_birth` chỉ còn là metadata hư cấu, không dùng để nhận diện; không chép
-ngày sinh vào prompt, memory hay lịch sử tool.
+xác thực thật. `date_of_birth` chỉ còn là metadata hư cấu, không dùng để nhận
+diện; không chép ngày sinh vào prompt, memory hay lịch sử tool.
 
 Tất cả phiên trong bộ này có `logged_in: false`. Vì vậy:
 
@@ -141,83 +141,114 @@ Không truyền `expectations`, `reference_text`, `checks` hoặc memory đáp �
 agent. Nếu bot được đọc đáp án trước khi trả lời thì kết quả đánh giá không còn
 đo được khả năng ghi nhớ và suy luận của bot.
 
-## Backend `verify_identity` dùng bộ identity
+## Runtime: từ phiên ẩn danh tới call brief
 
-Backend đọc đủ 10 hồ sơ từ `identities.json` qua registry `harness/identity.py`.
-Registry này chỉ đọc dữ liệu identity đầu vào, không đọc journey, câu trả lời
-tham khảo hoặc checkpoint đáp án. Việc có hồ sơ demo không có nghĩa là người
-gọi đã được xác minh.
+Màn chat chính cho gửi câu hỏi hoặc chọn gợi ý ngay, không có bộ chọn profile,
+form ngày sinh, OTP entry hay panel identity. Frontend tự gọi `POST /sessions`
+với `{"mode":"harness"}` ở lần gửi đầu, rồi gửi tin nhắn bằng capability token
+của phiên đó. Endpoint public tạo phiên ẩn danh; không dùng `demo_profile` từ
+client để chọn sẵn Hoa hoặc An. Alias `hoa`/`minh` vẫn được giữ trong registry
+cho memory cũ và các client/admin tương thích.
 
-`POST /sessions` nhận số điện thoại ở trường `demo_profile`, gồm dạng `0...`
-hoặc `+84...`; response có `user_id` đã chuẩn hóa về chuỗi 10 chữ số. Ví dụ
-`"0900000001"` và `"+84900000001"` cùng chỉ một hồ sơ. Đây là chuẩn hóa khóa,
-không phải kiểm tra ai sở hữu số điện thoại. Danh sách `/demo/profiles` dùng
-phone làm ID để chọn cả 10 hồ sơ demo.
+Khi bật `LLM_BACKEND=openai`, **AI tự quyết định gọi function
+`verify_identity`** từ lời khách hiện tại. Backend tra đủ 10 hồ sơ bằng
+`harness/identity.py`, xác nhận số tự khai là duy nhất và đúng đối số tool,
+rồi mới gắn phiên với người đó. Ví dụ `0900000002` hoặc `+84900000002` nối tới
+Trần Minh An, không mặc định Hoa. Một tin có nhiều số, số của người thân, số
+không có trong fixture hoặc số model tự đoán không mở hồ sơ. Ngày sinh không
+tham gia luồng này và không được trả trong API danh sách hồ sơ.
 
-Hai alias `hoa`/`minh` vẫn được chấp nhận để dữ liệu memory cũ tiếp tục dùng
-được. Bên trong DB, hai người đầu giữ khóa `customer_id` cũ tương ứng
-`hoa`/`minh`; 8 người còn lại dùng phone làm khóa runtime. Bên ngoài, `user_id`
-của cả 10 người luôn là phone. Trường `runtime_profile` chỉ phục vụ tương thích
-dữ liệu, không cấp quyền và không cần đổi hay migrate memory cũ.
+Kết quả tool thật trả `identity_status`, `user_id` và call brief; agent nhận
+kết quả để tiếp tục cả nhu cầu trong cùng tin nhắn. Đây không còn là nhánh
+server thấy regex phone rồi tự kết thúc lượt. [Hướng dẫn agent chat](AGENT_CHAT.md)
+mô tả cấu hình, catalog quyền, giới hạn và kiểm tra receipt chi tiết.
 
-Tạo phiên demo chưa mở quyền memory riêng. Khách gửi số điện thoại ngay trong
-khung chat, ví dụ `Số điện thoại của tôi là 0900000001` hoặc `+84900000001`.
-Backend chuẩn hóa số và đối chiếu với hồ sơ đã gắn vào phiên. Chỉ số khớp mới
-mở trạng thái nhận diện demo của phiên đó; gửi số khác không đổi khách hàng,
-không gộp lịch sử và không đọc hồ sơ của số vừa gửi. Một tin có nhiều số sẽ được
-yêu cầu gửi lại một số rõ ràng. Ngày sinh không còn được yêu cầu, so sánh hoặc
-trả trong API danh sách hồ sơ. Trường ngày sinh trong JSON cũ chỉ là metadata
-hư cấu để giữ tương thích dataset, không tham gia nhận diện.
+Bên trong DB, hai người đầu giữ `customer_id` là `hoa`/`minh` để tiếp tục memory
+cũ; 8 người khác dùng phone làm khóa runtime. `user_id` bên ngoài luôn là phone
+sau nhận diện. Trước đó `user_id` có thể là `null`. `runtime_profile` chỉ ánh xạ
+khóa cũ, không cấp quyền và không làm bỏ bước nhận diện.
 
-`POST /sessions/{session_id}/verify` nhận `{"phone": "0900000001"}` cho client
-cần gọi trực tiếp. Payload ngày sinh cũ bị từ chối. Các lần thử sai vẫn giới hạn
-5 lần trong 15 phút theo khách hàng và nguồn gọi; đối số phone trong audit tool
-được che. Gửi lại cùng `client_message_id` trả kết quả đã lưu, không nhận diện
-hay tạo hành động thêm lần nữa. Phiên mới vẫn bắt đầu chưa nhận diện.
+Phiên đã gắn thành công không đổi người bằng một số mới; cần bắt đầu chat mới.
+Phiên web cũ còn chưa xác minh, từng được chọn profile, được đưa về ẩn danh và
+giữ transcript công khai. Không tự chuyển trạng thái xác minh giữa phiên hoặc
+kênh. Các giới hạn thử sai vẫn là 5 lần/15 phút theo identity và nguồn gọi;
+đối số phone trong audit tool được che. Retry cùng `client_message_id` trả kết
+quả đã lưu và không tự tạo thêm hành động.
 
-Đây là **nhận diện hồ sơ demo bằng số đã khai**, không kiểm chứng quyền sở hữu
-số và không phải đăng nhập khách hàng. Vì vậy CRM vẫn khóa. Luồng nhập mã gửi
-qua Telegram trên `/auth/phone/start` và `/auth/phone/confirm` của ứng dụng được
-giữ riêng để tiếp tục hồ sơ Telegram do người dùng sở hữu; claim số trong chat
-không thay thế mã xác nhận, chia sẻ contact đúng chủ hoặc quyền admin của các
-luồng đó.
+Đây là nhận diện hồ sơ hư cấu bằng lời khai, không phải customer login hoặc
+kiểm chứng sở hữu số. CRM vẫn khóa. Backend OTP Telegram tại
+`/auth/phone/start`, `/auth/phone/confirm` còn được giữ để tương thích; màn chat
+chính không còn đường vào OTP. `POST /sessions/{id}/verify` nhận payload phone
+cho client/fixture trực tiếp, nhưng gọi endpoint đó không chứng minh AI đã
+chọn function. Các đường Brief/admin link vẫn yêu cầu quyền hiện có.
 
-Các đường đọc Brief theo khách hàng và tạo liên kết kênh của admin cũng chuẩn
-hóa phone sang khóa runtime; chúng vẫn yêu cầu quyền admin hiện có. Liên kết
-kênh chỉ chọn hồ sơ cho phiên, không thay thế bước xác minh phiên đó.
+### Lịch sử nào được đưa vào brief?
 
-Ví dụ gọi API local bằng `httpx` (dependency đã có trong repo):
+Khi `IDENTITY_HISTORY_ENABLED=true`, projector ở
+`harness/memory/dataset_history.py` đọc các file **đầu vào**, chỉ lấy lời khách
+của đúng người từ các phiên fixture đã xác minh và có thời gian không vượt
+ngày nghiệp vụ `as_of` tại Việt Nam. Không đọc oracle, đáp án assistant hoặc
+expected memory. Cờ `verified` trong journey chỉ chọn sự kiện lịch sử hư cấu,
+không xác minh phiên đang hỏi.
+
+Ở ngày 31/10/2026, An có 9 lời khách lịch sử từ 3 phiên đã xác minh. Phiên chưa
+xác minh với yêu cầu sửa khoản vay thành 99 triệu bị loại khỏi memory riêng.
+Các nhu cầu 4 tỷ/300 tháng, thu nhập 100 triệu, nợ 10 triệu và giá nhà 6 tỷ có
+nguồn message, thời gian và kênh riêng; cùng bối cảnh hỏi vợ, so ngân hàng và
+phí còn chờ. Đây là customer facts cũ, không phải điều khoản ngân hàng hay
+phê duyệt mới.
+
+Brief kết hợp lịch sử đó với memory runtime đã xử lý của cùng người. Fact có
+`source_origin`, `source_ref`, `source_at`, kênh và trạng thái để truy lại nguồn.
+Runtime xác nhận mới có thể thay thế giá trị cũ; thay đổi chưa được xác nhận
+cần giữ conflict và hỏi lại. Projector không seed 40 phiên, không phát lại câu
+trả lời mẫu, không tạo callback/outbox và không nhập báo giá thành bank fact.
+Báo giá hiện hành phải lấy lại bằng tool đúng ngày/kênh.
+
+Ví dụ gọi luồng chat local bằng `httpx`, sau khi cấu hình OpenAI theo
+[hướng dẫn](AGENT_CHAT.md#cấu-hình-local):
 
 ```python
+from uuid import uuid4
+
 import httpx
 
-with httpx.Client(base_url="http://127.0.0.1:8000") as client:
-    created = client.post("/sessions", json={"demo_profile": "0900000001"})
+with httpx.Client(base_url="http://127.0.0.1:8000", timeout=120) as client:
+    created = client.post("/sessions", json={"mode": "harness"})
     created.raise_for_status()
     session = created.json()
-    headers = {"Authorization": "Bearer " + session["session_token"]}
-    verified = client.post(
-        f"/sessions/{session['session_id']}/verify",
-        headers=headers,
-        json={"phone": "0900000001"},  # Khớp số đã gắn với phiên Hoa.
+    response = client.post(
+        f"/sessions/{session['session_id']}/messages",
+        headers={"Authorization": "Bearer " + session["session_token"]},
+        json={
+            "text": "Số điện thoại của tôi là 0900000002. Tôi muốn tiếp tục khoản vay mua nhà.",
+            "client_message_id": str(uuid4()),
+        },
     )
-    verified.raise_for_status()
-    print(verified.json()["identity_status"])
+    response.raise_for_status()
+    print(response.json()["identity_status"], response.json()["user_id"])
 ```
 
-Token chỉ dùng cho phiên vừa tạo; không ghi token hoặc đối số nhận diện thô vào log.
-Khi sửa `identities.json`, kiểm tra dataset rồi khởi động lại backend để registry
-nạp dữ liệu mới. Hai bộ kiểm tra liên quan chạy bằng:
+Kết quả nhận diện thành công là `verified` và `0900000002`; nếu tool/provider
+bị lỗi, kiểm tra trace thay vì tự coi câu trả lời văn bản là bằng chứng thành
+công. Không ghi capability token hoặc đối số nhận diện thô vào log. Khi sửa
+inputs, kiểm tra dataset rồi khởi động lại backend để registry/cache nạp lại.
 
 ```sh
-.venv/bin/pytest tests_eval/test_identity_dataset.py tests/test_identity_verification.py -q
+uv run pytest -q tests/test_agent_tools.py tests/test_agent_identity.py tests/test_dataset_callbrief.py
+uv run pytest -q tests_eval/test_identity_dataset.py tests/test_identity_verification.py
 ```
+
+Các test provider mock/fixture không phải kết quả gọi OpenAI thật. Backend
+`rules` dùng kiểm tra offline, không chứng minh AI chọn tool hoặc đạt bộ 40
+phiên. Chưa khẳng định smoke OpenAI hoặc test UI local đã chạy thành công.
 
 ## Tích hợp vào chatbot sau này
 
-1. Dùng registry identity của backend và endpoint xác minh phiên. Thiết lập
-   liên kết tài khoản kênh bằng quyền admin trong môi trường thử nghiệm; không
-   lấy cờ `verified` trong file khách gửi để cấp quyền.
+1. Dùng phiên ẩn danh và để agent gọi `verify_identity` qua function calling;
+   backend kiểm tra lời khai và thực thi. Thiết lập liên kết tài khoản kênh
+   bằng quyền admin khi cần; không lấy cờ `verified` trong file khách gửi để
+   cấp quyền.
 2. Adapter ánh xạ người đã được xác thực sang `user_id`, tạo phiên tương ứng và
    truyền riêng `user_id`/`session_id`. Giữ lịch sử theo người, vẫn giữ nguồn
    phiên/kênh của từng lời nói. Chỉ đọc memory riêng sau kiểm tra quyền phiên.
@@ -240,15 +271,16 @@ minh của người khác.
 ## Giới hạn tích hợp hiện tại
 
 Đây là schema dataset riêng. CLI không seed database đang chạy, không tự tạo
-40 phiên, không nạp sẵn lịch sử giả vào memory và không tự chuyển thành
-`Scenario` cho `eval.runner`. Backend đã có thể chọn và xác minh cả 10 hồ sơ;
-loader kiểm tra dữ liệu không có nghĩa là agent đã vượt qua 40 phiên kiểm thử.
+40 phiên và không tự chuyển thành `Scenario` cho `eval.runner`. Runtime có
+thể project lời khách lịch sử vào call brief khi bật flag, không nhập chúng
+thành turn/action trong DB. Backend nhận diện đủ 10 hồ sơ qua tool; loader kiểm
+tra dữ liệu không có nghĩa agent đã vượt qua 40 phiên kiểm thử.
 
 Web và Telegram có adapter ứng dụng; Zalo và hotline trong bộ này chỉ là mô
 phỏng. Bộ này chưa triển khai thêm hai adapter đó, không gửi OTP/SMS, tóm tắt
 thật hoặc gọi điện thật. Các offers đối thủ vẫn cần nguồn context/tra cứu riêng
-khi tích hợp; registry identity không tự đưa chúng vào prompt. Thay đổi source
-chưa tự triển khai lại hay thay dữ liệu của bản demo đang chạy.
+khi tích hợp; projector không coi chúng là bank facts. Việc sửa source hay
+bật flag không tự triển khai lại ứng dụng hoặc tạo một lần chạy benchmark.
 
 Bộ này bổ sung cho [journey memory tích hợp hiện có](DATASET.md). Hợp đồng và
 quyền của bank tool được mô tả trong [hướng dẫn tích hợp](INTEGRATION.md).

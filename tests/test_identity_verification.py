@@ -35,11 +35,10 @@ def client(tmp_path):
 
 
 def new_session(client, identifier, channel="web"):
-    body = {"demo_profile": identifier, "mode": "harness"}
-    route, headers = "/sessions", {}
-    if channel != "web":
-        route, headers = "/admin/sessions", ADMIN
-        body["channel"] = channel
+    # These compatibility tests intentionally exercise a pinned bank profile.
+    # The public anonymous path is covered by test_agent_identity.py.
+    body = {"demo_profile": identifier, "mode": "harness", "channel": channel}
+    route, headers = "/admin/sessions", ADMIN
     response = client.post(route, headers=headers, json=body)
     assert response.status_code == 200, response.text
     session = response.json()
@@ -55,7 +54,7 @@ def verify(client, session, auth, phone):
 def tools(client, session, auth):
     response = client.get(f"/sessions/{session['session_id']}/tools", headers=auth)
     assert response.status_code == 200, response.text
-    return {tool["name"] for tool in response.json()["tools"]}
+    return {tool["name"] for tool in response.json()["tools"] if tool["name"] != "verify_identity"}
 
 
 def test_demo_directory_exposes_ten_phone_profiles_from_identity_data(client):
@@ -218,11 +217,16 @@ def test_admin_telegram_link_normalizes_phone_and_preserves_runtime_alias(client
     assert row["channel"] == "telegram"
 
 
-@pytest.mark.parametrize("identifier,expected_status", [(900000001, 422), ("0900000099", 400), ("+1900000001", 400)])
+@pytest.mark.parametrize("identifier,expected_status", [(900000001, 422), ("0900000099", 200), ("+1900000001", 200)])
 def test_unknown_or_numeric_identity_is_not_silently_bound(client, identifier, expected_status):
     response = client.post("/sessions", json={"demo_profile": identifier})
     assert response.status_code == expected_status
-    assert not client.app.state.harness.db.all("SELECT * FROM sessions")
+    if expected_status == 422:
+        assert not client.app.state.harness.db.all("SELECT * FROM sessions")
+    else:
+        assert response.json()["user_id"] is None
+        assert response.json()["identity_status"] == "unverified"
+        assert response.json()["brief"] == {"redacted": True}
 
 
 @pytest.mark.parametrize("include_phone", [False, True])

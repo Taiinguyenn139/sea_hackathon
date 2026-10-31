@@ -225,11 +225,12 @@ def create_app(settings=None):
 
     @app.post("/sessions")
     def create(body: SessionInput):
-        return harness.new_session(body.demo_profile, body.mode)
+        return harness.new_session(mode=body.mode)
 
     @app.get("/sessions/{sid}")
     def get_session(sid: str, request: Request):
-        s = owner_or_staff(sid, request)
+        owner_or_staff(sid, request)
+        s = harness.prepare_public_session(sid)
         h = db.one("SELECT id FROM handoffs WHERE session_id=? AND status!='completed'", (sid,))
         return {
             "session_id": sid,
@@ -262,8 +263,9 @@ def create_app(settings=None):
 
     @app.get("/sessions/{sid}/tools")
     def tool_definitions(sid: str, request: Request):
-        session = owner(sid, request)
-        return {"tools": harness.engine.bank.definitions(session["customer_id"], sid)}
+        owner(sid, request)
+        session = harness.prepare_public_session(sid)
+        return {"tools": harness.engine.agent_definitions(session)}
 
     @app.post("/sessions/{sid}/verify")
     def verify(sid: str, body: VerifyInput, request: Request):
@@ -294,7 +296,7 @@ def create_app(settings=None):
     @app.post("/sessions/{sid}/end")
     def end(sid: str, request: Request):
         s = owner(sid, request)
-        with harness.engine.lock(s["customer_id"]):
+        with harness.engine.lock("session:" + sid), harness.engine.lock(s["customer_id"]):
             harness.engine.memory.flush(s["customer_id"])
             if s["status"] == "waiting_human":
                 raise HTTPException(409, "Complete handoff before ending session")
@@ -489,6 +491,7 @@ def create_app(settings=None):
                 "playbook": db.setting("playbook"),
                 "input_guard_version": VERSION,
                 "input_guard_semantic": settings.llm_backend == "openai",
+                "identity_history_enabled": settings.identity_history_enabled,
             },
             "faults": db.all("SELECT * FROM faults"),
             "memory_jobs": db.all("SELECT turn_id,status,error FROM memory_jobs WHERE status!='processed'"),

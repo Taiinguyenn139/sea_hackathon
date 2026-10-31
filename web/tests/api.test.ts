@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, normalizeTurns, request } from "../src/api";
+import {
+  ApiError,
+  createChatSession,
+  normalizeTurns,
+  request,
+} from "../src/api";
 afterEach(() => vi.unstubAllGlobals());
 describe("API boundary", () => {
   it("sends bearer only when a customer capability is supplied and includes CSRF for staff writes", async () => {
@@ -16,6 +21,26 @@ describe("API boundary", () => {
     expect(options.credentials).toBe("include");
     expect(options.headers["X-CSRF-Token"]).toBe("csrf-value");
     expect(options.headers.Authorization).toBeUndefined();
+  });
+  it("creates a neutral chat session without selecting a customer or sending credentials", async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          session_id: "anonymous",
+          session_token: "capability",
+          user_id: null,
+          identity_status: "unverified",
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const session = await createChatSession();
+    const [url, options] = fetch.mock.calls[0];
+    expect(url).toMatch(/\/sessions$/);
+    expect(JSON.parse(options.body)).toEqual({ mode: "harness" });
+    expect(options.headers.Authorization).toBeUndefined();
+    expect(session.user_id).toBeNull();
+    expect(session.identity_status).toBe("unverified");
   });
   it("reports authorization failures without treating error JSON as successful data", async () => {
     vi.stubGlobal(

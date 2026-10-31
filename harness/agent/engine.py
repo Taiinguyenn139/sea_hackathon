@@ -5,7 +5,7 @@ import threading
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import yaml
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -40,6 +40,7 @@ class TurnState(TypedDict, total=False):
     confirmations: list
     cards: list
     action_notes: list
+    handoff_only: bool
 
 
 def event(guard, reason, action="fallback", attempt=0):
@@ -90,6 +91,7 @@ class Engine:
         self.settings = settings
         self.memory = Memory(db, settings)
         self.bank = BankTools(db)
+        self.identity_handler: Any = None
         self.locks = {}
         self.locks_lock = threading.Lock()
         cp_path = ":memory:" if db.path == ":memory:" else db.path + ".checkpoints"
@@ -108,7 +110,7 @@ class Engine:
             "wait_human",
         ]:
             graph.add_node(name, getattr(self, name))
-        graph.set_entry_point("load_context")
+        graph.set_conditional_entry_point(lambda s: "handoff_prepare" if s.get("handoff_only") else "load_context")
         graph.add_edge("load_context", "plan")
         graph.add_conditional_edges("plan", lambda s: "handoff_prepare" if s["plan"].get("handoff") else "select_cards")
         graph.add_edge("select_cards", "call_tools")
@@ -137,7 +139,16 @@ class Engine:
             (session.get("id"), customer),
         ))
 
-    def run(self, session, text, turn_id):
+    def agent_definitions(self, session):
+        from harness.agent.tool_loop import definitions
+
+        return definitions(self, session)
+
+    def run(self, session, text, turn_id, *, source="web"):
+        if self.settings.llm_backend == "openai":
+            from harness.agent.tool_loop import AgentLoop
+
+            return AgentLoop(self).run(session, text, turn_id, source)
         with self.lock(session["customer_id"]):
             config = {"configurable": {"thread_id": session["id"]}}
             try:
@@ -163,6 +174,7 @@ class Engine:
                         "plan": {},
                         "draft": "",
                         "reply": "",
+                        "handoff_only": False,
                     },
                     config,
                 )
@@ -319,7 +331,8 @@ class Engine:
         def call(name, args):
             nonlocal error
             args = {**args, "as_of": as_of}
-            result = self.bank.call(name, args, session["customer_id"], session["id"], idempotency_key=s["turn_id"])
+            result = self.bank.call(name, args, session["customer_id"], session["id"],
+                                    idempotency_key=ident("op_", [s["turn_id"], name, args]))
             calls.append({"id": result["tool_call_id"], "tool": name, "args": args, "result": result})
             error = error or bool(result["error"])
             for fact in result["facts"]:

@@ -111,8 +111,14 @@ def test_telegram_phone_identity_resumes_web_and_updates_shared_memory(client):
     income = [f["value"] for f in trace["facts"] if f["key"] == "income" and f["source_type"] == "customer"]
     assert income == ["50000000"]
     assert client.get(f"/sessions/{sid}", headers=auth).json()["identity_status"] == "identified"
-    # The public demo selector cannot be used to claim a phone-keyed customer.
-    assert client.post("/sessions", json={"demo_profile": customer}).status_code == 400
+    # A legacy selector value now creates an anonymous session; it cannot claim
+    # the OTP-protected profile or read its shared history.
+    anonymous = client.post("/sessions", json={"demo_profile": customer})
+    assert anonymous.status_code == 200
+    assert anonymous.json()["identity_status"] == "unverified"
+    assert anonymous.json()["user_id"] is None
+    assert anonymous.json()["brief"] == {"redacted": True}
+    assert db.one("SELECT customer_id FROM sessions WHERE id=?", (anonymous.json()["session_id"],))["customer_id"] != customer
     assert client.get(f"/sessions/{sid}/turns").status_code == 401
 
 

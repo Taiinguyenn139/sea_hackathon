@@ -85,7 +85,7 @@ export type Profile = {
 };
 export type ChatSession = {
   session_id: string;
-  user_id?: string;
+  user_id?: string | null;
   session_token: string;
   identity_status: string;
   brief?: Record<string, unknown>;
@@ -93,6 +93,12 @@ export type ChatSession = {
   status?: string;
   demo_profile?: string;
 };
+export function createChatSession(): Promise<ChatSession> {
+  return request<ChatSession>("/sessions", {
+    method: "POST",
+    body: { mode: "harness" },
+  });
+}
 export type Turn = {
   turn_id?: string;
   id?: string;
@@ -103,7 +109,7 @@ export type Turn = {
 export type Reply = {
   reply: string;
   identity_status?: string;
-  user_id?: string;
+  user_id?: string | null;
   brief?: Record<string, unknown>;
   used_fact_ids: string[];
   guard_events: unknown[];

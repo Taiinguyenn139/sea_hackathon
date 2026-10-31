@@ -145,6 +145,19 @@ def test_phone_claim_is_masked_and_classified_before_identity_route(client, monk
     async def classify(self, url, **kwargs):
         request = kwargs["json"]
         requests.append(request)
+        if "tools" in request:
+            if any(m["role"] == "tool" for m in request["messages"]):
+                choice = {"finish_reason": "stop", "message": {"content": '{"draft":"Đã nhận diện hồ sơ demo."}'}}
+            else:
+                choice = {"finish_reason": "tool_calls", "message": {"tool_calls": [{
+                    "id": "identity", "type": "function", "function": {
+                        "name": "verify_identity", "arguments": '{"phone":"0900000001"}',
+                    },
+                }]}}
+            return httpx.Response(200, json={"choices": [choice]}, request=httpx.Request("POST", url))
+        if "Trích" in request["messages"][0]["content"]:
+            return httpx.Response(200, json={"choices": [{"message": {"content": '{"spans":[]}'}}]},
+                                  request=httpx.Request("POST", url))
         assert "INPUT_SECURITY_CLASSIFIER" in request["messages"][0]["content"]
         classified_text = json.loads(request["messages"][1]["content"])["text"]
         assert "0900000001" not in classified_text
@@ -156,15 +169,16 @@ def test_phone_claim_is_masked_and_classified_before_identity_route(client, monk
 
     monkeypatch.setattr(httpx.AsyncClient, "post", classify)
     result = post(client, sid, headers, "Số điện thoại của tôi là 0900000001").json()
-    assert len(requests) == 1
+    assert len(requests) == (4 if category == "safe" else 1)
     harness = client.app.state.harness
     if category == "safe":
         assert result["identity_status"] == "verified"
         assert harness.session(sid)["verified"]
-        assert not harness.db.all("SELECT * FROM memory_jobs")
+        assert all(job["status"] == "processed" for job in harness.db.all("SELECT * FROM memory_jobs"))
+        assert not harness.db.all("SELECT * FROM facts WHERE source_type='customer'")
         assert len(harness.db.all("SELECT * FROM tool_calls WHERE tool='verify_identity'")) == 1
         assert post(client, sid, headers, "Số điện thoại của tôi là 0900000001").json() == result
-        assert len(requests) == 1
+        assert len(requests) == 4
     else:
         assert result["guard_events"][0]["guard_id"] == "G9"
         assert result["identity_status"] == "unverified"
@@ -210,7 +224,7 @@ def test_semantic_rejection_and_fail_closed(client, monkeypatch, outcome, guard)
     assert_no_agent_writes(client)
 
 
-def test_allowed_turn_has_four_llm_calls_and_duplicate_has_none(client, monkeypatch):
+def test_allowed_turn_has_guard_agent_and_extraction_calls_and_duplicate_has_none(client, monkeypatch):
     sid, headers = session(client)
     enable_llm(client)
     calls = []
@@ -233,10 +247,10 @@ def test_allowed_turn_has_four_llm_calls_and_duplicate_has_none(client, monkeypa
 
     monkeypatch.setattr(httpx.AsyncClient, "post", complete)
     first = post(client, sid, headers, "Thu nhập 45 triệu").json()
-    assert len(calls) == 4
+    assert len(calls) == 3
     assert "INPUT_SECURITY_CLASSIFIER" in calls[0]
     assert post(client, sid, headers, "Thu nhập 45 triệu").json() == first
-    assert len(calls) == 4
+    assert len(calls) == 3
 
 
 def test_classifier_backup_can_accept_without_running_agent(client, monkeypatch):
@@ -333,9 +347,9 @@ def test_telegram_approved_message_runs_classifier_once(client, monkeypatch):
     }}
     dispatcher.accept(payload)
     dispatcher.replay()
-    assert len(calls) == 4
+    assert len(calls) == 3
     assert sum("INPUT_SECURITY_CLASSIFIER" in instruction for instruction in calls) == 1
     dispatcher.accept(payload)
     dispatcher.replay()
-    assert len(calls) == 4
+    assert len(calls) == 3
     assert len(harness.db.all("SELECT * FROM turns")) == 1
