@@ -222,3 +222,21 @@ ngày gọi bắt buộc và adapter agent trên main. [Dữ liệu giả lập]
 fixtures nghiệp vụ. Backend nhận diện phone demo dùng
 `simulators/datasets/identity_v1/identities.json` qua registry `harness/identity.py`;
 alias `hoa`/`minh` được giữ để dùng tiếp memory cũ.
+
+## Nhận diện cùng hồ sơ trên web và Telegram trong bản demo
+
+Màn hình chat chính luôn cho nhập tin nhắn ngay, kể cả khi bật
+`DEMO_PHONE_IDENTITY=true`. Lần gửi đầu tạo phiên ẩn danh bằng
+`POST /sessions` với `{mode: "harness"}`. Khách gửi số điện thoại của mình ngay
+trong chat; AI quyết định gọi `verify_identity` và chỉ kết nối hồ sơ khi tool
+trả thành công. Không có ô nhập số riêng, bước chọn hồ sơ hoặc biểu mẫu OTP.
+
+Mỗi phiên giữ transcript, bản nháp và handoff riêng. Trên web demo, tạo phiên
+mới mở một phiên ẩn danh để có thể nhận diện người khác; lịch sử phiên cũ vẫn
+còn. Các phiên đã kết nối cùng hồ sơ dùng chung memory theo quyền của backend.
+
+Backend vẫn giữ `POST /demo/phone/session` cho các tích hợp demo cũ khi bật
+flag; màn hình chat chính không gọi API này. Telegram có cơ chế liên kết số
+riêng theo cấu hình demo; khi tắt flag, luồng contact/OTP vẫn được hỗ trợ ở
+backend. Nhận diện demo không thay thế đăng nhập khách hàng để dùng CRM.
+Chi tiết ở [Telegram](docs/telegram.md).

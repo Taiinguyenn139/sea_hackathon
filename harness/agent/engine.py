@@ -205,6 +205,15 @@ class Engine:
                 state.update(reply=DEFAULT_REPLY, used_fact_ids=[], source_spans=[], disclosures=[])
                 return state
 
+    def context_turns(self, session):
+        # A Telegram guest may identify a fixture later in the same transcript.
+        # Its earlier owned facts remain attached to the guest, not the fixture.
+        return self.db.all(
+            "SELECT t.id,t.text,t.reply FROM turns t WHERE t.session_id=? AND NOT EXISTS "
+            "(SELECT 1 FROM memory_jobs j WHERE j.turn_id=t.id AND j.customer_id<>?) ORDER BY t.created_at,t.id",
+            (session["id"], session["customer_id"]),
+        )
+
     def load_context(self, s):
         emit("status", stage="preparing")
         session = s["session"]
@@ -212,9 +221,7 @@ class Engine:
         job = self.db.one("SELECT seq FROM memory_jobs WHERE turn_id=?", (s["turn_id"],))
         if self.memory_access(session):
             self.memory.flush(customer, job["seq"] - 1 if job else None)
-        current = self.db.all(
-            "SELECT id,text,reply FROM turns WHERE session_id=? ORDER BY created_at,id", (session["id"],)
-        )
+        current = self.context_turns(session)
         known = {}
         facts = {}
         parts = []
@@ -229,7 +236,9 @@ class Engine:
             parts.append({"type": "call_brief", "fact_ids": list(facts)})
         elif self.memory_access(session) and session["mode"] == "full_history":
             old = self.db.all(
-                "SELECT t.id,t.text,t.reply FROM turns t JOIN sessions s ON s.id=t.session_id WHERE s.customer_id=? AND s.id<>? ORDER BY t.created_at,t.id",
+                "SELECT t.id,t.text,t.reply FROM turns t JOIN sessions s ON s.id=t.session_id "
+                "WHERE s.customer_id=? AND s.id<>? AND NOT EXISTS "
+                "(SELECT 1 FROM memory_jobs j WHERE j.turn_id=t.id AND j.customer_id<>s.customer_id) ORDER BY t.created_at,t.id",
                 (customer, session["id"]),
             )
             for t in old:

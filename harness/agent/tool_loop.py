@@ -120,8 +120,18 @@ class AgentLoop:
     def _save(self, turn_id, sid, run):
         self.db.execute("INSERT OR REPLACE INTO agent_runs VALUES(?,?,?,?)", (turn_id, sid, canonical(run), now()))
 
-    def _context(self, state):
+    def _context(self, state, run):
         session = self.db.one("SELECT * FROM sessions WHERE id=?", (state["session"]["id"],))
+        previous_customer = run.get("history_customer_id")
+        if previous_customer and previous_customer != session["customer_id"] and self.db.one(
+            "SELECT id FROM guest_customers WHERE id=? AND channel='telegram'", (previous_customer,),
+        ):
+            # Keep the current turn's tool envelopes, but do not transfer an
+            # unbound Telegram guest's older conversation into a fixture.
+            start = run.get("current_message_start", 0)
+            run["messages"] = run["messages"][start:]
+            run["current_message_start"] = 0
+        run["history_customer_id"] = session["customer_id"]
         state["session"] = session
         with self.engine.lock(session["customer_id"]):
             state.update(self.engine.load_context(state))
@@ -151,10 +161,13 @@ class AgentLoop:
         # Consent belongs to a live, unfulfilled request. An old successful
         # action or a later cancellation closes that request, even across turns.
         texts = []
+        eligible_turns = {row["id"] for row in self.engine.context_turns(state["session"])}
         for row in self.db.all(
             "SELECT t.id,t.text,x.data FROM turns t LEFT JOIN traces x ON x.turn_id=t.id "
             "WHERE t.session_id=? ORDER BY t.rowid", (state["session"]["id"],)
         ):
+            if row["id"] not in eligible_turns:
+                continue
             low = normalized(row["text"])
             target = r"(?:goi|hen|lich|dat lich|lien he)" if name == "schedule_callback" else r"(?:gui|tom tat|tong ket)"
             cancelled = re.search(
@@ -288,13 +301,14 @@ class AgentLoop:
         if current_deadline() is not None:
             deadline = min(deadline, current_deadline())
         try:
-            context = self._context(state)
+            context = self._context(state, run)
             if not run["messages"]:
-                rows = self.db.all("SELECT text,reply FROM turns WHERE session_id=? ORDER BY created_at,id", (session["id"],))
-                for row in rows[:-1][-15:]:
+                rows = self.engine.context_turns(state["session"])
+                for row in [row for row in rows if row["id"] != turn_id][-15:]:
                     run["messages"].append({"role": "user", "content": row["text"]})
                     if row["reply"]:
                         run["messages"].append({"role": "assistant", "content": row["reply"]})
+                run["current_message_start"] = len(run["messages"])
                 run["messages"].append({"role": "user", "content": text})
                 self._save(turn_id, session["id"], run)
             for record in run["calls"]:
@@ -330,7 +344,7 @@ class AgentLoop:
                         run["messages"].append({"role": "tool", "tool_call_id": proposal["id"], "content": canonical(record["result"])})
                         pending["index"] = index + 1
                         self._save(turn_id, session["id"], run)
-                        context = self._context(state)
+                        context = self._context(state, run)
                         # Context reload can replace the fact dict; retain the
                         # facts returned in this turn's actual tool receipts.
                         for old in run["calls"]:
