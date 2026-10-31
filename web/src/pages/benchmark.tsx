@@ -13,6 +13,7 @@ import {
 import { ApiError, errorMessage, request, type RunSummary } from "../api";
 import { useStaff } from "../staff-auth";
 import { Empty, ErrorBanner, PageHeading, Spinner } from "../ui";
+import { SalesImprovements } from "../sales-improvements";
 type Metrics = Record<string, number | null>;
 type Run = RunSummary & {
   schema_version: number;
@@ -42,6 +43,13 @@ const modes = [
   },
 ];
 const kpis = [
+  {
+    key: "conversion_rate",
+    label: "Tỷ lệ chuyển đổi",
+    description: "Kết quả mô phỏng, chưa phải doanh số thực tế",
+    unit: "%",
+    better: "higher",
+  },
   {
     key: "reask_rate",
     label: "Tỷ lệ hỏi lại",
@@ -174,6 +182,11 @@ export function Benchmark() {
           </button>
         }
       />
+      <p>
+        <a className="button secondary" href="/sales">
+          Quản lý kịch bản & huấn luyện chuyên viên
+        </a>
+      </p>
       <div className="mode-cards">
         {modes.map(({ key, label, description, icon: Icon }) => (
           <article
@@ -326,6 +339,9 @@ export function Benchmark() {
           </>
         )}
       </section>
+      {!loading && !detailLoading && run && (
+        <SalesImprovements key={run.run_id} runId={run.run_id} runs={runs} />
+      )}
       <div className="method-note">
         <FlaskConical size={23} />
         <div>

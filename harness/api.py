@@ -9,9 +9,9 @@ import sqlite3
 import threading
 import time
 from contextlib import asynccontextmanager, suppress
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +22,7 @@ from bank_tools.service import FIXTURES
 from harness.config import Settings
 from harness.db import Database
 from harness.identity import get_profile
+from harness.improvements import build_plan, compare_runs
 from harness.llm import DEFAULT_REPLY, LLMUnavailable
 from harness.llm import logger as llm_logger
 from harness.schemas import (
@@ -54,6 +55,12 @@ class PlaybookInput(Input):
     version: str = Field(max_length=100)
 
 
+class ImprovementInput(Input):
+    status: Literal["draft", "in_progress", "ready_for_evaluation"]
+    script: str = Field(min_length=1, max_length=4000)
+    notes: str = Field(default="", max_length=4000)
+
+
 class ReconcileInput(Input):
     status: str
     provider_message_id: str | None = None
@@ -76,6 +83,13 @@ def create_app(settings=None):
 
         app.state.dispatcher = Dispatcher(harness)
         app.state.worker_error = None
+        for job in sales.rows("job"):
+            if job["status"] == "running":
+                job.update(status="failed", error="Đánh giá bị gián đoạn; chạy lại thủ công.")
+                sales.put("job", job)
+                version = sales.get("playbook", job["version"])
+                version["status"] = "failed"
+                sales.put("playbook", version)
         recovered = False
 
         def preflight():
@@ -125,10 +139,20 @@ def create_app(settings=None):
                 except recovery_errors:
                     app.state.worker_error = "background_processing_failed"
 
+        async def sales_worker():
+            while True:
+                await asyncio.sleep(2)
+                await asyncio.to_thread(sales.run_next)
+
+        sales_task = asyncio.create_task(sales_worker())
         worker_task = asyncio.create_task(worker())
         try:
             yield
         finally:
+            sales.stopping.set()
+            sales_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await sales_task
             worker_task.cancel()
             with suppress(asyncio.CancelledError):
                 await worker_task
@@ -154,7 +178,7 @@ def create_app(settings=None):
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
         allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
     )
 
@@ -503,6 +527,42 @@ def create_app(settings=None):
         except (ValueError, OSError):
             raise HTTPException(503, "Run result invalid")
 
+    def improvement_plan(rid: str):
+        saved = {row["action_id"]: row for row in db.all("SELECT * FROM sales_improvements WHERE run_id=?", (rid,))}
+        return build_plan(run_detail(rid), saved)
+
+    @app.get("/eval/runs/{rid}/improvements", dependencies=[Depends(staff)])
+    def improvements(rid: str):
+        return improvement_plan(rid)
+
+    @app.patch("/eval/runs/{rid}/improvements/{action_id}", dependencies=[Depends(staff)])
+    def save_improvement(rid: str, action_id: str, body: ImprovementInput):
+        plan = improvement_plan(rid)
+        if not plan["eligible"]:
+            raise HTTPException(409, "Chỉ cập nhật kế hoạch của lượt dev đã hoàn tất.")
+        if action_id not in {action["id"] for action in plan["actions"]}:
+            raise HTTPException(404, "Không tìm thấy đề xuất trong lượt đánh giá này.")
+        if not body.script.strip():
+            raise HTTPException(422, "Lời tư vấn không được để trống.")
+        db.execute(
+            "INSERT INTO sales_improvements VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(run_id,action_id) DO UPDATE SET "
+            "status=excluded.status,script=excluded.script,notes=excluded.notes,updated_at=excluded.updated_at",
+            (rid, action_id, body.status, body.script.strip(), body.notes.strip(), datetime.now(UTC).isoformat()),
+        )
+        return improvement_plan(rid)
+
+    @app.get("/eval/runs/{rid}/comparison", dependencies=[Depends(staff)])
+    def improvement_comparison(rid: str, candidate_id: str):
+        return compare_runs(run_detail(rid), run_detail(candidate_id))
+
+    from harness.sales import Sales
+    from harness.sales import router as sales_router
+
+    sales = Sales(db, settings, run_detail)
+    app.state.sales = sales
+    app.include_router(sales_router(sales, staff))
+
     @app.post("/admin/sessions", dependencies=[Depends(admin)])
     def admin_session(body: AdminSessionInput):
         return harness.new_session(body.demo_profile, body.mode, body.channel, "eval:" + body.demo_profile)
@@ -525,9 +585,12 @@ def create_app(settings=None):
 
     @app.post("/admin/playbook", dependencies=[Depends(admin)])
     def playbook(body: PlaybookInput):
+        stored = db.one("SELECT id FROM sales_objects WHERE kind='playbook' AND id=?", (body.version,))
+        if stored and not settings.sales_sandbox:
+            raise HTTPException(409, "Kích hoạt kịch bản qua luồng duyệt /sales/playbooks.")
         if (
             not re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", body.version)
-            or not (Path("harness/playbooks") / (body.version + ".yaml")).is_file()
+            or not stored and not (Path("harness/playbooks") / (body.version + ".yaml")).is_file()
         ):
             raise HTTPException(422, "Unknown playbook version")
         db.set("playbook", body.version)
