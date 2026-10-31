@@ -6,6 +6,14 @@ Bankwise là chatbot fintech dùng dữ liệu ngân hàng hư cấu, gồm web 
 console chuyên viên, benchmark và adapter Telegram. Backend FastAPI/SQLite;
 frontend React/Vite. Chạy một backend process để giữ hợp đồng SQLite/checkpoint.
 
+## Các cuộc trò chuyện trên web
+
+- Sidebar liệt kê các phiên, đặt tên theo câu hỏi đầu tiên được chấp nhận; có tìm kiếm và đổi tên. Trên điện thoại dùng nút mở danh sách phiên trong header.
+- **Cuộc trò chuyện mới** tạo transcript và capability riêng, giữ cùng danh tính đã kết nối. Không kết thúc phiên cũ hay hủy handoff đang chờ. Memory của cùng khách hàng tiếp tục tuân theo quyền truy cập hiện có.
+- Chuyển phiên giữ bản nháp, lỗi gửi lại và nội dung từng phiên trong bộ nhớ UI. Trong lúc đang gửi, thao tác tạo/chuyển phiên tạm khóa để không gắn phản hồi vào sai hội thoại.
+- Danh sách/tên/capability lưu trong `sessionStorage` của tab hiện tại; tải lại tab lấy transcript từ backend. Chưa có tài khoản hoặc API liệt kê toàn bộ phiên khách hàng, nên không đồng bộ danh sách sang thiết bị/tab khác. Bản nháp chưa gửi không được lưu lâu dài; không lấy lại được danh sách khi đóng tab/xóa storage.
+- `POST /sessions/{sid}/new` yêu cầu capability của chính phiên nguồn, chỉ tạo phiên cho cùng khách hàng. API không cung cấp danh sách phiên công khai hoặc cho phép token một phiên đọc transcript phiên khác.
+
 ## Chạy local
 
 Cần Python 3.12, uv và Node.js 24. Docker cần cho kiểm thử image triển khai.

@@ -67,6 +67,52 @@ def test_verify_limit(client):
     assert client.post(f"/sessions/{sid}/verify", headers=b, json={"phone": "0900000001"}).status_code == 429
 
 
+@pytest.mark.parametrize("verified", [False, True])
+def test_new_conversation_keeps_identity_but_isolates_transcript_and_capability(client, verified):
+    sid, auth = session(client)
+    _, other = session(client, "minh")
+    if verified:
+        verify(client, sid, auth)
+    send(client, sid, auth, "Tôi muốn tìm hiểu vay mua nhà.")
+    assert client.post(f"/sessions/{sid}/new").status_code == 403
+    assert client.post(f"/sessions/{sid}/new", headers=other).status_code == 403
+    result = client.post(f"/sessions/{sid}/new", headers=auth)
+    assert result.status_code == 200, result.text
+    new = result.json()
+    new_auth = {"Authorization": "Bearer " + new["session_token"]}
+    assert new["session_id"] != sid
+    assert new["identity_status"] == ("verified" if verified else "unverified")
+    assert client.get(f"/sessions/{new['session_id']}/turns", headers=new_auth).json()["items"] == []
+    assert len(client.get(f"/sessions/{sid}/turns", headers=auth).json()["items"]) == 1
+    assert client.get(f"/sessions/{sid}", headers=auth).json()["status"] == "active"
+    assert client.get(f"/sessions/{new['session_id']}/turns", headers=auth).status_code == 403
+    assert client.get(f"/sessions/{sid}/turns", headers=new_auth).status_code == 403
+
+
+def test_new_conversation_does_not_end_waiting_handoff(client):
+    sid, auth = session(client)
+    verify(client, sid, auth)
+    handoff = send(client, sid, auth, "Tôi muốn gặp chuyên viên")
+    assert handoff["handoff_id"]
+    new = client.post(f"/sessions/{sid}/new", headers=auth).json()
+    assert new["session_id"] != sid
+    previous = client.get(f"/sessions/{sid}", headers=auth).json()
+    assert previous["status"] == "waiting_human"
+    assert previous["handoff_id"] == handoff["handoff_id"]
+
+
+def test_new_conversation_preserves_phone_linked_customer(client):
+    harness = client.app.state.harness
+    guest = harness.telegram_customer("chat-history-guest", "Khách kiểm thử")
+    original = harness._create_session(guest, phone_authenticated=True)
+    auth = {"Authorization": "Bearer " + original["session_token"]}
+    response = client.post(f"/sessions/{original['session_id']}/new", headers=auth)
+    assert response.status_code == 200
+    new = harness.session(response.json()["session_id"])
+    assert new["customer_id"] == guest
+    assert harness.can_chat(new)
+
+
 def test_staff_cookie_csrf(client):
     assert client.post("/staff/login", json={"password": "bad"}).status_code == 401
     r = client.post("/staff/login", json={"password": "staff-test"})
