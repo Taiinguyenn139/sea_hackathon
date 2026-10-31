@@ -163,14 +163,17 @@ class Memory:
         return self.db.all("SELECT * FROM facts WHERE customer_id=? ORDER BY observed_at,id", (customer,))
 
     def brief(self, customer):
-        self.flush(customer)
         from bank_tools.service import FIXTURES
+        from harness.identity import resolve_identity
 
+        customer = resolve_identity(customer) or customer
+        self.flush(customer)
         profile = next(x for x in FIXTURES["customers"] if x["id"] == customer)
         facts = self.facts(customer)
         return {
             "redacted": False,
             "customer_id": customer,
+            "user_id": profile["user_id"],
             "name": profile["name"],
             "cif": profile["cif"],
             "facts": facts,

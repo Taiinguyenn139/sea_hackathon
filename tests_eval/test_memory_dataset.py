@@ -49,9 +49,9 @@ def test_memory_contract_matches_scenario_and_current_bank():
     Scenario.model_validate(scenario)
     contract = MemoryContract.model_validate(expected)
     contract.validate_scenario(scenario)
-    bank = yaml.safe_load((ROOT / "bank_tools/fixtures/bank.yaml").read_text(encoding="utf-8"))
-    profile = next(row for row in bank["customers"] if row["id"] == scenario["profile"])
-    assert profile["dob"] == scenario["dob"]
+    identities = json.loads((ROOT / "simulators/datasets/identity_v1/identities.json").read_text())["identities"]
+    profile = next(row for row in identities if scenario["profile"] in (row["user_id"], row["runtime_profile"]))
+    assert profile["date_of_birth"] == scenario["dob"]
     oracle = Oracle(ROOT / "eval/oracle_fixtures/bank.json")
     for cp in contract.checkpoints:
         for fact in cp.facts:

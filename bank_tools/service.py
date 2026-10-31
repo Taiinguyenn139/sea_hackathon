@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import secrets
 import threading
 from datetime import UTC, date, datetime
 from inspect import signature
@@ -13,9 +12,33 @@ import yaml
 from bank_tools.auth import TOOL_ACCESS, AccessDenied, AuthContext, require_access
 from bank_tools.catalog import TOOL_NAMES, get_tool_definitions
 from bank_tools.core import BankTools as ToolClient
+from harness.identity import IDENTITY_PATH, get_profile, profiles, verify_identity
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "bank.yaml"
-FIXTURES = yaml.safe_load(FIXTURE_PATH.read_text())
+
+
+def _customer_profiles():
+    customers = yaml.safe_load((FIXTURE_PATH.parent / "customers.yaml").read_text())["customers"]
+    by_id = {}
+    cifs = set()
+    for customer in customers:
+        key, cif = customer["customer_id"], customer["cif"]
+        if key in by_id or cif in cifs:
+            raise ValueError("Duplicate customer_id or CIF in bank fixtures")
+        by_id[key] = customer
+        cifs.add(cif)
+    joined = []
+    for profile in profiles():
+        customer = by_id.get(profile["bank_customer_id"])
+        if not customer or (customer["full_name"], customer["segment"]) != (profile["name"], profile["segment"]):
+            raise ValueError("Identity mapping does not match the bank customer fixture")
+        joined.append({**profile, "cif": customer["cif"]})
+    return joined
+
+
+# Preserve the adapter export used by the engine and staff brief. DOB and
+# customer mapping now have one source: the validated ten-identity registry.
+FIXTURES = {"schema_version": 2, "customers": _customer_profiles()}
 
 
 def canonical(value):
@@ -34,6 +57,7 @@ def fixture_hash():
     digest = hashlib.sha256()
     for path in sorted(FIXTURE_PATH.parent.glob("*.yaml")):
         digest.update(path.name.encode() + b"\0" + path.read_bytes())
+    digest.update(b"identity_v1/identities.json\0" + IDENTITY_PATH.read_bytes())
     return digest.hexdigest()
 
 
@@ -52,11 +76,8 @@ class BankTools:
 
     @staticmethod
     def bank_id(customer_id):
-        profile = next((p for p in FIXTURES["customers"] if p["id"] == customer_id), None)
-        if not profile:
-            return customer_id
-        customers = yaml.safe_load((FIXTURE_PATH.parent / "customers.yaml").read_text())["customers"]
-        return next((p["customer_id"] for p in customers if p["cif"] == profile["cif"]), customer_id)
+        profile = get_profile(customer_id)
+        return profile["bank_customer_id"] if profile else customer_id
 
     def definitions(self, customer_id, session_id):
         return get_tool_definitions(context=self.auth_context(customer_id, session_id))
@@ -67,13 +88,13 @@ class BankTools:
             result = {"tool_call_id": tc, "tool": tool, "as_of": None, "data": {}, "facts": [], "error": None}
             try:
                 if tool == "verify_identity":
-                    # Reuse main's demo DOB verifier, separate from the nine business tools.
+                    # The server-bound session selects the registry identity. The
+                    # caller supplies a DOB, never the identity being verified.
                     session = self.db.one("SELECT * FROM sessions WHERE id=?", (session_id,))
                     if not session or session["customer_id"] != customer_id or session["status"] == "ended":
                         raise AccessDenied("forbidden: invalid verification session")
-                    profile = next((p for p in FIXTURES["customers"] if p["id"] == customer_id), None)
                     result["as_of"] = date.fromisoformat(args["as_of"]).isoformat()
-                    result["data"] = {"verified": bool(profile and secrets.compare_digest(profile["dob"], args["dob"]))}
+                    result["data"] = {"verified": verify_identity(customer_id, args["dob"])}
                     self._save_call(session_id, tool, args, result, customer_id)
                     return result
                 if tool not in TOOL_NAMES:

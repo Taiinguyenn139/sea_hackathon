@@ -19,6 +19,7 @@ from pydantic import Field
 from bank_tools.service import FIXTURES
 from harness.config import Settings
 from harness.db import Database
+from harness.identity import get_profile
 from harness.schemas import (
     AdminSessionInput,
     CompleteInput,
@@ -196,7 +197,16 @@ def create_app(settings=None):
     @app.get("/demo/profiles")
     def profiles():
         return {
-            "profiles": [{"id": p["id"], "name": p["name"], "dob": p["dob"]} for p in FIXTURES["customers"]],
+            "profiles": [
+                {
+                    "id": p["user_id"],
+                    "phone": p["phone"],
+                    "name": p["name"],
+                    "dob": p["dob"],
+                    "runtime_profile": p["runtime_profile"],
+                }
+                for p in FIXTURES["customers"]
+            ],
             "fictional": True,
         }
 
@@ -213,6 +223,7 @@ def create_app(settings=None):
             "status": s["status"],
             "identity_status": "verified" if s["verified"] else "unverified",
             "customer_id": s["customer_id"] if s["verified"] else None,
+            "user_id": get_profile(s["customer_id"])["user_id"] if s["verified"] else None,
             "handoff_id": h["id"] if h else None,
         }
 
@@ -296,9 +307,10 @@ def create_app(settings=None):
 
     @app.get("/customers/{customer}/brief", dependencies=[Depends(staff)])
     def brief(customer: str):
-        if customer not in {p["id"] for p in FIXTURES["customers"]}:
+        profile = get_profile(customer)
+        if not profile:
             raise HTTPException(404, "Customer not found")
-        return harness.engine.memory.brief(customer)
+        return harness.engine.memory.brief(profile["id"])
 
     @app.get("/traces/{sid}", dependencies=[Depends(staff)])
     def traces(sid: str):
@@ -396,10 +408,11 @@ def create_app(settings=None):
 
     @app.post("/admin/identity-links/telegram", dependencies=[Depends(admin)])
     def identity_link(body: LinkInput):
-        if body.customer_id not in {p["id"] for p in FIXTURES["customers"]}:
+        profile = get_profile(body.customer_id)
+        if not profile:
             raise HTTPException(400, "Unknown demo profile")
         db.execute(
-            "INSERT OR REPLACE INTO identity_links VALUES(?,?,?)", ("telegram", body.external_id, body.customer_id)
+            "INSERT OR REPLACE INTO identity_links VALUES(?,?,?)", ("telegram", body.external_id, profile["id"])
         )
         return {"status": "linked"}
 

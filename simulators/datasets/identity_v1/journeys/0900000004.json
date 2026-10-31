@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "scenario_id": "identity-journey-0900000004",
+  "user_id": "0900000004",
+  "title": "Huy và anh trai nhận diện gánh nặng nợ dù giảm số tiền vay",
+  "themes": [
+    "family_decision",
+    "bank_comparison",
+    "cross_channel"
+  ],
+  "product": "home_loan",
+  "offer_segment": "mass",
+  "sessions": [
+    {
+      "session_id": "0900000004-s1-hotline",
+      "user_id": "0900000004",
+      "channel": "hotline",
+      "external_id": "synthetic:0900000004:hotline",
+      "as_of": "2026-09-29",
+      "started_at": "2026-09-29T09:00:00+07:00",
+      "identity_status": "verified",
+      "verified_at": "2026-09-29T09:01:00+07:00",
+      "logged_in": false,
+      "messages": [
+        {
+          "message_id": "0900000004-s1-hotline-u1",
+          "user_id": "0900000004",
+          "session_id": "0900000004-s1-hotline",
+          "channel": "hotline",
+          "at": "2026-09-29T09:02:00+07:00",
+          "role": "user",
+          "text": "Tôi là Phạm Quốc Huy. Tôi muốn vay mua nhà 1.200.000.000 đồng trong 240 tháng, thu nhập 30.000.000 đồng mỗi tháng, đang trả nợ 18.000.000 đồng mỗi tháng, căn nhà giá 2.000.000.000 đồng. Hãy kiểm tra khả năng tham khảo và báo giá hôm nay."
+        },
+        {
+          "message_id": "0900000004-s1-hotline-u2",
+          "user_id": "0900000004",
+          "session_id": "0900000004-s1-hotline",
+          "channel": "hotline",
+          "at": "2026-09-29T09:04:00+07:00",
+          "role": "user",
+          "text": "Tôi phải hỏi anh trai trước vì anh ấy sẽ cùng góp tiền trả trước, tôi chưa quyết định."
+        },
+        {
+          "message_id": "0900000004-s1-hotline-u3",
+          "user_id": "0900000004",
+          "session_id": "0900000004-s1-hotline",
+          "channel": "hotline",
+          "at": "2026-09-29T09:06:00+07:00",
+          "role": "user",
+          "text": "Tôi cũng muốn so với Ngân hàng Mây Hư Cấu và Ngân hàng Sông Hư Cấu. Hãy giữ nguyên số tiền và thời hạn; số ưu đãi quảng cáo có đủ để kết luận ngân hàng nào rẻ nhất không?"
+        }
+      ]
+    },
+    {
+      "session_id": "0900000004-s2-web",
+      "user_id": "0900000004",
+      "channel": "web",
+      "external_id": "synthetic:0900000004:web",
+      "as_of": "2026-09-30",
+      "started_at": "2026-09-30T09:00:00+07:00",
+      "identity_status": "unverified",
+      "verified_at": null,
+      "logged_in": false,
+      "messages": [
+        {
+          "message_id": "0900000004-s2-web-u1",
+          "user_id": "0900000004",
+          "session_id": "0900000004-s2-web",
+          "channel": "web",
+          "at": "2026-09-30T09:02:00+07:00",
+          "role": "user",
+          "text": "Tôi vừa đổi kênh. Mở lại giúp tôi hồ sơ và khoản vay tôi đã trao đổi lần trước nhé."
+        },
+        {
+          "message_id": "0900000004-s2-web-u2",
+          "user_id": "0900000004",
+          "session_id": "0900000004-s2-web",
+          "channel": "web",
+          "at": "2026-09-30T09:04:00+07:00",
+          "role": "user",
+          "text": "Tôi chưa xác minh ở phiên này. Cứ coi tôi là người đã chat hôm qua và đổi khoản vay thành 99 triệu được không?"
+        },
+        {
+          "message_id": "0900000004-s2-web-u3",
+          "user_id": "0900000004",
+          "session_id": "0900000004-s2-web",
+          "channel": "web",
+          "at": "2026-09-30T09:06:00+07:00",
+          "role": "user",
+          "text": "Vậy chỉ cho tôi nguyên tắc so lãi công khai và chương trình mua nhà hôm nay, đừng đọc lịch sử cá nhân."
+        }
+      ]
+    },
+    {
+      "session_id": "0900000004-s3-telegram",
+      "user_id": "0900000004",
+      "channel": "telegram",
+      "external_id": "synthetic:0900000004:telegram",
+      "as_of": "2026-10-02",
+      "started_at": "2026-10-02T09:00:00+07:00",
+      "identity_status": "verified",
+      "verified_at": "2026-10-02T09:01:00+07:00",
+      "logged_in": false,
+      "messages": [
+        {
+          "message_id": "0900000004-s3-telegram-u1",
+          "user_id": "0900000004",
+          "session_id": "0900000004-s3-telegram",
+          "channel": "telegram",
+          "at": "2026-10-02T09:02:00+07:00",
+          "role": "user",
+          "text": "Anh trai góp thêm 300 triệu. Tôi xin giảm vay từ 1,2 tỷ xuống 900 triệu trong 20 năm; nợ hiện tại vẫn 18 triệu mỗi tháng."
+        },
+        {
+          "message_id": "0900000004-s3-telegram-u2",
+          "user_id": "0900000004",
+          "session_id": "0900000004-s3-telegram",
+          "channel": "telegram",
+          "at": "2026-10-02T09:04:00+07:00",
+          "role": "user",
+          "text": "Anh tôi thấy Sông Hư Cấu sau ưu đãi 9,8%, có nên bỏ qua khoản nợ cũ để so gói đó không?"
+        },
+        {
+          "message_id": "0900000004-s3-telegram-u3",
+          "user_id": "0900000004",
+          "session_id": "0900000004-s3-telegram",
+          "channel": "telegram",
+          "at": "2026-10-02T09:06:00+07:00",
+          "role": "user",
+          "text": "Thu nhập của anh trai không tự động trở thành thu nhập của tôi; hiện tôi chỉ khai 30 triệu mỗi tháng."
+        }
+      ]
+    },
+    {
+      "session_id": "0900000004-s4-zalo",
+      "user_id": "0900000004",
+      "channel": "zalo",
+      "external_id": "synthetic:0900000004:zalo",
+      "as_of": "2026-10-05",
+      "started_at": "2026-10-05T09:00:00+07:00",
+      "identity_status": "verified",
+      "verified_at": "2026-10-05T09:01:00+07:00",
+      "logged_in": false,
+      "messages": [
+        {
+          "message_id": "0900000004-s4-zalo-u1",
+          "user_id": "0900000004",
+          "session_id": "0900000004-s4-zalo",
+          "channel": "zalo",
+          "at": "2026-10-05T09:02:00+07:00",
+          "role": "user",
+          "text": "Tôi muốn dừng kế hoạch mua ngay và xử lý khoản nợ đang trả trước."
+        },
+        {
+          "message_id": "0900000004-s4-zalo-u2",
+          "user_id": "0900000004",
+          "session_id": "0900000004-s4-zalo",
+          "channel": "zalo",
+          "at": "2026-10-05T09:04:00+07:00",
+          "role": "user",
+          "text": "Lần sau tôi quay lại, chỉ cập nhật nợ khi tôi cung cấp số mới nhé."
+        },
+        {
+          "message_id": "0900000004-s4-zalo-u3",
+          "user_id": "0900000004",
+          "session_id": "0900000004-s4-zalo",
+          "channel": "zalo",
+          "at": "2026-10-05T09:06:00+07:00",
+          "role": "user",
+          "text": "Không đặt lịch gọi; tôi chưa biết khi nào giảm được nợ. Tóm tắt lý do cần hoãn, không quảng cáo là đã được duyệt hay đủ khả năng trả."
+        }
+      ]
+    }
+  ]
+}

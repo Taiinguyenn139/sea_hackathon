@@ -75,6 +75,8 @@ export function errorMessage(error: unknown): string {
 }
 export type Profile = {
   id?: string;
+  phone?: string;
+  runtime_profile?: string | null;
   key?: string;
   demo_profile?: string;
   name?: string;
@@ -84,6 +86,7 @@ export type Profile = {
 };
 export type ChatSession = {
   session_id: string;
+  user_id?: string;
   session_token: string;
   identity_status: string;
   brief?: Record<string, unknown>;

@@ -7,8 +7,9 @@ import time
 
 from fastapi import HTTPException
 
-from bank_tools.service import FIXTURES, canonical, ident, now
+from bank_tools.service import canonical, ident, now
 from harness.agent.engine import Engine
+from harness.identity import get_profile
 
 
 def token_hash(value):
@@ -22,8 +23,10 @@ class Harness:
         self.engine = Engine(db, settings)
 
     def new_session(self, profile, mode="harness", channel="web", external_id=None):
-        if profile not in {p["id"] for p in FIXTURES["customers"]}:
+        identity = get_profile(profile)
+        if not identity:
             raise HTTPException(400, "Unknown demo profile")
+        profile = identity["id"]
         self.engine.memory.flush(profile)
         sid = "s_" + secrets.token_hex(12)
         token = secrets.token_urlsafe(32)
@@ -31,7 +34,13 @@ class Harness:
             "INSERT INTO sessions(id,customer_id,channel,external_id,mode,token_hash,created_at) VALUES(?,?,?,?,?,?,?)",
             (sid, profile, channel, external_id or sid, mode, token_hash(token), now()),
         )
-        return {"session_id": sid, "session_token": token, "identity_status": "unverified", "brief": {"redacted": True}}
+        return {
+            "session_id": sid,
+            "session_token": token,
+            "user_id": identity["user_id"],
+            "identity_status": "unverified",
+            "brief": {"redacted": True},
+        }
 
     def session(self, sid):
         session = self.db.one("SELECT * FROM sessions WHERE id=?", (sid,))

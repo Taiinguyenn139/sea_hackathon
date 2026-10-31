@@ -98,7 +98,14 @@ export function CustomerChat() {
   }
   const loadProfiles = () =>
     request<{ profiles: Profile[] }>("/demo/profiles")
-      .then((data) => setProfiles(data.profiles))
+      .then((data) => {
+        setProfiles(data.profiles);
+        setProfile((current) =>
+          data.profiles.find(
+            (item) => item.id === current || item.runtime_profile === current,
+          )?.id ?? data.profiles[0]?.id ?? current,
+        );
+      })
       .catch((e) => setError(errorMessage(e)));
   useEffect(() => {
     void loadProfiles();
@@ -441,7 +448,7 @@ export function CustomerChat() {
               >
                 {profiles.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name ?? p.full_name ?? p.id}
+                    {p.name ?? p.full_name ?? p.id}{p.phone ? ` · ${p.phone}` : ""}
                   </option>
                 ))}
               </select>

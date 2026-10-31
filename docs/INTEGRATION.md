@@ -36,7 +36,7 @@ Mỗi lời gọi giữ ngày riêng, không ảnh hưởng ngày của lời g�
 ngày thiếu/sai định dạng. Ngày chỉ giúp kiểm tra dữ liệu có hiệu lực, không tự
 cập nhật giá trong YAML khi hết hạn. Phiên mới tạo instance mới và tra lại số
 liệu ngân hàng. Xác minh danh tính do module bên ngoài phụ trách; module nghiệp vụ này
-không cung cấp tool xác minh; main giữ dữ liệu ngày sinh riêng trong `bank.yaml`. Ứng dụng chatbot quản lý trạng
+không cung cấp tool xác minh; main dùng dữ liệu identity riêng trong `simulators/datasets/identity_v1/identities.json`. Ứng dụng chatbot quản lý trạng
 thái xác minh, thông tin khách nói và memory liên phiên.
 
 ## Phân quyền và tích hợp module xác thực
@@ -375,12 +375,15 @@ Adapter lưu kết quả vào tool_calls/facts để console và benchmark truy 
 Backend truyền `as_of` từ ngày nghiệp vụ `/admin/clock` vào **mọi lần gọi**, kể cả xác minh.
 Ngày demo mặc định là 2026-10-31. Bảng giá hết hiệu lực sẽ báo lỗi để yêu cầu cập nhật dữ liệu.
 
-- `POST /sessions/{sid}/verify` tiếp tục dùng ngày sinh và hồ sơ giả có sẵn từ main
-  trong `bank_tools/fixtures/bank.yaml`; có giới hạn thử sai và che ngày sinh trong audit log.
+- `POST /sessions/{sid}/verify` dùng 10 hồ sơ trong
+  `simulators/datasets/identity_v1/identities.json` qua `harness/identity.py`;
+  có giới hạn thử sai, che ngày sinh trong audit log và xác minh riêng từng phiên.
 - `GET /sessions/{sid}/tools` dùng Bearer session_token trả 6 hoặc 8 schema theo trạng thái xác minh.
   Không nhận cờ đăng nhập/xác minh hay customer_id từ frontend để cấp quyền tool.
-- ID ứng dụng `hoa`/`minh` được nối với `cus_001`/`cus_002` theo CIF. Hồ sơ xác minh
-  giữ nguyên tên/ngày sinh của main; bộ CRM hư cấu giữ nguyên fixture từ tuannv.
+- `user_id` bên ngoài là số điện thoại dạng chuỗi; registry nối trực tiếp với
+  `bank_customer_id` (`cus_001`…`cus_010`) và đối chiếu CIF từ fixture CRM. Hai alias
+  `hoa`/`minh` giữ khóa memory cũ; 8 người còn lại dùng phone làm khóa runtime.
+  Xem [bộ identity đa phiên](IDENTITY_DATASET.md) để tạo phiên và nạp dữ liệu.
 - Main hiện chỉ có đăng nhập **chuyên viên**, chưa có đăng nhập khách hàng. Vì vậy CRM
   luôn bị khóa trong chat hiện tại. Khi bổ sung module login khách hàng, backend phải
   kiểm tra phiên đó rồi tạo `AuthContext(logged_in=True)` tại ranh giới tin cậy.

@@ -8,7 +8,8 @@ runner. Không cần thêm dependency hoặc một dịch vụ mock riêng.
 
 | Thành phần | File | Vai trò |
 | --- | --- | --- |
-| Ngân hàng giả lập | `bank_tools/fixtures/bank.yaml` | Nguồn cho tools; giữ nguyên dữ liệu của team |
+| Ngân hàng giả lập | `bank_tools/fixtures/*.yaml` | Nguồn chính sách và giá cho tools |
+| Identity demo | `simulators/datasets/identity_v1/identities.json` | Nguồn hồ sơ/ngày sinh cho verify_identity; alias hoa vẫn dùng được |
 | Oracle giá | `eval/oracle_fixtures/bank.json` | Đáp án độc lập, không đọc kết quả tool làm đáp án |
 | Journey ba phiên | `simulators/scenarios/dev/mortgage-memory-journey.json` | Lời khách và chỉ dẫn simulator/evaluator; agent tự trả lời |
 | Schema scenario | `simulators/schemas.py` | Pydantic contract kiểm tra khi runner nạp scenario |

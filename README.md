@@ -47,6 +47,11 @@ expected memory và cách bật checkpoint checks trong eval runner bằng
 `--memory-oracles eval/oracle_fixtures/memory`. Dữ liệu dùng chung mock ngân hàng
 hiện có; expected memory chỉ dành cho evaluator.
 
+[Bộ identity đa phiên](docs/IDENTITY_DATASET.md) cung cấp 10 người dùng theo số
+điện thoại, 40 phiên trên 4 kênh, lời khách và đáp án riêng cho các tình huống
+hỏi người nhà, so ngân hàng và tiếp tục hội thoại sau khi đổi kênh. Backend dùng
+cùng nguồn identity để xác minh từng phiên demo; CRM vẫn cần đăng nhập riêng.
+
 ## Deploy
 
 [Hướng dẫn GCP](docs/deployment.md) sở hữu cách cấu hình variables, OIDC/Secret Manager,
@@ -59,4 +64,6 @@ kiểm tra health và revision theo hướng dẫn vận hành để xác nhận
 
 [Hướng dẫn tích hợp](docs/INTEGRATION.md) mô tả 9 tool từ nhánh tuannv, quyền truy cập,
 ngày gọi bắt buộc và adapter agent trên main. [Dữ liệu giả lập](docs/DATA.md) giải thích
-fixtures nghiệp vụ; dữ liệu xác minh ngày sinh của main nằm riêng trong `bank_tools/fixtures/bank.yaml`.
+fixtures nghiệp vụ. Backend xác minh demo dùng
+`simulators/datasets/identity_v1/identities.json` qua registry `harness/identity.py`;
+alias `hoa`/`minh` được giữ để dùng tiếp memory cũ.
