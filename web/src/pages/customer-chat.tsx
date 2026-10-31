@@ -282,7 +282,9 @@ export function CustomerChat() {
         body: demoPhoneIdentity ? { phone: entryPhone.trim() } : { mode: "harness", demo_profile: profile },
       });
       setLoading(true);
+      rememberView();
       save(demoPhoneIdentity ? next : { ...next, demo_profile: profile });
+      if (session) setDraft("");
       setTurns([]);
       navigate("conversation");
     } catch (e) {
@@ -559,6 +561,23 @@ export function CustomerChat() {
           </div>
         )}
         <div className="conversation-scroll">
+          {demoPhoneIdentity && (!session || !verified) && (
+            <form className="demo-phone-entry" onSubmit={(e) => { e.preventDefault(); void start(); }}>
+              <span className="mini-label">BẮT ĐẦU HỘI THOẠI</span>
+              <label htmlFor="entry-phone">Số điện thoại của bạn</label>
+              <p>Dùng cùng số với Telegram để kết nối hồ sơ và thông tin đã ghi nhớ.</p>
+              <div className="demo-phone-entry-row">
+                <input id="entry-phone" type="tel" inputMode="tel" autoComplete="tel"
+                  placeholder="Ví dụ: 0901234567" value={entryPhone}
+                  onChange={(e) => setEntryPhone(e.target.value)} disabled={pending} required maxLength={32}
+                  aria-describedby="entry-phone-note" />
+                <button className="button primary" type="submit" disabled={pending || !entryPhone.trim()}>
+                  {pending ? <Spinner label="Đang kết nối…" /> : <>Bắt đầu chat <ArrowRight size={16} /></>}
+                </button>
+              </div>
+              <small id="entry-phone-note">Bản demo không yêu cầu mã xác nhận. Mỗi phiên có hội thoại riêng, cùng đóng góp vào bộ nhớ hồ sơ.</small>
+            </form>
+          )}
           {isHome && (
             <section className="welcome">
               <div className="welcome-hero">
@@ -705,7 +724,7 @@ export function CustomerChat() {
           )}
           <div ref={end} />
         </div>
-        {(!isHome || !session) && <div className="composer-area">
+        {(!isHome || !session) && (!demoPhoneIdentity || session) && <div className="composer-area">
           {isHome && (
             <div className="conversation-intro">
               <span className="section-index">02 / KẾT NỐI</span>
@@ -769,23 +788,6 @@ export function CustomerChat() {
               </button>
             </div>
           )}
-          {!session && demoPhoneIdentity && (
-            <form className="demo-phone-entry" onSubmit={(e) => { e.preventDefault(); void start(); }}>
-              <span className="mini-label">BẮT ĐẦU HỘI THOẠI</span>
-              <label htmlFor="entry-phone">Số điện thoại của bạn</label>
-              <p>Dùng cùng số với Telegram để kết nối hồ sơ và thông tin đã ghi nhớ.</p>
-              <div className="demo-phone-entry-row">
-                <input id="entry-phone" type="tel" inputMode="tel" autoComplete="tel"
-                  placeholder="Ví dụ: 0901234567" value={entryPhone}
-                  onChange={(e) => setEntryPhone(e.target.value)} disabled={pending} required maxLength={32}
-                  aria-describedby="entry-phone-note" />
-                <button className="button primary" type="submit" disabled={pending || !entryPhone.trim()}>
-                  {pending ? <Spinner label="Đang kết nối…" /> : <>Bắt đầu chat <ArrowRight size={16} /></>}
-                </button>
-              </div>
-              <small id="entry-phone-note">Bản demo không yêu cầu mã xác nhận. Mỗi phiên có hội thoại riêng, cùng đóng góp vào bộ nhớ hồ sơ.</small>
-            </form>
-          )}
           {!session && !phoneLogin && !demoPhoneIdentity && (
             <div className="onboarding-bar">
               <div>
@@ -822,7 +824,7 @@ export function CustomerChat() {
               </button>
             </div>
           )}
-          {session && !verified && (
+          {session && !verified && !demoPhoneIdentity && (
             <details className="identity-help">
               <summary>Tiếp nối hồ sơ và đặt lịch</summary>
                 <p>

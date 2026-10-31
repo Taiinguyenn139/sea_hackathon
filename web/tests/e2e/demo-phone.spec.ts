@@ -22,7 +22,7 @@ for (const width of [375, 1440]) {
       if (path.endsWith("/new")) { siblings++; return route.fulfill({ json: session("second") }); }
       if (path.endsWith("/messages/stream")) {
         messages++;
-        return route.fulfill({ contentType: "text/event-stream", body: `event: result\ndata: ${JSON.stringify({ reply: "Đã ghi nhớ", guard_events: [] })}\n\n` });
+        return route.fulfill({ contentType: "text/event-stream", body: `event: result\ndata: ${JSON.stringify({ session_id: path.split("/")[2], reply: "Đã ghi nhớ", guard_events: [] })}\n\n` });
       }
       if (path.endsWith("/turns")) return route.fulfill({ json: { items: [] } });
       if (path.startsWith("/sessions/")) return route.fulfill({ json: session(path.split("/")[2]) });
@@ -32,14 +32,16 @@ for (const width of [375, 1440]) {
     const phone = page.getByLabel("Số điện thoại của bạn", { exact: true });
     const start = page.getByRole("button", { name: "Bắt đầu chat", exact: true });
     await expect(phone).toBeVisible();
+    expect((await phone.boundingBox())!.y).toBeLessThan(450);
     await expect(start).toBeDisabled();
     await expect(page.getByLabel("Chọn hồ sơ để bắt đầu hỗ trợ")).toHaveCount(0);
+    await phone.fill("0901234567");
+    await page.screenshot({ path: testInfo.outputPath(`demo-phone-entry-${width}.png`), fullPage: true, animations: "disabled" });
     await phone.fill("123");
     await phone.press("Enter");
     await expect(page.getByText("Số điện thoại không hợp lệ.", { exact: true })).toBeVisible();
     await expect(phone).toHaveValue("123");
     await phone.fill("0901234567");
-    await page.screenshot({ path: testInfo.outputPath(`demo-phone-entry-${width}.png`), fullPage: true, animations: "disabled" });
     await phone.press("Enter");
     await expect(phone).toHaveCount(0);
     const composer = page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" });
