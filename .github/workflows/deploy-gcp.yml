@@ -30,6 +30,19 @@ jobs:
       - run: uv run mypy harness
       - run: npm --prefix web ci
       - run: npm --prefix web run lint && npm --prefix web run test && npm --prefix web run build
+      - name: Install browser for UI checks
+        working-directory: web
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Verify UI interactions and responsive layouts
+        run: npm --prefix web run test:e2e -- --reporter=line
+      - name: Save UI review screenshots and failure traces
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ui-review
+          path: web/test-results/e2e/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Validate deployment scripts
         run: bash -n deploy/release.sh deploy/startup.sh deploy/configure-proxy.sh deploy/provision-gcp.sh deploy/configure-github.sh deploy/initialize-secrets.sh
       - name: Build production container

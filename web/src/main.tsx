@@ -11,6 +11,7 @@ import {
   MessageCircle,
   ShieldCheck,
   Landmark,
+  Sparkles,
 } from "lucide-react";
 import { CustomerChat } from "./pages/customer-chat";
 import { StaffConsole } from "./pages/staff-console";
@@ -18,6 +19,7 @@ import { Benchmark } from "./pages/benchmark";
 import { StaffBoundary } from "./staff-auth";
 import { BrandMark } from "./ui";
 import "./styles/tokens.css";
+import "./styles/experience.css";
 const pathname = window.location.pathname;
 const page = pathname.startsWith("/staff")
   ? "staff"
@@ -48,6 +50,7 @@ function App() {
             <a
               className={page === "chat" ? "nav-item active" : "nav-item"}
               href="/chat"
+              aria-label="Hỗ trợ trực tuyến"
               aria-current={page === "chat" ? "page" : undefined}
             >
               <MessageCircle size={20} />
@@ -56,12 +59,14 @@ function App() {
             </a>
           </nav>
           <div className="sidebar-note">
-            <Landmark size={22} />
+            <div className="sidebar-note-icon"><Landmark size={22} /></div>
+            <span className="sidebar-kicker">LUÔN TIẾP NỐI</span>
             <p>
-              Trung tâm hỗ trợ
+              Cuộc trò chuyện mới.
               <br />
-              khách hàng cá nhân
+              Sự thấu hiểu tiếp nối.
             </p>
+            <div className="continuity-dots" aria-hidden="true"><i /><i /><i /><span /></div>
           </div>
           {page !== "chat" && (
             <>
@@ -70,6 +75,7 @@ function App() {
                 <a
                   className={page === "staff" ? "nav-item active" : "nav-item"}
                   href="/staff"
+                  aria-label="Chuyên viên"
                   aria-current={page === "staff" ? "page" : undefined}
                 >
                   <Headset size={20} />
@@ -80,6 +86,7 @@ function App() {
                     page === "benchmark" ? "nav-item active" : "nav-item"
                   }
                   href="/benchmark"
+                  aria-label="Đánh giá hệ thống"
                   aria-current={page === "benchmark" ? "page" : undefined}
                 >
                   <BarChart3 size={20} />
@@ -114,13 +121,15 @@ function App() {
           </div>
           <div className="topbar-right">
             <span className="demo-top-label">
-              <ShieldCheck size={14} /> Kênh hỗ trợ trực tuyến
+              <Sparkles size={14} /> Trợ lý tài chính cá nhân
             </span>
             <a
               href={page === "chat" ? "/staff" : "/chat"}
               className="topbar-link"
+              aria-label={page === "chat" ? "Dành cho chuyên viên" : "Hỗ trợ khách hàng"}
+              data-short-label={page === "chat" ? "Đội ngũ" : "Trò chuyện"}
             >
-              {page === "chat" ? "Dành cho chuyên viên" : "Hỗ trợ khách hàng"}
+              <span>{page === "chat" ? "Dành cho chuyên viên" : "Hỗ trợ khách hàng"}</span>
               <ArrowUpRight size={15} />
             </a>
           </div>

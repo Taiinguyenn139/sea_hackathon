@@ -11,6 +11,8 @@ import {
   RefreshCw,
   SearchCheck,
   ShieldCheck,
+  Search,
+  CheckCircle2,
 } from "lucide-react";
 import {
   ApiError,
@@ -38,6 +40,7 @@ export function StaffConsole() {
   const [trace, setTrace] = useState<unknown>(null);
   const [traceOpen, setTraceOpen] = useState(false);
   const [tab, setTab] = useState<"handoffs" | "callbacks">("handoffs");
+  const [query, setQuery] = useState("");
   function fail(e: unknown) {
     if (e instanceof ApiError && e.status === 401) {
       expire();
@@ -144,6 +147,10 @@ export function StaffConsole() {
     }
   }
   const pending = items.filter((x) => x.status !== "completed").length;
+  const openCallbacks = callbacks.filter((x) => x.status !== "completed").length;
+  const filteredItems = items.filter((item) =>
+    `${item.reason ?? ""} ${item.customer_id ?? ""} ${item.handoff_id}`.toLocaleLowerCase("vi").includes(query.trim().toLocaleLowerCase("vi")),
+  );
   return (
     <div className="workspace-page">
       <PageHeading
@@ -159,21 +166,28 @@ export function StaffConsole() {
           </button>
         }
       />
+      <div className="workspace-stats" aria-label="Tổng quan công việc">
+        <div className="work-stat"><span className="stat-icon blue"><Inbox size={22} /></span><div><span>Chờ tiếp nhận</span><strong>{loading ? "—" : pending}</strong></div><small>Yêu cầu chuyển tiếp</small></div>
+        <div className="work-stat"><span className="stat-icon amber"><Clock3 size={22} /></span><div><span>Cần gọi lại</span><strong>{loading ? "—" : openCallbacks}</strong></div><small>Cuộc hẹn đang mở</small></div>
+        <div className="work-stat"><span className="stat-icon mint"><CheckCircle2 size={22} /></span><div><span>Đã hoàn tất</span><strong>{loading ? "—" : items.length - pending}</strong></div><small>Yêu cầu đã xử lý</small></div>
+      </div>
       <div className="workspace-toolbar">
         <div className="tabs">
           <button
             className={tab === "handoffs" ? "active" : ""}
             onClick={() => setTab("handoffs")}
+            aria-pressed={tab === "handoffs"}
           >
             <Inbox size={17} /> Yêu cầu chuyển tiếp <span>{pending}</span>
           </button>
           <button
             className={tab === "callbacks" ? "active" : ""}
             onClick={() => setTab("callbacks")}
+            aria-pressed={tab === "callbacks"}
           >
             <Clock3 size={17} /> Lịch gọi lại{" "}
             <span>
-              {callbacks.filter((x) => x.status !== "completed").length}
+              {openCallbacks}
             </span>
           </button>
         </div>
@@ -247,13 +261,23 @@ export function StaffConsole() {
               <h2>Hàng đợi hỗ trợ</h2>
               <span className="mini-label">{items.length} YÊU CẦU</span>
             </div>
+            <label className="queue-search">
+              <Search size={17} />
+              <span className="sr-only">Tìm yêu cầu hỗ trợ</span>
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tìm khách hàng, yêu cầu…" type="search" />
+            </label>
             {!items.length ? (
               <Empty icon={<Inbox size={28} />} title="Hàng đợi đang trống">
                 Khi khách yêu cầu gặp chuyên viên, bản tóm tắt sẽ được chuyển
                 tới đây.
               </Empty>
+            ) : !filteredItems.length ? (
+              <Empty icon={<Search size={26} />} title="Chưa tìm thấy yêu cầu"
+                action={<button className="button secondary" onClick={() => setQuery("")}>Xóa bộ lọc</button>}>
+                Thử tìm theo mã khách hàng hoặc nội dung cần hỗ trợ.
+              </Empty>
             ) : (
-              items.map((item) => (
+              filteredItems.map((item) => (
                 <button
                   key={item.handoff_id}
                   className={`handoff-item ${active?.handoff_id === item.handoff_id ? "selected" : ""}`}
