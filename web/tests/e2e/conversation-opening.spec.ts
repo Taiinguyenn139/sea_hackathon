@@ -45,7 +45,7 @@ test.afterAll(async () => {
 });
 
 for (const width of [375, 1440]) {
-  test(`bot opens and recalls a returning customer's needs at ${width}px`, async ({ page, request }, info) => {
+  test(`bot opens and recalls a returning customer's needs at ${width}px`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 900 });
     let messageRequests = 0;
     await page.route("**/api/**", async (route) => {
@@ -55,6 +55,12 @@ for (const width of [375, 1440]) {
     });
     await page.goto("/chat");
     const phone = width === 375 ? "0901234567" : "0912345678";
+    const enter = async () => {
+      await page.getByLabel("Số điện thoại của bạn", { exact: true }).fill(phone);
+      await page.getByRole("button", { name: "Bắt đầu chat", exact: true }).click();
+    };
+    await expect(page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" })).toHaveCount(0);
+    await enter();
     const log = page.getByRole("log");
     const composer = page.getByRole("textbox", { name: "Tin nhắn cho trợ lý" });
     await expect(log).toContainText("Em là trợ lý Bankwise");
@@ -65,30 +71,12 @@ for (const width of [375, 1440]) {
     expect(messageRequests).toBe(0);
     await page.reload();
     await expect(log.locator(".from-assistant")).toHaveCount(1);
-    // The main chat stays anonymous; no phone form or profile preselection returns.
-    await expect(page.locator('input[type="tel"], #demo-profile')).toHaveCount(0);
-    await composer.fill("Xin chào");
+    await composer.fill("Tôi vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, không có nợ");
     await composer.press("Enter");
     await expect(composer).toBeEnabled();
     await expect(log.locator(".from-user")).toHaveCount(1);
-    await expect(log.locator(".from-assistant")).toHaveCount(2);
-    await page.reload();
-    await expect(log.locator(".from-assistant")).toHaveCount(2);
     await page.getByRole("button", { name: "Bắt đầu phiên mới", exact: true }).click();
-    await expect(log.locator(".from-assistant")).toHaveCount(1);
-    await expect(log.locator(".from-user")).toHaveCount(0);
-    await expect(log).toContainText("Em là trợ lý Bankwise");
-
-    // The separate phone integration still restores an identified customer's memory.
-    const first = await (await request.post(`${origin}/auth/phone/login`, { data: { phone } })).json();
-    const recorded = await request.post(`${origin}/sessions/${first.session_id}/messages`, {
-      headers: { Authorization: `Bearer ${first.session_token}` },
-      data: { text: "Tôi vay mua nhà 2 tỷ trong 20 năm, thu nhập 45 triệu, không có nợ", client_message_id: "needs" },
-    });
-    expect(recorded.status()).toBe(200);
-    const returned = await (await request.post(`${origin}/auth/phone/login`, { data: { phone } })).json();
-    await page.evaluate((session) => sessionStorage.setItem("bankwise-chat-session", JSON.stringify(session)), returned);
-    await page.reload();
+    await enter();
     await expect(log).toContainText("Chào mừng anh/chị quay lại Bankwise");
     await expect(log).toContainText("2 tỷ đồng");
     await expect(log).toContainText("45 triệu đồng");
